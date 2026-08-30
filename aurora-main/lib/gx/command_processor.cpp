@@ -2256,9 +2256,9 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
         .matrixTopology = matrixTopologySignature,
     };
   }
+  const bool perspective = g_gxState.projType == GX_PERSPECTIVE;
   const auto uniformRanges =
-      build_uniform(info, vertRange.offset, ranges, drawIdentity, interpolationIdentityActive,
-                    usedPnMtxMask);
+      build_uniform(info, vertRange.offset, ranges, drawIdentity, perspective, usedPnMtxMask);
   s_lastDrawRecordedInterpolation = interpolationIdentityActive;
 
   uint32_t instanceCount = 1;
@@ -2275,6 +2275,8 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
       .idxRange = idxRange,
       .uniformRange = uniformRanges.current,
       .interpolatedUniformRanges = uniformRanges.interpolated,
+      .stereoUniformRanges = {},
+      .uniformReplayLayout = uniformRanges.replayLayout,
       .vtxCount = vtxCount,
       .indexCount = numIndices,
       .instanceCount = instanceCount,

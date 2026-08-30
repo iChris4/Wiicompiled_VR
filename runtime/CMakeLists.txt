@@ -105,6 +105,13 @@ set(MKW_TRANSLATED_COMPILE_JOBS 0 CACHE STRING
 Scheduling only - never affects output bytes, so it is deliberately outside the canonical flag fingerprint.")
 set(MKW_CPPWINRT_INCLUDE_DIR "" CACHE PATH "Optional self-contained C++/WinRT include directory")
 
+# OpenXR is compiled into supported desktop builds, but remains opt-in at
+# runtime through [vr].enabled. Keeping the loader available in every package
+# lets one binary fall back to desktop mode when no active runtime is present.
+option(MKW_ENABLE_OPENXR "Build OpenXR VR support" ON)
+set(MKW_OPENXR_SDK_DIR "" CACHE PATH
+    "Optional OpenXR-SDK source tree; when empty, use a package or fetch the pinned SDK")
+
 # Precompiled aurora + third-party package (see launcher/Prepare-NativePrebuilt.ps1).
 # Empty - the default - keeps the from-source behaviour every developer build
 # uses. When set, aurora-main, its extern/ tree and the vendored Crypto++ are
@@ -220,6 +227,46 @@ endif()
 #     the definitions up exactly as before.
 if(MKW_PROJECT_COMPILE_DEFINITIONS)
     add_compile_definitions(${MKW_PROJECT_COMPILE_DEFINITIONS})
+endif()
+
+set(MKW_OPENXR_TARGET "")
+if(MKW_ENABLE_OPENXR)
+    if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(WARNING "OpenXR is not wired for this platform; disabling MKW_ENABLE_OPENXR")
+        set(MKW_ENABLE_OPENXR OFF)
+    else()
+        find_package(OpenXR CONFIG QUIET)
+        if(NOT TARGET OpenXR::openxr_loader AND NOT TARGET openxr_loader)
+            include(FetchContent)
+            set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
+            set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+            set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
+            set(BUILD_SDK_TESTS OFF CACHE BOOL "" FORCE)
+            set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
+            if(MKW_OPENXR_SDK_DIR)
+                if(NOT EXISTS "${MKW_OPENXR_SDK_DIR}/CMakeLists.txt")
+                    message(FATAL_ERROR
+                        "MKW_OPENXR_SDK_DIR does not contain OpenXR-SDK: ${MKW_OPENXR_SDK_DIR}")
+                endif()
+                add_subdirectory("${MKW_OPENXR_SDK_DIR}"
+                    "${CMAKE_BINARY_DIR}/openxr-sdk" EXCLUDE_FROM_ALL)
+            else()
+                FetchContent_Declare(mkw_openxr
+                    URL https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.61.tar.gz
+                    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+                    EXCLUDE_FROM_ALL)
+                FetchContent_MakeAvailable(mkw_openxr)
+            endif()
+        endif()
+        if(TARGET OpenXR::openxr_loader)
+            set(MKW_OPENXR_TARGET OpenXR::openxr_loader)
+        elseif(TARGET openxr_loader)
+            set(MKW_OPENXR_TARGET openxr_loader)
+        else()
+            message(FATAL_ERROR "OpenXR was enabled but no loader target was provided")
+        endif()
+        add_compile_definitions(MKW_ENABLE_OPENXR=1)
+    endif()
 endif()
 
 # Runtime sources. CONFIGURE_DEPENDS costs one glob re-check per build (measured

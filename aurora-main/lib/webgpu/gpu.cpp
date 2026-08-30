@@ -43,6 +43,18 @@ void clear_offscreen_cache();
 namespace aurora::webgpu {
 static Module Log("aurora::gpu");
 
+#if defined(WEBGPU_DAWN) && defined(_WIN32)
+// RequestAdapterOptionsLUID is a Dawn-native extension whose exported C++
+// constructor cannot be called safely by this project's LLVM-MinGW consumer.
+// Its wire representation is deliberately just a WebGPU chained header plus
+// the Win32 LUID, so describe that C ABI directly and let RequestAdapter
+// consume it through the ordinary WebGPU entry point.
+struct RequestAdapterOptionsLuidWire {
+  wgpu::ChainedStruct chain{};
+  LUID adapterLuid{};
+};
+#endif
+
 wgpu::Device g_device;
 wgpu::Queue g_queue;
 wgpu::Surface g_surface;
@@ -558,11 +570,24 @@ bool initialize(AuroraBackend auroraBackend) {
     }
   }
   {
-    const wgpu::RequestAdapterOptions options{
+    wgpu::RequestAdapterOptions options{
         .powerPreference = wgpu::PowerPreference::HighPerformance,
         .backendType = backend,
         .compatibleSurface = g_surface,
     };
+#if defined(WEBGPU_DAWN) && defined(_WIN32)
+    RequestAdapterOptionsLuidWire luidOptions{};
+    if (backend == wgpu::BackendType::D3D12 && g_config.xrInterop &&
+        g_config.hasD3D12AdapterLuid) {
+      luidOptions.chain.sType = wgpu::SType::RequestAdapterOptionsLUID;
+      luidOptions.adapterLuid.LowPart = g_config.d3d12AdapterLuidLow;
+      luidOptions.adapterLuid.HighPart = g_config.d3d12AdapterLuidHigh;
+      options.nextInChain = &luidOptions.chain;
+      Log.info("Pinning D3D12 adapter to OpenXR LUID {:08x}:{:08x}",
+               static_cast<uint32_t>(luidOptions.adapterLuid.HighPart),
+               luidOptions.adapterLuid.LowPart);
+    }
+#endif
     const auto future = g_instance.RequestAdapter(
         &options, wgpu::CallbackMode::WaitAnyOnly,
         [](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
@@ -653,6 +678,12 @@ bool initialize(AuroraBackend auroraBackend) {
         implicitDeviceSynchronizationSupported = true;
         requiredFeatures.push_back(feature);
       }
+#if defined(WEBGPU_DAWN) && defined(_WIN32)
+      if (g_config.xrInterop && g_backendType == wgpu::BackendType::D3D12 &&
+          feature == wgpu::FeatureName::SharedTextureMemoryD3D12Resource) {
+        requiredFeatures.push_back(feature);
+      }
+#endif
     }
     if (!implicitDeviceSynchronizationSupported) {
       Log.warn(

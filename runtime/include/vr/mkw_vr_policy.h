@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
+namespace mkw::vr {
+
+// Game-facing presentation policy. The OpenXR implementation owns session and
+// swapchain state; this module only decides how Mario Kart Wii content should
+// be presented once the integration layer publishes game observations.
+enum class VRPresentationMode : uint8_t {
+    Desktop,
+    VirtualScreen,
+    ImmersiveRace,
+};
+
+enum class VRSceneMode : uint8_t {
+    Unknown,
+    FrontEnd,
+    Race,
+    Replay,
+    Awards,
+    Other,
+};
+
+enum class VRProjectionKind : uint8_t {
+    Unknown,
+    Perspective,
+    Orthographic,
+};
+
+enum class VRDrawPass : uint8_t {
+    Scene,
+    PostProcess,
+};
+
+enum class VRDrawClass : uint8_t {
+    Unknown,
+    PerspectiveWorld,
+    OrthographicHud,
+    PostProcess,
+};
+
+enum class VRDrawRoute : uint8_t {
+    DesktopPassthrough,
+    VirtualScreen,
+    StereoWorld,
+    HeadLockedHud,
+    PerEyePostProcess,
+    Unclassified,
+};
+
+// Instrumentation capabilities are explicit so a partial binding can never
+// accidentally enable immersive rendering. In particular, a camera sample by
+// itself is insufficient because orthographic UI would otherwise be rendered
+// with the stereo world path.
+enum MkwVRBinding : uint32_t {
+    MkwVRBindingNone = 0,
+    MkwVRBindingSceneState = 1u << 0,
+    MkwVRBindingRaceCamera = 1u << 1,
+    MkwVRBindingDrawClassification = 1u << 2,
+    MkwVRBindingPostProcess = 1u << 3,
+    MkwVRBindingCulling = 1u << 4,
+};
+
+inline constexpr uint32_t kMkwVRRequiredImmersiveBindings =
+    MkwVRBindingSceneState | MkwVRBindingRaceCamera | MkwVRBindingDrawClassification;
+
+struct MkwVRPolicyConfig {
+    bool enabled = false;
+    bool immersive_races = true;
+    float world_units_per_meter = 500.0f;
+    float hud_distance_meters = 2.0f;
+    float hud_scale = 1.0f;
+};
+
+struct MkwVRSceneObservation {
+    VRSceneMode mode = VRSceneMode::Unknown;
+    uint32_t local_player_count = 0;
+    uint64_t guest_frame_index = 0;
+};
+
+struct MkwVRCameraObservation {
+    // Mario Kart and NW4R expose affine view matrices as row-major 3x4 Mtx
+    // values. The integration layer is responsible for reading/converting the
+    // guest value; this policy never assumes a guest object layout.
+    std::array<float, 12> view_from_world{};
+    uint32_t guest_camera_address = 0;
+    uint64_t guest_frame_index = 0;
+    bool valid = false;
+};
+
+struct MkwVRDrawObservation {
+    VRProjectionKind projection = VRProjectionKind::Unknown;
+    VRDrawPass pass = VRDrawPass::Scene;
+};
+
+struct MkwVRPolicySnapshot {
+    VRPresentationMode presentation = VRPresentationMode::Desktop;
+    MkwVRPolicyConfig config{};
+    MkwVRSceneObservation scene{};
+    MkwVRCameraObservation camera{};
+    uint32_t available_bindings = MkwVRBindingNone;
+    bool session_active = false;
+};
+
+// All policy functions are thread-safe. Publishing functions are intended for
+// translated-game instrumentation on the guest thread; the renderer may take a
+// snapshot without retaining references to mutable policy state.
+void MkwVRPolicyReset() noexcept;
+void MkwVRPolicyConfigure(const MkwVRPolicyConfig& config) noexcept;
+void MkwVRPolicySetSessionActive(bool active) noexcept;
+void MkwVRPolicySetAvailableBindings(uint32_t bindings) noexcept;
+void MkwVRPolicyPublishScene(const MkwVRSceneObservation& scene) noexcept;
+void MkwVRPolicyPublishRaceCamera(const MkwVRCameraObservation& camera) noexcept;
+void MkwVRPolicyInvalidateRaceCamera() noexcept;
+MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept;
+
+// This classifier is deliberately structural rather than heuristic: future
+// hooks report whether the active projection is perspective/orthographic and
+// whether execution is inside a post-processing boundary. No matrix-value or
+// guest-address guessing occurs here.
+VRDrawClass MkwVRPolicyClassifyDraw(const MkwVRDrawObservation& draw) noexcept;
+VRDrawRoute MkwVRPolicyRouteDraw(VRDrawClass draw_class,
+                                 const MkwVRPolicySnapshot& snapshot) noexcept;
+
+enum class MkwVRHookCapability : uint8_t {
+    SceneState,
+    RaceCamera,
+    DrawClassification,
+    PostProcess,
+    Culling,
+};
+
+// Validated PAL RMCP01 symbols from projects/mkwii/MAP.txt. These are future
+// instrumentation candidates, not registered native replacements: the current
+// PPC_NATIVE_OVERRIDE mechanism replaces a translated function outright and
+// cannot safely observe it before/after its original body.
+struct MkwVRHookPoint {
+    uint32_t address;
+    const char* symbol;
+    MkwVRHookCapability capability;
+    const char* purpose;
+};
+
+const MkwVRHookPoint* MkwVRPolicyHookPoints(std::size_t* count) noexcept;
+
+} // namespace mkw::vr

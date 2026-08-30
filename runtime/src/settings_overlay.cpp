@@ -98,6 +98,7 @@ int g_displayMode = [] {
 bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
 bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
 bool g_showFps = RuntimeConfigFile::ShowFps(true);
+bool g_vrEnabled = RuntimeConfigFile::VrEnabled(false);
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -645,6 +646,10 @@ void DrawGraphicsSettings() {
     }
     ImGui::Separator();
     ImGui::Text("Graphics API: %s", GraphicsApiDisplayName());
+    if (ImGui::Checkbox("Enable OpenXR VR", &g_vrEnabled)) {
+        RuntimeConfigFile::SetVrEnabled(g_vrEnabled);
+    }
+    ImGui::TextDisabled("OpenXR mode changes take effect after restarting the game.");
 }
 
 void DrawFpsOverlay() {

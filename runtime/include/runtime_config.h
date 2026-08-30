@@ -44,6 +44,11 @@ struct RuntimeUserConfig {
     std::optional<bool> textureDumps;
     std::optional<bool> showFps;
     std::optional<uint32_t> disabledPostProcessingPaths;
+    std::optional<bool> vrEnabled;
+    std::optional<bool> vrRequired;
+    std::optional<float> vrRenderScale;
+    std::optional<float> vrWorldUnitsPerMeter;
+    std::optional<float> vrHudDistanceMeters;
     std::optional<float> audioVolume;
     std::optional<float> audioMusicVolume;
     std::optional<float> audioSoundEffectsVolume;
@@ -272,6 +277,14 @@ inline void EnsureConfigFile() {
               "# replacement would need. Both are read once, at startup.\n"
               "texture_replacements = false\n"
               "texture_dumps = false\n\n"
+              "[vr]\n"
+              "# OpenXR is opt-in. If required is false, startup failures fall back\n"
+              "# to the ordinary desktop renderer. These values are read at launch.\n"
+              "enabled = false\n"
+              "required = false\n"
+              "render_scale = 1.0\n"
+              "world_units_per_meter = 500.0\n"
+              "hud_distance_meters = 2.0\n\n"
               "[audio]\n"
               "volume = 1.0\n"
               "music_volume = 1.0\n"
@@ -402,6 +415,21 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths");
         value && (*value & ~0x10u) == 0) {
         config.disabledPostProcessingPaths = *value & 0x10u;
+    }
+
+    config.vrEnabled = FindConfigValue<bool>(document, "vr", "enabled");
+    config.vrRequired = FindConfigValue<bool>(document, "vr", "required");
+    if (auto value = FindConfigFloat(document, "vr", "render_scale");
+        value && *value >= 0.25f && *value <= 2.0f) {
+        config.vrRenderScale = *value;
+    }
+    if (auto value = FindConfigFloat(document, "vr", "world_units_per_meter");
+        value && *value >= 1.0f && *value <= 10000.0f) {
+        config.vrWorldUnitsPerMeter = *value;
+    }
+    if (auto value = FindConfigFloat(document, "vr", "hud_distance_meters");
+        value && *value >= 0.25f && *value <= 10.0f) {
+        config.vrHudDistanceMeters = *value;
     }
 
     auto readVolume = [&](std::string_view key) -> std::optional<float> {
@@ -617,6 +645,11 @@ inline bool SetDisabledPostProcessingPaths(uint32_t value) {
     return WriteSetting("video", "disabled_post_processing_paths", formatted.str());
 }
 
+inline bool SetVrEnabled(bool value) {
+    Mutable().vrEnabled = value;
+    return WriteSetting("vr", "enabled", value ? "true" : "false");
+}
+
 inline bool SetControllerButton(size_t index, std::string value) {
     if (index >= kControllerButtonKeys.size()) {
         return false;
@@ -768,6 +801,26 @@ inline uint32_t DisabledPostProcessingPaths(uint32_t fallback = 0) {
     return Get().disabledPostProcessingPaths.value_or(fallback) & 0x10u;
 }
 
+inline bool VrEnabled(bool fallback = false) {
+    return Get().vrEnabled.value_or(fallback);
+}
+
+inline bool VrRequired(bool fallback = false) {
+    return Get().vrRequired.value_or(fallback);
+}
+
+inline float VrRenderScale(float fallback = 1.0f) {
+    return std::clamp(Get().vrRenderScale.value_or(fallback), 0.25f, 2.0f);
+}
+
+inline float VrWorldUnitsPerMeter(float fallback = 500.0f) {
+    return std::clamp(Get().vrWorldUnitsPerMeter.value_or(fallback), 1.0f, 10000.0f);
+}
+
+inline float VrHudDistanceMeters(float fallback = 2.0f) {
+    return std::clamp(Get().vrHudDistanceMeters.value_or(fallback), 0.25f, 10.0f);
+}
+
 inline std::string GraphicsApi(std::string fallback = "auto") {
     return Get().graphicsApi.value_or(std::move(fallback));
 }
@@ -861,6 +914,12 @@ inline void LogLoadedConfig() {
             }
             if (config.textureDumps) {
                 std::cout << " texture_dumps=" << (*config.textureDumps ? "true" : "false");
+            }
+            if (config.vrEnabled) {
+                std::cout << " vr_enabled=" << (*config.vrEnabled ? "true" : "false");
+            }
+            if (config.vrRequired) {
+                std::cout << " vr_required=" << (*config.vrRequired ? "true" : "false");
             }
             if (config.audioVolume) {
                 std::cout << " audio_volume=" << *config.audioVolume;

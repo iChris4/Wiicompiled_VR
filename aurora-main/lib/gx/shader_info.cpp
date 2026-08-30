@@ -613,10 +613,14 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
   stage(&effectiveProj, sizeof(effectiveProj));
 
   const size_t positionOffset = stagedSize;
+  uint32_t positionMatrixMask = 0;
   for (u32 i = 0; i < layout.postexCount; ++i) {
     const u32 slot =
         layout.postexSlots[i] == UniformMatrixLayout::kCurrentPnMtx ? currentPostexSlot
                                                                     : layout.postexSlots[i];
+    if (slot < MaxPnMtx) {
+      positionMatrixMask |= 1u << i;
+    }
     stage(slot < MaxPnMtx ? &g_gxState.pnMtx[slot].pos : &g_gxState.texMtxs[slot - MaxPnMtx],
           sizeof(Mat3x4<float>));
   }
@@ -707,11 +711,22 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
     buf.append(texture_size_bias(tex));
   }
 
+  const UniformReplayLayout replayLayout{
+      .projectionOffset = static_cast<uint32_t>(projectionOffset),
+      .positionOffset = static_cast<uint32_t>(positionOffset),
+      .normalOffset = static_cast<uint32_t>(normalOffset),
+      .positionMatrixMask = positionMatrixMask,
+      .positionMatrixCount = layout.postexCount,
+      .normalMatrixCount = layout.nrmCount,
+      .perspective = perspective,
+  };
+
   if (!perspective || frame_interpolation_fps() == 0) {
     g_gxState.stateDirty = false;
     return {
         .current = range,
         .interpolated = {},
+        .replayLayout = replayLayout,
     };
   }
 
@@ -733,6 +748,7 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
   return {
       .current = range,
       .interpolated = interpolatedRanges,
+      .replayLayout = replayLayout,
   };
 }
 } // namespace aurora::gx

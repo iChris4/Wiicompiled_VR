@@ -77,6 +77,43 @@ typedef struct AuroraEvent AuroraEvent;
 typedef void (*AuroraLogCallback)(AuroraLogLevel level, const char* module, const char* message, unsigned int len);
 typedef void (*AuroraImGuiInitCallback)(const AuroraWindowSize* size);
 
+enum { AURORA_STEREO_EYE_COUNT = 2 };
+
+/**
+ * One eye of a stereo frame supplied by the host application.
+ *
+ * projection is a row-major, renderer-ready 4x4 projection matrix. It uses
+ * the same convention as the matrix uploaded by GXSetProjection after
+ * Aurora's depth-range adjustment.
+ *
+ * viewFromCenter is a row-major affine 3x4 transform from the game's
+ * recorded center-eye view space into this eye's view space. Identity keeps
+ * the recorded view and is useful when the game has already applied the eye
+ * transform before issuing GX commands.
+ */
+typedef struct {
+  uint32_t width;
+  uint32_t height;
+  float projection[16];
+  float viewFromCenter[12];
+} AuroraStereoEye;
+
+/**
+ * Stereo data for one sealed GX frame. frameToken is opaque to Aurora and is
+ * forwarded unchanged to the internal stereo output sink.
+ */
+typedef struct {
+  uint64_t frameToken;
+  AuroraStereoEye eyes[AURORA_STEREO_EYE_COUNT];
+} AuroraStereoFrame;
+
+/**
+ * Called on Aurora's frame worker immediately before a GX frame is sealed.
+ * Return false to render that logical frame in mono only. The callback must
+ * be non-blocking and must not call back into Aurora.
+ */
+typedef bool (*AuroraStereoFrameProvider)(uint32_t logicalFrame, AuroraStereoFrame* frame, void* userdata);
+
 typedef struct {
   const char* appName;
   const char* userPath;
@@ -125,6 +162,15 @@ typedef struct {
   // Optional directory for the portable GX pipeline database. When null, the
   // database is stored in cachePath with Dawn's machine-specific cache.
   const char* pipelineCachePath;
+
+  // Enables renderer features needed by an external XR compositor. The normal
+  // desktop path is unchanged when false.
+  bool xrInterop;
+  // Optional OpenXR-selected D3D adapter. Supplying the runtime's LUID before
+  // device creation keeps Dawn and the compositor on the same physical GPU.
+  bool hasD3D12AdapterLuid;
+  uint32_t d3d12AdapterLuidLow;
+  int32_t d3d12AdapterLuidHigh;
 } AuroraConfig;
 
 typedef struct {
@@ -144,6 +190,9 @@ typedef void (*AuroraFrameWorkerWaitCallback)();
 // Called from the producer thread at bounded intervals while Aurora waits for
 // the asynchronous frame worker. The callback must not enter Aurora.
 void aurora_set_frame_worker_wait_callback(AuroraFrameWorkerWaitCallback callback);
+// Registering nullptr restores the ordinary mono-only render path. Replace or
+// unregister a provider only while Aurora's frame worker is idle.
+void aurora_set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdata);
 void aurora_wait_for_frame_worker();
 bool aurora_wait_for_frame_worker_for(uint32_t timeoutMicros);
 // Absolute schedule for the next sealed frame, on steady_clock: baseNanos anchors the group and

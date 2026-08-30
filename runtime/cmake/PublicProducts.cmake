@@ -77,6 +77,9 @@ target_compile_definitions(mkw_runtime_common PRIVATE
 target_link_libraries(mkw_runtime_common PRIVATE
     aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx)
 target_link_libraries(mkw_runtime_common PRIVATE mkw::pugixml mkw::toml11 mkw::cryptopp)
+if(MKW_ENABLE_OPENXR)
+    target_link_libraries(mkw_runtime_common PRIVATE ${MKW_OPENXR_TARGET})
+endif()
 if(WIN32)
     target_link_libraries(mkw_runtime_common PRIVATE shell32 windowsapp)
 else()
@@ -194,6 +197,11 @@ function(mkw_configure_product target)
 
     target_link_libraries(${target} PRIVATE
         aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx)
+    if(MKW_ENABLE_OPENXR)
+        # mkw_runtime_common is consumed as raw object files, so its private
+        # loader dependency must also be present on each final product link.
+        target_link_libraries(${target} PRIVATE ${MKW_OPENXR_TARGET})
+    endif()
     if(EXISTS "${MKW_AURORA_DIR}/cmake/AuroraCopyRuntimeDLLs.cmake")
         include("${MKW_AURORA_DIR}/cmake/AuroraCopyRuntimeDLLs.cmake")
         aurora_copy_runtime_dlls(${target})

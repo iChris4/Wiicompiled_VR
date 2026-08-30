@@ -5,9 +5,20 @@
 #include "frame_interpolation.hpp"
 
 namespace aurora::gx {
+struct UniformReplayLayout {
+  uint32_t projectionOffset = 0;
+  uint32_t positionOffset = 0;
+  uint32_t normalOffset = 0;
+  uint32_t positionMatrixMask = 0;
+  uint8_t positionMatrixCount = 0;
+  uint8_t normalMatrixCount = 0;
+  bool perspective = false;
+};
+
 struct UniformRanges {
   gfx::Range current;
   std::array<gfx::Range, MaxInterpolatedFrames> interpolated;
+  UniformReplayLayout replayLayout;
 };
 
 ShaderInfo build_shader_info(const ShaderConfig& config) noexcept;

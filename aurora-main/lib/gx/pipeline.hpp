@@ -10,6 +10,8 @@ struct DrawData {
   gfx::Range idxRange;
   gfx::Range uniformRange;
   std::array<gfx::Range, MaxInterpolatedFrames> interpolatedUniformRanges;
+  std::array<gfx::Range, AURORA_STEREO_EYE_COUNT> stereoUniformRanges;
+  UniformReplayLayout uniformReplayLayout;
   uint32_t vtxCount;
   uint32_t indexCount;
   uint32_t instanceCount;

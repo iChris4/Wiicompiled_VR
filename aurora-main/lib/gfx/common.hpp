@@ -281,7 +281,32 @@ void shutdown();
 bool begin_frame();
 bool resume_frame();
 void abort_frame() noexcept;
+struct ReplayTarget {
+  wgpu::TextureView colorView;
+  wgpu::TextureView resolveView;
+  wgpu::TextureView depthView;
+  wgpu::Texture copySourceTexture;
+  wgpu::TextureView copySourceView;
+  wgpu::TextureView copySourceDepthView;
+  wgpu::Extent3D size{};
+  uint32_t msaaSamples = 1;
+};
+
+struct StereoReplayEye {
+  ReplayTarget target;
+  Mat4x4<float> projection;
+  Mat3x4<float> viewFromCenter;
+};
+
+struct StereoReplayFrame {
+  std::array<StereoReplayEye, AURORA_STEREO_EYE_COUNT> eyes;
+};
+
 void end_frame(const wgpu::CommandEncoder& cmd);
+// Prepares eye-specific uniform copies before unmapping the staging buffer.
+// Returns false without modifying the mono path when the uniform buffer has
+// insufficient room for the additional copies.
+bool end_frame(const wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame);
 void end_batch(const wgpu::CommandEncoder& cmd);
 uint32_t current_frame() noexcept;
 
@@ -313,6 +338,12 @@ void seal_frame(SealedFrame& out) noexcept;
 // Encode a sealed frame. Never touches the producer-visible recording state,
 // so this may run concurrently with the producer's FIFO drains.
 void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedFrame = -1, bool finalize = true);
+
+// Replays only main-EFB passes into one Aurora-owned eye target. Native
+// offscreen/EFB-copy passes are consumed from the mono render and are not
+// mutated by stereo replay.
+void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd,
+                       const StereoReplayFrame& stereoFrame, uint32_t eye, bool finalize = false);
 
 // Encode the frame that is still being recorded. Only for the synchronous
 // EFB-readback split path, which runs on the producer thread.
