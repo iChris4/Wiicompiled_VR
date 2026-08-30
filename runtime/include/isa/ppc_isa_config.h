@@ -4,7 +4,13 @@
 #include <cstdint>
 
 #define MKW_RESTRICT __restrict
+#if defined(__x86_64__)
 #include <immintrin.h>
+#elif defined(__aarch64__)
+#include <arm_neon.h>
+#else
+#error "ppc_isa_config.h has no SIMD intrinsics header for this architecture"
+#endif
 
 inline constexpr bool MkwStateFreeAbiEnabled(uint32_t) noexcept
 {

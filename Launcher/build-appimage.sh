@@ -21,6 +21,42 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 workspace=$(cd "$script_dir/.." && pwd)
 
+# `uname -m` reports the *kernel's* architecture, which can differ from userspace - an aarch64
+# kernel can run a 32-bit armhf userland (as shipped by 32-bit Raspberry Pi OS), same as an x86_64
+# kernel can run an i686 one. What matters here is which userspace binaries (dotnet, appimagetool)
+# will actually run, so this reads the ELF header of this script's own running bash interpreter -
+# real userspace - rather than trusting the kernel's self-report. /proc/$$/exe (not /proc/self/exe:
+# that would resolve inside the readlink subprocess below, to readlink itself, not to bash) is this
+# shell's own PID. EI_CLASS (byte 4: 1=32-bit, 2=64-bit) and e_machine (bytes 18-19: 3=EM_386,
+# 40=EM_ARM, 62=EM_X86_64, 183=EM_AARCH64) are read as plain little-endian bytes, which every
+# real-world x86/ARM Linux userland uses; ELF's big-endian encoding is a non-issue here since no
+# Linux distro ships a big-endian x86 or ARM userland.
+elf_exe=$(readlink -f "/proc/$$/exe")
+elf_class=$(od -An -t u1 -j 4 -N 1 "$elf_exe" | tr -d ' ')
+elf_machine_lo=$(od -An -t u1 -j 18 -N 1 "$elf_exe" | tr -d ' ')
+elf_machine_hi=$(od -An -t u1 -j 19 -N 1 "$elf_exe" | tr -d ' ')
+elf_machine=$(( elf_machine_hi * 256 + elf_machine_lo ))
+
+# Mirrors the host-architecture detection NodToolProvider.cs already does (RuntimeInformation.
+# OSArchitecture) so this script's own dotnet RID and appimagetool selection agree with the
+# nodtool binary that same code path resolves below. local-build.sh needs no such mapping itself:
+# it just drives the native CMake configure, which already accepts x86_64 or aarch64 natively
+# (see runtime/CMakeLists.txt's CMAKE_SYSTEM_PROCESSOR check).
+case "$elf_class:$elf_machine" in
+    2:62)
+        dotnet_rid=linux-x64
+        appimagetool_arch=x86_64
+        ;;
+    2:183)
+        dotnet_rid=linux-arm64
+        appimagetool_arch=aarch64
+        ;;
+    *)
+        echo "build-appimage.sh: unsupported userspace architecture (ELF class $elf_class, machine $elf_machine) - WiiCompiled requires a 64-bit x86_64 or aarch64 userland" >&2
+        exit 1
+        ;;
+esac
+
 output_dir="$workspace/Launcher/dist"
 appimagetool_override=""
 
@@ -40,10 +76,10 @@ appdir="$workspace/Launcher/artifacts/appimage-build/AppDir"
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/workspace/Launcher"
 
-echo "Publishing the installer (self-contained linux-x64)..."
+echo "Publishing the installer (self-contained $dotnet_rid)..."
 publish_tmp="$workspace/Launcher/artifacts/appimage-build/publish"
 rm -rf "$publish_tmp"
-dotnet publish "$workspace/Launcher/WiiCompiled.Setup.Linux" -c Release -r linux-x64 \
+dotnet publish "$workspace/Launcher/WiiCompiled.Setup.Linux" -c Release -r "$dotnet_rid" \
     --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true \
     -o "$publish_tmp"
 cp "$publish_tmp/WiiCompiled.Setup.Linux" "$appdir/usr/bin/wiicompiled-setup"
@@ -52,10 +88,10 @@ chmod +x "$appdir/usr/bin/wiicompiled-setup"
 # Published as a self-contained binary too, so an AppImage user never needs a `dotnet` SDK on
 # PATH at all - local-build.sh is told about it via --translator-bin and skips its own
 # dotnet-build-from-source step entirely (see local-build.sh's translator resolution branch).
-echo "Publishing the translator (self-contained linux-x64)..."
+echo "Publishing the translator (self-contained $dotnet_rid)..."
 translator_publish_tmp="$workspace/Launcher/artifacts/appimage-build/publish-translator"
 rm -rf "$translator_publish_tmp"
-dotnet publish "$workspace/translator/src/Translator.Cli" -c Release -r linux-x64 \
+dotnet publish "$workspace/translator/src/Translator.Cli" -c Release -r "$dotnet_rid" \
     --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true \
     -o "$translator_publish_tmp"
 cp "$translator_publish_tmp/Translator.Cli" "$appdir/usr/bin/translator-cli"
@@ -155,11 +191,13 @@ PY
 echo "Resolving appimagetool..."
 appimagetool="$appimagetool_override"
 if [[ -z "$appimagetool" ]]; then
-    appimagetool="$workspace/Launcher/artifacts/appimagetool"
+    # Cache path is arch-tagged so a workspace shared or synced across an x86_64 and an aarch64
+    # machine never picks up the wrong architecture's cached binary.
+    appimagetool="$workspace/Launcher/artifacts/appimagetool-$appimagetool_arch"
     if [[ ! -x "$appimagetool" ]]; then
-        echo "Downloading appimagetool..."
+        echo "Downloading appimagetool ($appimagetool_arch)..."
         mkdir -p "$(dirname "$appimagetool")"
-        curl -fsSL "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
+        curl -fsSL "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$appimagetool_arch.AppImage" \
             -o "$appimagetool"
         chmod +x "$appimagetool"
     fi
@@ -169,5 +207,6 @@ mkdir -p "$output_dir"
 echo "Packaging..."
 # appimagetool detects the target architecture from the first ELF executable it finds in the
 # AppDir; AppRun here is a shell script, not ELF, so ARCH must be set explicitly.
-ARCH=x86_64 "$appimagetool" "$appdir" "$output_dir/WiiCompiled-Setup-x86_64.AppImage"
-echo "Built: $output_dir/WiiCompiled-Setup-x86_64.AppImage"
+output_name="WiiCompiled-Setup-$appimagetool_arch.AppImage"
+ARCH="$appimagetool_arch" "$appimagetool" "$appdir" "$output_dir/$output_name"
+echo "Built: $output_dir/$output_name"

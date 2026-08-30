@@ -4,6 +4,13 @@
 // build/PCH) and runs from a priority-101 C initializer, ahead of every C++ dynamic initializer
 // and thus the first AVX2 code that could execute. Keep it free of anything that could pull in
 // vectorized code: no iostreams, no std::string, no runtime-wide headers.
+//
+// x86-64-v3 is an x86-specific optional-feature baseline (AVX2/BMI2/FMA and friends are not
+// guaranteed present on every x86_64 chip); nothing here applies on AArch64, where ASIMD/NEON is
+// mandatory in the base architecture and PublicProducts.cmake never applies an -march=x86-64-v3
+// equivalent flag to begin with. That branch below is a no-op stub, not a port of this check.
+
+#if defined(__x86_64__)
 
 #include <cstdint>
 #include <cstdio>
@@ -214,3 +221,11 @@ extern "C" int MkwHostCpuBaselineInit() {
 __attribute__((constructor(101))) static void MkwHostCpuBaselineCtor() {
     MkwHostCpuBaselineInit();
 }
+
+#else  // !defined(__x86_64__)
+
+extern "C" int MkwHostCpuBaselineInit() {
+    return 0;
+}
+
+#endif  // defined(__x86_64__)

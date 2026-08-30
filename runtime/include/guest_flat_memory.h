@@ -12,10 +12,26 @@
 namespace GuestFlat {
 
 // Fixed base so the emitted access is `[reg + imm64-in-register]` with no load
-// of a global. 16 TiB: clear of the Windows ASan shadow (32 TiB) and of the
-// usual image/heap placement.
+// of a global.
 inline constexpr uint64_t kGuestSpaceSize = 0x1'0000'0000ull;
+#if defined(__x86_64__)
+// 16 TiB: clear of the Windows ASan shadow (32 TiB) and of the usual image/heap
+// placement.
 inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'1000'0000'0000ull;
+#elif defined(__aarch64__)
+// 16 TiB (this arch's x86_64 sibling value) is unreachable on any AArch64
+// kernel configured for 39-bit virtual addresses (512 GiB ceiling) - common on
+// older/embedded targets (e.g. this project's own tested Jetson/L4T board, kernel
+// 4.9). There mmap() silently ignores a hint above the ceiling and hands back an
+// address near the top of the real range instead, which this module's caller
+// then rejects as "already occupied". 64 GiB is reachable on every AArch64 VA
+// width in real use (39-bit minimum and up) and was confirmed via direct mmap
+// probing to sit far below where the PIE image, heap, shared libraries and
+// stack actually land (all clustered above ~340 GiB on a 39-bit/512 GiB system).
+inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'0010'0000'0000ull;
+#else
+#error "guest_flat_memory.h has no fixed flat guest base chosen for this architecture"
+#endif
 
 #define MKW_FLAT_GUEST_BASE (reinterpret_cast<uint8_t*>(GuestFlat::kFixedFlatGuestBase))
 

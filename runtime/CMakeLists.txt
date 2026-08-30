@@ -6,8 +6,8 @@ if((NOT (WIN32 AND MINGW)) AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux"))
 endif()
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR
    NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR
-   NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
-    message(FATAL_ERROR "WiiCompiled requires 64-bit Clang targeting x86_64")
+   NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|aarch64|arm64|ARM64)$")
+    message(FATAL_ERROR "WiiCompiled requires 64-bit Clang targeting x86_64 or aarch64")
 endif()
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     message(FATAL_ERROR "WiiCompiled only supports Release builds")

@@ -273,8 +273,12 @@ void EnsureReservation() {
         std::ostringstream oss;
         oss << "Unable to reserve the 4 GiB flat guest address space at 0x" << std::hex
             << reinterpret_cast<uintptr_t>(requested) << std::dec
-            << ". Something else in this process already occupies part of the 16 TiB region - "
-               "an injected library, an overlay or a debugging tool is the usual cause.";
+            << ". Either something else in this process already occupies that address (an "
+               "injected library, an overlay or a debugging tool is the usual cause), or this "
+               "kernel's virtual address space does not reach that high (common on some 32-bit-"
+               "userspace-compatible or older AArch64 configurations, e.g. a kernel built for "
+               "39-bit virtual addresses) - in the latter case mmap() silently substitutes an "
+               "address near the top of the space it does have instead of honoring the request.";
         throw std::runtime_error(oss.str());
     }
 #endif
