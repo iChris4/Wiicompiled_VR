@@ -8,6 +8,7 @@
 #include "../webgpu/gpu.hpp"
 #include "../gx/pipeline.hpp"
 #include "pipeline_cache.hpp"
+#include "stereo_replay.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
 #include "texture_replacement.hpp"
@@ -182,6 +183,7 @@ struct RenderPass {
   bool resolveNeedsShaderSampling = false;
   bool resolveLinearSampling = false;
   bool snapshotColorResolveSource = false;
+  bool efbTarget = false;
   std::vector<tex_palette_conv::ConvRequest> paletteConvs;
 };
 static std::vector<RenderPass> g_renderPasses;
@@ -392,6 +394,7 @@ static void set_efb_targets(RenderPass& pass) {
   pass.copySourceDepthView = webgpu::g_depthBuffer.view;
   pass.targetSize = webgpu::g_frameBuffer.size;
   pass.msaaSamples = webgpu::g_graphicsConfig.msaaSamples;
+  pass.efbTarget = true;
 }
 
 struct OffscreenCacheKey {
@@ -1099,7 +1102,95 @@ void abort_frame() noexcept {
   end_pipeline_frame();
 }
 
-static void end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame) {
+static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame) noexcept {
+  size_t requiredBytes = 0;
+  for (const auto& pass : g_renderPasses) {
+    if (!pass.efbTarget) {
+      continue;
+    }
+    for (const auto& command : pass.commands) {
+      if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX ||
+          !command.data.draw.gx.uniformReplayLayout.perspective) {
+        continue;
+      }
+      const auto& draw = command.data.draw.gx;
+      const auto& layout = draw.uniformReplayLayout;
+      const size_t projectionEnd = static_cast<size_t>(layout.projectionOffset) + sizeof(Mat4x4<float>);
+      const size_t positionEnd = static_cast<size_t>(layout.positionOffset) +
+                                 static_cast<size_t>(layout.positionMatrixCount) * sizeof(Mat3x4<float>);
+      const size_t normalEnd = static_cast<size_t>(layout.normalOffset) +
+                               static_cast<size_t>(layout.normalMatrixCount) * sizeof(Mat3x4<float>);
+      if (std::max({projectionEnd, positionEnd, normalEnd}) > draw.uniformRange.size) {
+        Log.error("Stereo replay rejected an invalid GX uniform layout (range={}, projection={}, position={}, normal={})",
+                  draw.uniformRange.size, projectionEnd, positionEnd, normalEnd);
+        return false;
+      }
+      requiredBytes += static_cast<size_t>(draw.uniformRange.size) * AURORA_STEREO_EYE_COUNT;
+    }
+  }
+
+  // end_batch_impl appends MaxUniformSize bytes after this for safe dynamic-offset reads.
+  if (requiredBytes > UniformBufferSize ||
+      g_uniforms.size() > UniformBufferSize - requiredBytes ||
+      g_uniforms.size() + requiredBytes > UniformBufferSize - gx::MaxUniformSize) {
+    Log.warn("Skipping stereo replay: GX uniform buffer needs {} additional bytes ({} of {} already used)",
+             requiredBytes, g_uniforms.size(), UniformBufferSize);
+    return false;
+  }
+
+  for (auto& pass : g_renderPasses) {
+    if (!pass.efbTarget) {
+      continue;
+    }
+    for (auto& command : pass.commands) {
+      if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX ||
+          !command.data.draw.gx.uniformReplayLayout.perspective) {
+        continue;
+      }
+      auto& draw = command.data.draw.gx;
+      const auto& layout = draw.uniformReplayLayout;
+      for (uint32_t eyeIndex = 0; eyeIndex < AURORA_STEREO_EYE_COUNT; ++eyeIndex) {
+        auto [uniform, range] = copy_uniform(draw.uniformRange);
+        draw.stereoUniformRanges[eyeIndex] = range;
+        const auto& eye = stereoFrame.eyes[eyeIndex];
+
+        std::memcpy(uniform.data() + layout.projectionOffset, &eye.projection, sizeof(eye.projection));
+
+        for (uint32_t matrix = 0; matrix < layout.positionMatrixCount; ++matrix) {
+          if ((layout.positionMatrixMask & (1u << matrix)) == 0) {
+            continue;
+          }
+          const size_t offset = layout.positionOffset + matrix * sizeof(Mat3x4<float>);
+          Mat3x4<float> source;
+          std::memcpy(&source, uniform.data() + offset, sizeof(source));
+          const auto transformed = stereo_replay::compose_affine(eye.viewFromCenter, source);
+          std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
+        }
+        for (uint32_t matrix = 0; matrix < layout.normalMatrixCount; ++matrix) {
+          const size_t offset = layout.normalOffset + matrix * sizeof(Mat3x4<float>);
+          Mat3x4<float> source;
+          std::memcpy(&source, uniform.data() + offset, sizeof(source));
+          const auto transformed = stereo_replay::compose_normal(eye.viewFromCenter, source);
+          std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
+        }
+
+        if (pass.targetSize.width != 0 && pass.targetSize.height != 0) {
+          float renderSize[2];
+          std::memcpy(renderSize, uniform.data() + 8, sizeof(renderSize));
+          renderSize[0] *= static_cast<float>(eye.target.size.width) /
+                           static_cast<float>(pass.targetSize.width);
+          renderSize[1] *= static_cast<float>(eye.target.size.height) /
+                           static_cast<float>(pass.targetSize.height);
+          std::memcpy(uniform.data() + 8, renderSize, sizeof(renderSize));
+        }
+      }
+    }
+  }
+  return true;
+}
+
+static bool end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame,
+                           const StereoReplayFrame* stereoFrame = nullptr) {
   ZoneScoped;
   ASSERT(!g_inOffscreen, "end_frame called while offscreen rendering is active");
   if (advanceFrame) {
@@ -1109,6 +1200,7 @@ static void end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame) {
     // interpolation tasks pointing into it would dangle. Tie the clear to the rotation itself.
     gx::drop_pending_frame_interpolation_uniforms();
   }
+  const bool stereoPrepared = stereoFrame == nullptr || prepare_stereo_replay_uniforms(*stereoFrame);
   g_uniforms.append_zeroes(gx::MaxUniformSize); // Pad the end of the buffer
   uint64_t bufferOffset = 0;
   const auto writeBuffer = [&](ByteBuffer& buf, wgpu::Buffer& out, uint64_t size, std::string_view label) {
@@ -1158,11 +1250,16 @@ static void end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame) {
   if (advanceFrame) {
     ++g_frameIndex;
   }
+  return stereoPrepared;
 }
 
-void end_frame(const wgpu::CommandEncoder& cmd) { end_batch_impl(cmd, true); }
+void end_frame(const wgpu::CommandEncoder& cmd) { (void)end_batch_impl(cmd, true); }
 
-void end_batch(const wgpu::CommandEncoder& cmd) { end_batch_impl(cmd, false); }
+bool end_frame(const wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame) {
+  return end_batch_impl(cmd, true, &stereoFrame);
+}
+
+void end_batch(const wgpu::CommandEncoder& cmd) { (void)end_batch_impl(cmd, false); }
 
 uint32_t current_frame() noexcept { return g_frameIndex; }
 
@@ -1195,18 +1292,31 @@ static const char* render_pass_label(u32 index) noexcept {
   return index < kRenderPassLabels.size() ? kRenderPassLabels[index] : "Render pass";
 }
 
-static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vector<RenderPass>& passes, u32 idx,
-                             int32_t interpolatedFrame);
+struct RenderInvocation {
+  int32_t interpolatedFrame = -1;
+  uint32_t stereoEye = UINT32_MAX;
+  const ReplayTarget* target = nullptr;
+  bool finalize = true;
+  bool replayOnlyEfb = false;
+  bool encodeTextureBakes = true;
+  bool encodeResolves = true;
+  bool captureDepth = true;
+};
 
-static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEncoder& cmd, int32_t interpolatedFrame,
-                        bool finalize) {
+static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vector<RenderPass>& passes, u32 idx,
+                             const RenderInvocation& invocation);
+
+static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEncoder& cmd,
+                        const RenderInvocation& invocation) {
   ZoneScoped;
   // Palette conversions, MSAA resolves and EFB copies depend on sealed frame state, not on the
   // interpolation weight, so encode them on the native render and let replay slots sample them.
-  const bool encodeTextureBakes = interpolatedFrame < 0;
   for (u32 i = 0; i < renderPasses.size(); ++i) {
     const auto& passInfo = renderPasses[i];
-    if (encodeTextureBakes) {
+    if (invocation.replayOnlyEfb && !passInfo.efbTarget) {
+      continue;
+    }
+    if (invocation.encodeTextureBakes) {
       for (const auto& conv : passInfo.paletteConvs) {
         tex_palette_conv::run(cmd, conv);
       }
@@ -1214,16 +1324,20 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
     const bool hasRenderWork = passInfo.clearColor || passInfo.clearDepth || !passInfo.commands.empty();
     if (i == renderPasses.size() - 1) {
       ASSERT(!passInfo.resolveTarget, "Final render pass must not have resolve target");
-    } else if (!(passInfo.resolveTarget && encodeTextureBakes) && !hasRenderWork) {
+    } else if (!(passInfo.resolveTarget && invocation.encodeResolves) && !hasRenderWork) {
       // Skip only empty intermediate passes: offscreen and scratch passes with resolves still have to
       // run for later samplers, and on a replay slot a resolve-only pass has nothing to encode.
       continue;
     }
 
+    const bool overrideTarget = invocation.target != nullptr && passInfo.efbTarget;
+    const auto colorView = overrideTarget ? invocation.target->colorView : passInfo.colorView;
+    const auto resolveView = overrideTarget ? invocation.target->resolveView : passInfo.resolveView;
+    const auto depthView = overrideTarget ? invocation.target->depthView : passInfo.depthView;
     const std::array attachments{
         wgpu::RenderPassColorAttachment{
-            .view = passInfo.colorView,
-            .resolveTarget = passInfo.resolveView,
+            .view = colorView,
+            .resolveTarget = resolveView,
             .loadOp = passInfo.clearColor ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
             .storeOp = wgpu::StoreOp::Store,
             .clearValue =
@@ -1236,7 +1350,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
         },
     };
     const wgpu::RenderPassDepthStencilAttachment depthStencilAttachment{
-        .view = passInfo.depthView,
+        .view = depthView,
         .depthLoadOp = passInfo.clearDepth ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
         .depthStoreOp = wgpu::StoreOp::Store,
         .depthClearValue = passInfo.clearDepthValue,
@@ -1249,14 +1363,14 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
     };
 
     auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
-    render_pass_impl(pass, renderPasses, i, interpolatedFrame);
+    render_pass_impl(pass, renderPasses, i, invocation);
     pass.End();
 
-    if (finalize && i == renderPasses.size() - 1) {
+    if (invocation.finalize && invocation.captureDepth && i == renderPasses.size() - 1) {
       depth_peek::encode_frame_snapshot(cmd, passInfo.copySourceDepthView, passInfo.targetSize, passInfo.msaaSamples);
     }
 
-    if (passInfo.resolveTarget) {
+    if (passInfo.resolveTarget && invocation.encodeResolves) {
       const bool isDepth = gx::is_depth_format(passInfo.resolveFormat);
       wgpu::Texture resolveSourceTexture = passInfo.copySourceTexture;
       wgpu::TextureView resolveSourceView = isDepth ? passInfo.copySourceDepthView : passInfo.copySourceView;
@@ -1322,19 +1436,19 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
       }
     }
   }
-  if (finalize) {
+  if (invocation.finalize) {
     recycle_render_passes(renderPasses);
   }
 
 #if defined(AURORA_GFX_DEBUG_GROUPS)
-  if (finalize && !g_debugGroupStack.empty()) {
+  if (invocation.finalize && !g_debugGroupStack.empty()) {
     for (auto& it : std::ranges::reverse_view(g_debugGroupStack)) {
       Log.warn("Debug group was not popped at end of frame: {}", it);
     }
     g_debugGroupStack.clear();
   }
 
-  if (finalize && g_debugMarkers.size() > 0) {
+  if (invocation.finalize && g_debugMarkers.size() > 0) {
     g_debugMarkers.clear();
   }
 #endif
@@ -1354,11 +1468,36 @@ void seal_frame(SealedFrame& out) noexcept {
 }
 
 void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedFrame, bool finalize) {
-  render_impl(frame.data().passes, cmd, interpolatedFrame, finalize);
+  render_impl(frame.data().passes, cmd,
+              RenderInvocation{
+                  .interpolatedFrame = interpolatedFrame,
+                  .finalize = finalize,
+                  .encodeTextureBakes = interpolatedFrame < 0,
+              });
+}
+
+void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd,
+                       const StereoReplayFrame& stereoFrame, uint32_t eye, bool finalize) {
+  CHECK(eye < AURORA_STEREO_EYE_COUNT, "invalid stereo eye {}", eye);
+  render_impl(frame.data().passes, cmd,
+              RenderInvocation{
+                  .stereoEye = eye,
+                  .target = &stereoFrame.eyes[eye].target,
+                  .finalize = finalize,
+                  .replayOnlyEfb = true,
+                  .encodeTextureBakes = false,
+                  .encodeResolves = false,
+                  .captureDepth = false,
+              });
 }
 
 void render(wgpu::CommandEncoder& cmd, int32_t interpolatedFrame, bool finalize) {
-  render_impl(g_renderPasses, cmd, interpolatedFrame, finalize);
+  render_impl(g_renderPasses, cmd,
+              RenderInvocation{
+                  .interpolatedFrame = interpolatedFrame,
+                  .finalize = finalize,
+                  .encodeTextureBakes = interpolatedFrame < 0,
+              });
   if (finalize) {
     g_currentRenderPass = UINT32_MAX;
     expire_bind_group_cache();
@@ -1376,7 +1515,7 @@ void after_submit() noexcept {
 }
 
 static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vector<RenderPass>& renderPasses, u32 idx,
-                             int32_t interpolatedFrame) {
+                             const RenderInvocation& invocation) {
   // Per-invocation, not per-process: two encoders can be recording at once.
   gx::DrawEncodeState encodeState{};
   encodeState.boundTextureBindGroup = gx::g_emptyTextureBindGroup.Get();
@@ -1387,6 +1526,16 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
   // Bind static bind group for the whole pass
   pass.SetBindGroup(0, g_staticBindGroup);
   pass.SetBindGroup(2, gx::g_emptyTextureBindGroup);
+
+  const auto& sourceSize = renderPasses[idx].targetSize;
+  const bool overrideTarget = invocation.target != nullptr && renderPasses[idx].efbTarget;
+  const auto targetSize = overrideTarget ? invocation.target->size : sourceSize;
+  const float scaleX = overrideTarget && sourceSize.width != 0
+                           ? static_cast<float>(targetSize.width) / static_cast<float>(sourceSize.width)
+                           : 1.0f;
+  const float scaleY = overrideTarget && sourceSize.height != 0
+                           ? static_cast<float>(targetSize.height) / static_cast<float>(sourceSize.height)
+                           : 1.0f;
 
   for (const auto& cmd : renderPasses[idx].commands) {
 #ifdef AURORA_GFX_DEBUG_GROUPS
@@ -1414,29 +1563,44 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
       // reproduced in clip space. Passing the raw swapped pair diverged per backend in release builds.
       const float minDepth = std::clamp(std::min(vp.znear, vp.zfar), 0.0f, 1.0f);
       const float maxDepth = std::clamp(std::max(vp.znear, vp.zfar), 0.0f, 1.0f);
-      pass.SetViewport(vp.left, vp.top, vp.width, vp.height, minDepth, maxDepth);
+      pass.SetViewport(vp.left * scaleX, vp.top * scaleY, vp.width * scaleX, vp.height * scaleY,
+                       minDepth, maxDepth);
     } break;
     case CommandType::SetScissor: {
       const auto& sc = cmd.data.setScissor;
-      const auto& size = renderPasses[idx].targetSize;
-      const auto left = std::clamp(sc.x, 0, static_cast<int32_t>(size.width));
-      const auto top = std::clamp(sc.y, 0, static_cast<int32_t>(size.height));
-      const auto right =
-          std::clamp(sc.x + sc.width, left, static_cast<int32_t>(size.width));
-      const auto bottom =
-          std::clamp(sc.y + sc.height, top, static_cast<int32_t>(size.height));
-      pass.SetScissorRect(static_cast<uint32_t>(left), static_cast<uint32_t>(top),
-                          static_cast<uint32_t>(right - left), static_cast<uint32_t>(bottom - top));
+      const auto sourceLeft = std::clamp(sc.x, 0, static_cast<int32_t>(sourceSize.width));
+      const auto sourceTop = std::clamp(sc.y, 0, static_cast<int32_t>(sourceSize.height));
+      const auto sourceRight =
+          std::clamp(sc.x + sc.width, sourceLeft, static_cast<int32_t>(sourceSize.width));
+      const auto sourceBottom =
+          std::clamp(sc.y + sc.height, sourceTop, static_cast<int32_t>(sourceSize.height));
+      const auto left = static_cast<uint32_t>(std::clamp(
+          static_cast<int32_t>(std::floor(static_cast<float>(sourceLeft) * scaleX)), 0,
+          static_cast<int32_t>(targetSize.width)));
+      const auto top = static_cast<uint32_t>(std::clamp(
+          static_cast<int32_t>(std::floor(static_cast<float>(sourceTop) * scaleY)), 0,
+          static_cast<int32_t>(targetSize.height)));
+      const auto right = static_cast<uint32_t>(std::clamp(
+          static_cast<int32_t>(std::ceil(static_cast<float>(sourceRight) * scaleX)),
+          static_cast<int32_t>(left), static_cast<int32_t>(targetSize.width)));
+      const auto bottom = static_cast<uint32_t>(std::clamp(
+          static_cast<int32_t>(std::ceil(static_cast<float>(sourceBottom) * scaleY)),
+          static_cast<int32_t>(top), static_cast<int32_t>(targetSize.height)));
+      pass.SetScissorRect(left, top, right - left, bottom - top);
     } break;
     case CommandType::Draw: {
       const auto& draw = cmd.data.draw;
       switch (draw.type) {
       case ShaderType::GX: {
         const gfx::Range* uniformOverride = nullptr;
-        if (interpolatedFrame >= 0 &&
-            static_cast<size_t>(interpolatedFrame) < draw.gx.interpolatedUniformRanges.size() &&
-            draw.gx.interpolatedUniformRanges[interpolatedFrame].size != 0) {
-          uniformOverride = &draw.gx.interpolatedUniformRanges[interpolatedFrame];
+        if (invocation.stereoEye < draw.gx.stereoUniformRanges.size() &&
+            draw.gx.stereoUniformRanges[invocation.stereoEye].size != 0) {
+          uniformOverride = &draw.gx.stereoUniformRanges[invocation.stereoEye];
+        } else if (invocation.interpolatedFrame >= 0 &&
+                   static_cast<size_t>(invocation.interpolatedFrame) <
+                       draw.gx.interpolatedUniformRanges.size() &&
+                   draw.gx.interpolatedUniformRanges[invocation.interpolatedFrame].size != 0) {
+          uniformOverride = &draw.gx.interpolatedUniformRanges[invocation.interpolatedFrame];
         }
         gx::render(draw.gx, pass, encodeState, renderPasses[idx].requireReadyPipelines, uniformOverride);
       } break;

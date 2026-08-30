@@ -6,6 +6,7 @@
 #include "gx/fifo.hpp"
 #include "gx/shader_info.hpp"
 #include "imgui.hpp"
+#include "stereo.hpp"
 #include "webgpu/gpu.hpp"
 #include <webgpu/webgpu_cpp.h>
 #endif
@@ -66,6 +67,22 @@ Module Log("aurora");
 
 std::atomic<uint32_t> g_captureFrame{UINT32_MAX};
 std::string g_captureOutputPath;
+
+struct StereoProviderRegistration {
+  AuroraStereoFrameProvider callback = nullptr;
+  void* userdata = nullptr;
+};
+#ifdef AURORA_ENABLE_GX
+struct StereoSinkRegistration {
+  stereo::SinkCallback callback = nullptr;
+  void* userdata = nullptr;
+};
+#endif
+std::mutex g_stereoRegistrationMutex;
+StereoProviderRegistration g_stereoProvider;
+#ifdef AURORA_ENABLE_GX
+StereoSinkRegistration g_stereoSink;
+#endif
 
 using PresentClock = std::chrono::steady_clock;
 
@@ -474,6 +491,133 @@ std::mutex g_queueSubmitMutex;
 std::mutex g_surfaceMutex;
 std::atomic<bool> g_surfaceReconfigurePending{false};
 std::atomic<bool> g_surfaceRecreatePending{false};
+
+struct StereoEyeTarget {
+  webgpu::TextureWithSampler color;
+  webgpu::TextureWithSampler resolvedColor;
+  webgpu::TextureWithSampler depth;
+
+  const webgpu::TextureWithSampler& output() const noexcept {
+    return resolvedColor.texture ? resolvedColor : color;
+  }
+};
+std::array<StereoEyeTarget, AURORA_STEREO_EYE_COUNT> g_stereoEyeTargets;
+
+void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height) {
+  auto& target = g_stereoEyeTargets[eyeIndex];
+  const uint32_t samples = webgpu::g_graphicsConfig.msaaSamples;
+  if (target.color.texture && target.color.size.width == width && target.color.size.height == height &&
+      ((samples > 1 && target.resolvedColor.texture) || (samples == 1 && !target.resolvedColor.texture))) {
+    return;
+  }
+
+  target = {};
+  target.color = webgpu::create_render_texture(width, height, samples > 1);
+  if (samples > 1) {
+    target.resolvedColor =
+        webgpu::create_render_texture(target.color.size.width, target.color.size.height, false);
+  }
+
+  const wgpu::TextureDescriptor depthDescriptor{
+      .label = eyeIndex == 0 ? "Stereo left eye depth" : "Stereo right eye depth",
+      .usage = wgpu::TextureUsage::RenderAttachment,
+      .dimension = wgpu::TextureDimension::e2D,
+      .size = target.color.size,
+      .format = webgpu::g_graphicsConfig.depthFormat,
+      .mipLevelCount = 1,
+      .sampleCount = samples,
+  };
+  target.depth.texture = g_device.CreateTexture(&depthDescriptor);
+  target.depth.view = target.depth.texture.CreateView();
+  target.depth.size = target.color.size;
+  target.depth.format = webgpu::g_graphicsConfig.depthFormat;
+}
+
+std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame) noexcept {
+  StereoProviderRegistration registration;
+  {
+    std::lock_guard lock(g_stereoRegistrationMutex);
+    registration = g_stereoProvider;
+  }
+  if (registration.callback == nullptr) {
+    return std::nullopt;
+  }
+
+  AuroraStereoFrame frame{};
+  bool provided = false;
+  try {
+    provided = registration.callback(logicalFrame, &frame, registration.userdata);
+  } catch (...) {
+    Log.error("Stereo frame provider threw an exception; rendering frame {} in mono", logicalFrame);
+    return std::nullopt;
+  }
+  if (!provided) {
+    return std::nullopt;
+  }
+
+  const auto finite = [](const float* values, size_t count) {
+    return std::all_of(values, values + count, [](float value) { return std::isfinite(value); });
+  };
+  for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+    const auto& input = frame.eyes[eye];
+    if (input.width == 0 || input.height == 0 || !finite(input.projection, 16) ||
+        !finite(input.viewFromCenter, 12)) {
+      Log.warn("Stereo frame {} has invalid eye {} dimensions or transforms; rendering in mono",
+               logicalFrame, eye);
+      return std::nullopt;
+    }
+  }
+  return frame;
+}
+
+gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input) {
+  gfx::StereoReplayFrame replay{};
+  for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+    ensure_stereo_eye_target(eye, input.eyes[eye].width, input.eyes[eye].height);
+    const auto& owned = g_stereoEyeTargets[eye];
+    const auto& output = owned.output();
+    auto& view = replay.eyes[eye];
+    view.target = {
+        .colorView = owned.color.view,
+        .resolveView = owned.resolvedColor.view,
+        .depthView = owned.depth.view,
+        .copySourceTexture = output.texture,
+        .copySourceView = output.view,
+        .copySourceDepthView = owned.depth.view,
+        .size = owned.color.size,
+        .msaaSamples = webgpu::g_graphicsConfig.msaaSamples,
+    };
+    std::memcpy(&view.projection, input.eyes[eye].projection, sizeof(view.projection));
+    std::memcpy(&view.viewFromCenter, input.eyes[eye].viewFromCenter, sizeof(view.viewFromCenter));
+  }
+  return replay;
+}
+
+void run_stereo_sink(wgpu::CommandEncoder& encoder, uint64_t frameToken, uint32_t logicalFrame) noexcept {
+  StereoSinkRegistration registration;
+  {
+    std::lock_guard lock(g_stereoRegistrationMutex);
+    registration = g_stereoSink;
+  }
+  if (registration.callback == nullptr) {
+    return;
+  }
+
+  stereo::SinkFrame frame{
+      .frameToken = frameToken,
+      .logicalFrame = logicalFrame,
+  };
+  for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+    const auto& output = g_stereoEyeTargets[eye].output();
+    frame.eyes[eye] = {
+        .texture = &output.texture,
+        .view = &output.view,
+        .size = output.size,
+        .format = output.format,
+    };
+  }
+  registration.callback(encoder, frame, registration.userdata);
+}
 
 void request_surface_reconfigure() noexcept {
   g_surfaceReconfigurePending.store(true, std::memory_order_release);

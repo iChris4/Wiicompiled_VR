@@ -3,7 +3,7 @@
 #include "vr/mkw_vr_policy.h"
 
 #include <algorithm>
-#include <cmath>
+#include <cstring>
 #include <mutex>
 
 namespace mkw::vr {
@@ -22,19 +22,34 @@ struct PolicyState {
 std::mutex g_policy_mutex;
 PolicyState g_policy;
 
-bool IsFinitePositive(float value) noexcept {
-    return std::isfinite(value) && value > 0.0f;
+uint32_t FloatBits(const float* value) noexcept {
+    uint32_t bits = 0;
+    std::memcpy(&bits, value, sizeof(bits));
+    return bits;
+}
+
+bool IsFiniteFloat(const float* value) noexcept {
+    // mkw_runtime_common is built with -ffast-math, which permits the compiler
+    // to fold std::isfinite to true. Inspecting the object representation keeps
+    // this validation effective under the target's real compile flags.
+    return (FloatBits(value) & 0x7F800000u) != 0x7F800000u;
+}
+
+bool IsFinitePositive(const float* value) noexcept {
+    const uint32_t bits = FloatBits(value);
+    return (bits & 0x80000000u) == 0 && (bits & 0x7FFFFFFFu) != 0 &&
+           (bits & 0x7F800000u) != 0x7F800000u;
 }
 
 MkwVRPolicyConfig SanitizeConfig(const MkwVRPolicyConfig& config) noexcept {
     MkwVRPolicyConfig sanitized = config;
-    if (!IsFinitePositive(sanitized.world_units_per_meter)) {
+    if (!IsFinitePositive(&sanitized.world_units_per_meter)) {
         sanitized.world_units_per_meter = kDefaultConfig.world_units_per_meter;
     }
-    if (!IsFinitePositive(sanitized.hud_distance_meters)) {
+    if (!IsFinitePositive(&sanitized.hud_distance_meters)) {
         sanitized.hud_distance_meters = kDefaultConfig.hud_distance_meters;
     }
-    if (!IsFinitePositive(sanitized.hud_scale)) {
+    if (!IsFinitePositive(&sanitized.hud_scale)) {
         sanitized.hud_scale = kDefaultConfig.hud_scale;
     }
     return sanitized;
@@ -43,7 +58,7 @@ MkwVRPolicyConfig SanitizeConfig(const MkwVRPolicyConfig& config) noexcept {
 bool IsFiniteCamera(const MkwVRCameraObservation& camera) noexcept {
     return camera.valid &&
            std::all_of(camera.view_from_world.begin(), camera.view_from_world.end(),
-                       [](float value) { return std::isfinite(value); });
+                       [](const float& value) { return IsFiniteFloat(&value); });
 }
 
 VRPresentationMode SelectPresentation(const PolicyState& state) noexcept {

@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// The runtime source tree is globbed even in explicitly non-VR builds. Keep
+// this translation unit dependency-free in that configuration; callers that
+// include the public OpenXR headers must use the same feature guard.
+#if defined(MKW_ENABLE_OPENXR)
+
 #include "vr/openxr_runtime.h"
 
 #include <algorithm>
@@ -333,6 +338,10 @@ bool OpenXRRuntime::CreateSession(const void* graphics_binding) {
         return Fail(XR_ERROR_CALL_ORDER_INVALID, "CreateSession",
                     "Initialize must succeed first");
     }
+    if (m_instance_loss_pending) {
+        return Fail(XR_ERROR_INSTANCE_LOST, "CreateSession",
+                    "the OpenXR instance is loss-pending");
+    }
     if (HasSession()) {
         return Fail(XR_ERROR_CALL_ORDER_INVALID, "CreateSession",
                     "a session already exists");
@@ -361,7 +370,6 @@ bool OpenXRRuntime::CreateSession(const void* graphics_binding) {
 
     m_session_state = XR_SESSION_STATE_UNKNOWN;
     m_exit_requested = false;
-    m_instance_loss_pending = false;
     Log(OpenXRLogLevel::Info,
         "OpenXR session created; waiting for the runtime READY event");
     return true;
@@ -887,3 +895,5 @@ std::string OpenXRRuntime::ResultString(XrResult result) const {
 }
 
 } // namespace mkw::vr
+
+#endif // MKW_ENABLE_OPENXR
