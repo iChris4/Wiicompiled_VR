@@ -16,6 +16,11 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Media.Control.h>
+#elif defined(__linux__)
+#include <dlfcn.h>
+
+#include <string>
+#include <vector>
 #endif
 
 namespace MusicAttenuation {
@@ -191,6 +196,256 @@ void MonitorWindowsMediaSessions() noexcept {
                    << error.message().c_str() << std::endl;
     }
 }
+#elif defined(__linux__)
+
+// For linux - watches MPRIS players on the D-Bus session bus and drives the
+// same g_externalMediaPlaying / g_mediaControl* atomics.
+//
+// libdbus-1 is loaded with dlopen rather than linked so a machine with no
+// session bus (headless, D-Bus absent, some containers) can still run the game,
+// here, the monitor reports "unavailable" like the Windows does
+// when the media-session API is missing.
+
+extern "C" {
+
+struct MprisDBusConnection;
+struct MprisDBusMessage;
+
+// Mirrors DBusError from dbus-errors.h (frozen public layout).
+struct MprisDBusError {
+    const char* name;
+    const char* message;
+    unsigned int dummy1 : 1;
+    unsigned int dummy2 : 1;
+    unsigned int dummy3 : 1;
+    unsigned int dummy4 : 1;
+    unsigned int dummy5 : 1;
+    void* padding1;
+};
+
+// Mirrors DBusMessageIter from dbus-message.h
+struct MprisDBusIter {
+    void* dummy1;
+    void* dummy2;
+    uint32_t dummy3;
+    int dummy4;
+    int dummy5;
+    int dummy6;
+    int dummy7;
+    int dummy8;
+    int dummy9;
+    int dummy10;
+    int dummy11;
+    int pad1;
+    int pad2;
+    void* pad3;
+};
+
+} // extern "C"
+
+constexpr int kMprisBusSession = 0;   // DBUS_BUS_SESSION
+constexpr int kMprisTypeInvalid = 0;  // DBUS_TYPE_INVALID
+constexpr int kMprisTypeString = 's'; // DBUS_TYPE_STRING
+constexpr int kMprisTypeArray = 'a';  // DBUS_TYPE_ARRAY
+constexpr int kMprisTypeVariant = 'v';// DBUS_TYPE_VARIANT
+// Short blocking timeout so a wedged player can never stall the poll thread for
+// the full libdbus default (25s).
+constexpr int kMprisSendTimeoutMs = 500;
+constexpr char kMprisNamePrefix[] = "org.mpris.MediaPlayer2.";
+
+struct MprisDBus {
+    void* handle = nullptr;
+
+    MprisDBusConnection* (*bus_get_private)(int, MprisDBusError*) = nullptr;
+    void (*connection_close)(MprisDBusConnection*) = nullptr;
+    void (*connection_unref)(MprisDBusConnection*) = nullptr;
+    void (*connection_set_exit_on_disconnect)(MprisDBusConnection*, unsigned int) = nullptr;
+    void (*error_init)(MprisDBusError*) = nullptr;
+    void (*error_free)(MprisDBusError*) = nullptr;
+    MprisDBusMessage* (*message_new_method_call)(const char*, const char*, const char*,
+                                                const char*) = nullptr;
+    unsigned int (*message_append_args)(MprisDBusMessage*, int, ...) = nullptr;
+    MprisDBusMessage* (*send_with_reply_and_block)(MprisDBusConnection*, MprisDBusMessage*, int,
+                                                  MprisDBusError*) = nullptr;
+    void (*message_unref)(MprisDBusMessage*) = nullptr;
+    unsigned int (*message_iter_init)(MprisDBusMessage*, MprisDBusIter*) = nullptr;
+    unsigned int (*message_iter_next)(MprisDBusIter*) = nullptr;
+    void (*message_iter_recurse)(MprisDBusIter*, MprisDBusIter*) = nullptr;
+    int (*message_iter_get_arg_type)(MprisDBusIter*) = nullptr;
+    void (*message_iter_get_basic)(MprisDBusIter*, void*) = nullptr;
+
+    template <typename Fn>
+    bool Bind(Fn& fn, const char* symbol) noexcept {
+        fn = reinterpret_cast<Fn>(dlsym(handle, symbol));
+        return fn != nullptr;
+    }
+
+    bool Load() noexcept {
+        handle = dlopen("libdbus-1.so.3", RTLD_NOW | RTLD_LOCAL);
+        if (handle == nullptr) {
+            return false;
+        }
+        const bool ok =
+            Bind(bus_get_private, "dbus_bus_get_private") &&
+            Bind(connection_close, "dbus_connection_close") &&
+            Bind(connection_unref, "dbus_connection_unref") &&
+            Bind(connection_set_exit_on_disconnect, "dbus_connection_set_exit_on_disconnect") &&
+            Bind(error_init, "dbus_error_init") &&
+            Bind(error_free, "dbus_error_free") &&
+            Bind(message_new_method_call, "dbus_message_new_method_call") &&
+            Bind(message_append_args, "dbus_message_append_args") &&
+            Bind(send_with_reply_and_block, "dbus_connection_send_with_reply_and_block") &&
+            Bind(message_unref, "dbus_message_unref") &&
+            Bind(message_iter_init, "dbus_message_iter_init") &&
+            Bind(message_iter_next, "dbus_message_iter_next") &&
+            Bind(message_iter_recurse, "dbus_message_iter_recurse") &&
+            Bind(message_iter_get_arg_type, "dbus_message_iter_get_arg_type") &&
+            Bind(message_iter_get_basic, "dbus_message_iter_get_basic");
+        if (!ok) {
+            dlclose(handle);
+            handle = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    // org.freedesktop.DBus.ListNames
+    bool ListNames(MprisDBusConnection* conn, std::vector<std::string>& out) noexcept {
+        MprisDBusMessage* msg = message_new_method_call(
+            "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames");
+        if (msg == nullptr) {
+            return false;
+        }
+        MprisDBusError err;
+        error_init(&err);
+        MprisDBusMessage* reply = send_with_reply_and_block(conn, msg, kMprisSendTimeoutMs, &err);
+        message_unref(msg);
+        if (reply == nullptr) {
+            error_free(&err);
+            return false;
+        }
+        error_free(&err);
+
+        MprisDBusIter iter;
+        MprisDBusIter sub;
+        if (message_iter_init(reply, &iter) &&
+            message_iter_get_arg_type(&iter) == kMprisTypeArray) {
+            message_iter_recurse(&iter, &sub);
+            while (message_iter_get_arg_type(&sub) == kMprisTypeString) {
+                const char* name = nullptr;
+                message_iter_get_basic(&sub, &name);
+                if (name != nullptr) {
+                    out.emplace_back(name);
+                }
+                message_iter_next(&sub);
+            }
+        }
+        message_unref(reply);
+        return true;
+    }
+
+    // org.freedesktop.DBus.Properties.Get(Player, "PlaybackStatus") for one
+    // MPRIS player - the reply is a variant wrapping a string (eg: "Playing").
+    bool PlaybackStatus(MprisDBusConnection* conn, const char* busName, std::string& out) noexcept {
+        MprisDBusMessage* msg = message_new_method_call(
+            busName, "/org/mpris/MediaPlayer2", "org.freedesktop.DBus.Properties", "Get");
+        if (msg == nullptr) {
+            return false;
+        }
+        const char* iface = "org.mpris.MediaPlayer2.Player";
+        const char* prop = "PlaybackStatus";
+        if (!message_append_args(msg, kMprisTypeString, &iface, kMprisTypeString, &prop,
+                                 kMprisTypeInvalid)) {
+            message_unref(msg);
+            return false;
+        }
+        MprisDBusError err;
+        error_init(&err);
+        MprisDBusMessage* reply = send_with_reply_and_block(conn, msg, kMprisSendTimeoutMs, &err);
+        message_unref(msg);
+        if (reply == nullptr) {
+            error_free(&err);
+            return false;
+        }
+        error_free(&err);
+
+        bool haveValue = false;
+        MprisDBusIter iter;
+        MprisDBusIter variant;
+        if (message_iter_init(reply, &iter) &&
+            message_iter_get_arg_type(&iter) == kMprisTypeVariant) {
+            message_iter_recurse(&iter, &variant);
+            if (message_iter_get_arg_type(&variant) == kMprisTypeString) {
+                const char* value = nullptr;
+                message_iter_get_basic(&variant, &value);
+                if (value != nullptr) {
+                    out.assign(value);
+                    haveValue = true;
+                }
+            }
+        }
+        message_unref(reply);
+        return haveValue;
+    }
+};
+
+void MonitorLinuxMprisSessions() noexcept {
+    using namespace std::chrono_literals;
+
+    MprisDBus dbus;
+    if (!dbus.Load()) {
+        g_mediaControlAvailable.store(false, std::memory_order_release);
+        g_externalMediaPlaying.store(false, std::memory_order_release);
+        g_mediaControlInitializationComplete.store(true, std::memory_order_release);
+        std::cerr << "[audio] MPRIS media monitoring unavailable: libdbus-1 could not be loaded"
+                  << std::endl;
+        return;
+    }
+
+    MprisDBusError err;
+    dbus.error_init(&err);
+    MprisDBusConnection* conn = dbus.bus_get_private(kMprisBusSession, &err);
+    if (conn == nullptr) {
+        g_mediaControlAvailable.store(false, std::memory_order_release);
+        g_externalMediaPlaying.store(false, std::memory_order_release);
+        g_mediaControlInitializationComplete.store(true, std::memory_order_release);
+        std::cerr << "[audio] MPRIS media monitoring unavailable: "
+                  << (err.message != nullptr ? err.message : "no D-Bus session bus") << std::endl;
+        dbus.error_free(&err);
+        return;
+    }
+    dbus.error_free(&err);
+    // A private bus connection defaults to terminating the process when the bus drops.
+    dbus.connection_set_exit_on_disconnect(conn, 0u);
+
+    for (bool firstPoll = true;; firstPoll = false) {
+        bool playing = false;
+        std::vector<std::string> names;
+        const bool queried = dbus.ListNames(conn, names);
+        if (queried) {
+            for (const auto& name : names) {
+                if (name.compare(0, sizeof(kMprisNamePrefix) - 1, kMprisNamePrefix) != 0) {
+                    continue;
+                }
+                std::string status;
+                if (dbus.PlaybackStatus(conn, name.c_str(), status) && status == "Playing") {
+                    playing = true;
+                    break;
+                }
+            }
+        }
+        g_externalMediaPlaying.store(playing, std::memory_order_release);
+        g_mediaControlAvailable.store(queried, std::memory_order_release);
+        if (firstPoll) {
+            g_mediaControlInitializationComplete.store(true, std::memory_order_release);
+            if (!queried) {
+                std::cerr << "[audio] MPRIS media monitoring unavailable: session bus query failed"
+                          << std::endl;
+            }
+        }
+        std::this_thread::sleep_for(250ms);
+    }
+}
 #endif
 
 void StartMonitor() noexcept {
@@ -198,6 +453,9 @@ void StartMonitor() noexcept {
     // The process owns this monitor for its remaining lifetime. Keeping it
     // detached avoids shutdown ordering between WinRT and static audio state.
     std::thread(MonitorWindowsMediaSessions).detach();
+#elif defined(__linux__)
+    // Detached so there is no shutdown ordering to manage against static audio state.
+    std::thread(MonitorLinuxMprisSessions).detach();
 #else
     g_mediaControlAvailable.store(false, std::memory_order_release);
     g_mediaControlInitializationComplete.store(true, std::memory_order_release);

@@ -83,7 +83,9 @@ endif()
 if(WIN32)
     target_link_libraries(mkw_runtime_common PRIVATE shell32 windowsapp)
 else()
-    target_link_libraries(mkw_runtime_common PRIVATE mkw::libco)
+    # ${CMAKE_DL_LIBS} for music_attenuation.cpp's dlopen of libdbus-1 (MPRIS
+    # media monitoring). Empty string on glibc >= 2.34 where dl* is in libc.
+    target_link_libraries(mkw_runtime_common PRIVATE mkw::libco ${CMAKE_DL_LIBS})
 endif()
 if(MKW_CPPWINRT_INCLUDE_DIR)
     if(NOT EXISTS "${MKW_CPPWINRT_INCLUDE_DIR}/winrt/base.h")
@@ -227,8 +229,10 @@ function(mkw_configure_product target)
         # target_link_libraries (object libraries don't carry usage requirements to a consumer
         # that isn't itself linked against as a target). fiber_manager.cpp's co_* calls live in
         # those objects, so the actual executable link needs mkw::libco directly, same as it
-        # needs it independently of that first `if(WIN32)` branch above.
-        target_link_libraries(${target} PRIVATE mkw::libco)
+        # needs it independently of that first `if(WIN32)` branch above. ${CMAKE_DL_LIBS} is
+        # here for the same reason: music_attenuation.cpp's dlopen(libdbus-1) lives in those
+        # objects (empty string on glibc >= 2.34, where dl* is in libc).
+        target_link_libraries(${target} PRIVATE mkw::libco ${CMAKE_DL_LIBS})
     endif()
     if(WIN32)
         foreach(runtime_dll libc++.dll libunwind.dll)
