@@ -105,6 +105,13 @@ struct MkwVRPolicySnapshot {
     MkwVRCameraObservation camera{};
     uint32_t available_bindings = MkwVRBindingNone;
     bool session_active = false;
+    // Changes whenever the stable presentation-safety state changes. Ordinary
+    // per-frame scene/camera publication does not advance it.
+    uint64_t safety_generation = 1;
+    // Opaque safety-state tag for the content being sealed. This also includes
+    // the current presentation mode, so a transient scene/camera mismatch
+    // cannot accept an immersive packet from an adjacent asynchronous frame.
+    uint64_t content_tag = 0;
 };
 
 // All policy functions are thread-safe. Publishing functions are intended for

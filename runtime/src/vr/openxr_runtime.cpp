@@ -37,6 +37,16 @@ XrPosef IdentityPose() {
     return {{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
 }
 
+bool IsFinitePositive(float value) noexcept {
+    // mkw_runtime_common uses -ffast-math, where std::isfinite may be folded
+    // away. Check the IEEE-754 representation before using the scale in
+    // rounding and integer conversion.
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return (bits & 0x80000000u) == 0 && (bits & 0x7fffffffu) != 0 &&
+           (bits & 0x7f800000u) != 0x7f800000u;
+}
+
 uint32_t ScaledDimension(uint32_t recommended, uint32_t maximum, float scale) {
     const double scaled = std::round(static_cast<double>(recommended) *
                                      static_cast<double>(scale));
@@ -89,7 +99,7 @@ bool OpenXRRuntime::Initialize(const OpenXRConfig& config) {
         return Fail(XR_ERROR_VALIDATION_FAILURE, "Initialize",
                     "application_name must not be empty");
     }
-    if (!std::isfinite(config.resolution_scale) || config.resolution_scale <= 0.0f) {
+    if (!IsFinitePositive(config.resolution_scale)) {
         return Fail(XR_ERROR_VALIDATION_FAILURE, "Initialize",
                     "resolution_scale must be finite and greater than zero");
     }
@@ -342,6 +352,10 @@ bool OpenXRRuntime::CreateSession(const void* graphics_binding) {
         return Fail(XR_ERROR_INSTANCE_LOST, "CreateSession",
                     "the OpenXR instance is loss-pending");
     }
+    if (m_session_loss_pending) {
+        return Fail(XR_ERROR_SESSION_LOST, "CreateSession",
+                    "session loss requires a full OpenXR reinitialization");
+    }
     if (HasSession()) {
         return Fail(XR_ERROR_CALL_ORDER_INVALID, "CreateSession",
                     "a session already exists");
@@ -497,20 +511,29 @@ OpenXREventStatus OpenXRRuntime::PollEvents() {
         }
         case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
             m_instance_loss_pending = true;
+            m_session_running = false;
+            ResetFrameState();
             Log(OpenXRLogLevel::Warning,
                 "OpenXR runtime reported instance loss pending");
             break;
         case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
             const auto& space_event =
                 *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
-            if (space_event.session == m_session) {
-                ++m_reference_space_change.serial;
+            // This slot is consumed to invalidate transforms located in the
+            // application space. Events for VIEW or another supported type
+            // must not overwrite a pending LOCAL/STAGE change.
+            if (space_event.session == m_session &&
+                space_event.referenceSpaceType == m_app_space_type) {
+                if (++m_reference_space_change.serial == 0) {
+                    ++m_reference_space_change.serial;
+                }
                 m_reference_space_change.type = space_event.referenceSpaceType;
                 m_reference_space_change.change_time = space_event.changeTime;
                 m_reference_space_change.pose_in_previous_space_valid =
                     space_event.poseValid == XR_TRUE;
                 m_reference_space_change.pose_in_previous_space =
                     space_event.poseInPreviousSpace;
+                m_pending_app_space_changes.push_back(m_reference_space_change);
             }
             break;
         }
@@ -546,24 +569,35 @@ bool OpenXRRuntime::HandleSessionStateChanged(
         if (!Check(xrBeginSession(m_session, &begin_info), "xrBeginSession")) {
             return false;
         }
+        ResetFrameState();
         m_session_running = true;
-        return true;
-    }
-    case XR_SESSION_STATE_STOPPING:
-        if (m_session_running) {
-            if (!Check(xrEndSession(m_session), "xrEndSession")) {
-                return false;
-            }
-            m_session_running = false;
+        if (++m_session_run_serial == 0) {
+            ++m_session_run_serial;
         }
         return true;
+    }
+    case XR_SESSION_STATE_STOPPING: {
+        if (m_session_running) {
+            const XrResult result = xrEndSession(m_session);
+            // The OpenXR session is no longer running after any xrEndSession
+            // call, including one that returns an error.
+            m_session_running = false;
+            ResetFrameState();
+            if (!Check(result, "xrEndSession")) {
+                return false;
+            }
+        }
+        return true;
+    }
     case XR_SESSION_STATE_EXITING:
         m_exit_requested = true;
         m_session_running = false;
+        ResetFrameState();
         return true;
     case XR_SESSION_STATE_LOSS_PENDING:
-        m_instance_loss_pending = true;
+        m_session_loss_pending = true;
         m_session_running = false;
+        ResetFrameState();
         return true;
     default:
         return true;
@@ -576,6 +610,24 @@ bool OpenXRRuntime::RequestExitSession() {
         return true;
     }
     return Check(xrRequestExitSession(m_session), "xrRequestExitSession");
+}
+
+void OpenXRRuntime::ObserveResult(XrResult result) noexcept {
+    if (result == XR_SESSION_LOSS_PENDING) {
+        if (!m_session_loss_pending) {
+            Log(OpenXRLogLevel::Warning,
+                "OpenXR reported XR_SESSION_LOSS_PENDING");
+        }
+        m_session_loss_pending = true;
+    } else if (result == XR_ERROR_SESSION_LOST) {
+        m_session_loss_pending = true;
+        m_session_running = false;
+        ResetFrameState();
+    } else if (result == XR_ERROR_INSTANCE_LOST) {
+        m_instance_loss_pending = true;
+        m_session_running = false;
+        ResetFrameState();
+    }
 }
 
 OpenXRFrameStatus OpenXRRuntime::WaitFrame(OpenXRFrame& frame) {
@@ -731,7 +783,27 @@ bool OpenXRRuntime::ResetAppSpace(const XrPosef& pose_in_reference_space) {
         xrDestroySpace(m_app_space);
     }
     m_app_space = replacement;
+    if (++m_reference_space_change.serial == 0) {
+        ++m_reference_space_change.serial;
+    }
+    m_reference_space_change.type = m_app_space_type;
+    m_reference_space_change.change_time = 0;
+    m_reference_space_change.pose_in_previous_space_valid = false;
+    m_reference_space_change.pose_in_previous_space = IdentityPose();
+    m_pending_app_space_changes.push_back(m_reference_space_change);
     return true;
+}
+
+bool OpenXRRuntime::ConsumeAppSpaceChangesThrough(XrTime display_time) {
+    bool consumed = false;
+    std::erase_if(m_pending_app_space_changes,
+                  [&](const OpenXRReferenceSpaceChange& change) {
+                      const bool due = change.change_time == 0 ||
+                                       display_time >= change.change_time;
+                      consumed = consumed || due;
+                      return due;
+                  });
+    return consumed;
 }
 
 void OpenXRRuntime::DestroySession() {
@@ -766,9 +838,12 @@ void OpenXRRuntime::DestroySession() {
             const auto timeout =
                 std::chrono::milliseconds(m_config.shutdown_timeout_ms);
             const auto deadline = std::chrono::steady_clock::now() + timeout;
+            bool event_error = false;
             while (m_session_running &&
                    std::chrono::steady_clock::now() < deadline) {
-                if (PollEvents() == OpenXREventStatus::Error) {
+                const OpenXREventStatus status = PollEvents();
+                if (status != OpenXREventStatus::Continue) {
+                    event_error = status == OpenXREventStatus::Error;
                     break;
                 }
                 if (m_session_running) {
@@ -776,8 +851,9 @@ void OpenXRRuntime::DestroySession() {
                 }
             }
             if (m_session_running) {
-                Log(OpenXRLogLevel::Warning,
-                    "OpenXR runtime did not finish session exit before timeout");
+                Log(OpenXRLogLevel::Warning, event_error
+                    ? "OpenXR event processing failed during session teardown"
+                    : "OpenXR runtime did not finish session exit before timeout");
             }
         }
     }
@@ -819,18 +895,19 @@ void OpenXRRuntime::ResetSessionState() {
     m_session_running = false;
     m_exit_requested = false;
     m_shutting_down_session = false;
-    m_frame_phase = FramePhase::Idle;
-    m_active_frame_serial = 0;
-    m_active_frame_display_time = 0;
+    ResetFrameState();
     m_supported_reference_spaces.clear();
     m_swapchain_formats.clear();
     m_reference_space_change = {};
+    m_pending_app_space_changes.clear();
 }
 
 void OpenXRRuntime::ResetInstanceState() {
     m_instance = XR_NULL_HANDLE;
     m_system_id = XR_NULL_SYSTEM_ID;
+    m_session_loss_pending = false;
     m_instance_loss_pending = false;
+    m_session_run_serial = 0;
     m_runtime_info = {};
     m_view_configuration = {};
     m_available_extensions.clear();
@@ -847,7 +924,14 @@ bool OpenXRRuntime::IsFrameTokenCurrent(
            frame.serial == m_active_frame_serial;
 }
 
+void OpenXRRuntime::ResetFrameState() {
+    m_frame_phase = FramePhase::Idle;
+    m_active_frame_serial = 0;
+    m_active_frame_display_time = 0;
+}
+
 bool OpenXRRuntime::Check(XrResult result, std::string_view operation) {
+    ObserveResult(result);
     if (XR_SUCCEEDED(result)) {
         return true;
     }

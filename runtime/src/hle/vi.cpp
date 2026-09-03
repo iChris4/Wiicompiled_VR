@@ -7,6 +7,8 @@
 #include "settings_overlay.h"
 #include "fiber_manager.h"
 #include "runtime_log.h"
+#include "vr/mkw_vr_policy.h"
+#include "vr/openxr_integration.h"
 
 #include <dolphin/vi.h>
 
@@ -333,6 +335,10 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
                 g_auroraFrameActive.store(true, std::memory_order_release);
             }
         }
+        // XR runtime loss and encoded-work stalls request producer-owned
+        // teardown. Service it on every retrace, including startup, pause, and
+        // minimized-window paths that may never reach a successful present.
+        mkw::vr::OpenXRServiceProducerFrameBoundary();
     }
 
     if (ctx) {
@@ -579,7 +585,13 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
         aurora_set_present_schedule(0, 0);
     }
 
-    aurora_end_frame();
+    mkw::vr::OpenXRServiceProducerFrameBoundary();
+    // Latch the current policy safety state into this exact Aurora job. The
+    // asynchronous worker may ask for an XR packet after the guest has already
+    // begun the next frame, so immersive replay is accepted only when both
+    // tags match.
+    const uint64_t vrContentTag = mkw::vr::MkwVRPolicyGetSnapshot().content_tag;
+    aurora_end_frame_tagged(vrContentTag);
     if (paceThisFrame) {
         PaceToRetraceBoundary(paceDeadline);
         std::lock_guard<std::mutex> lock(g_viMutex);

@@ -17,6 +17,7 @@ struct PolicyState {
     MkwVRCameraObservation camera{};
     uint32_t available_bindings = MkwVRBindingNone;
     bool session_active = false;
+    uint64_t safety_generation = 1;
 };
 
 std::mutex g_policy_mutex;
@@ -61,13 +62,45 @@ bool IsFiniteCamera(const MkwVRCameraObservation& camera) noexcept {
                        [](const float& value) { return IsFiniteFloat(&value); });
 }
 
+bool ObservationsAreCoherent(const MkwVRSceneObservation& scene,
+                             const MkwVRCameraObservation& camera) noexcept {
+    // RaceCamera::Update for guest frame N+1 can run before ScnMgrRace::Draw
+    // publishes the scene observation for that frame. The OpenXR pacing thread
+    // is independent and can legitimately sample that short interval. Accept
+    // adjacent frames from the same live RaceScene; larger gaps still fail
+    // closed, and scene transitions explicitly invalidate the camera.
+    const uint64_t newer = std::max(scene.guest_frame_index, camera.guest_frame_index);
+    const uint64_t older = std::min(scene.guest_frame_index, camera.guest_frame_index);
+    return newer - older <= 1;
+}
+
 VRPresentationMode SelectPresentation(const PolicyState& state) noexcept {
     if (!state.config.enabled || !state.session_active) {
         return VRPresentationMode::Desktop;
     }
 
-    // A virtual screen is the fail-safe for menus, replays, split-screen, and
-    // any incomplete instrumentation. It preserves the unmodified render path.
+    // A virtual screen is the fail-safe for menus, split-screen, and any
+    // incomplete instrumentation. It preserves the unmodified render path.
+    if ((state.available_bindings & kMkwVRRequiredImmersiveBindings) !=
+        kMkwVRRequiredImmersiveBindings ||
+        !state.config.immersive_races || state.scene.mode != VRSceneMode::Race ||
+        state.scene.local_player_count != 1 || !IsFiniteCamera(state.camera) ||
+        !ObservationsAreCoherent(state.scene, state.camera)) {
+        return VRPresentationMode::VirtualScreen;
+    }
+
+    return VRPresentationMode::ImmersiveRace;
+}
+
+VRPresentationMode SelectStablePresentation(const PolicyState& state) noexcept {
+    if (!state.config.enabled || !state.session_active) {
+        return VRPresentationMode::Desktop;
+    }
+
+    // Deliberately omit the per-frame scene/camera index comparison here.
+    // Those observations are published by separate translated callbacks, so
+    // their temporary mismatch is represented in content_tag's mode bits
+    // without advancing the generation twice on every healthy race frame.
     if ((state.available_bindings & kMkwVRRequiredImmersiveBindings) !=
             kMkwVRRequiredImmersiveBindings ||
         !state.config.immersive_races || state.scene.mode != VRSceneMode::Race ||
@@ -76,6 +109,32 @@ VRPresentationMode SelectPresentation(const PolicyState& state) noexcept {
     }
 
     return VRPresentationMode::ImmersiveRace;
+}
+
+void AdvanceSafetyGeneration(PolicyState& state) noexcept {
+    // Two low bits are reserved for VRPresentationMode in MakeContentTag().
+    // Keep UINT64_MAX reserved as Aurora's explicit unknown-tag sentinel.
+    constexpr uint64_t kMaxSafetyGeneration = (UINT64_MAX >> 2) - 1;
+    if (state.safety_generation >= kMaxSafetyGeneration) {
+        state.safety_generation = 1;
+    } else {
+        ++state.safety_generation;
+    }
+}
+
+template <typename Mutation>
+void ApplyPolicyMutation(Mutation&& mutation) noexcept {
+    const VRPresentationMode previous = SelectStablePresentation(g_policy);
+    mutation();
+    if (SelectStablePresentation(g_policy) != previous) {
+        AdvanceSafetyGeneration(g_policy);
+    }
+}
+
+uint64_t MakeContentTag(const PolicyState& state, VRPresentationMode presentation) noexcept {
+    static_assert(static_cast<uint64_t>(VRPresentationMode::ImmersiveRace) < 4,
+                  "VRPresentationMode must fit in the content tag's reserved bits");
+    return (state.safety_generation << 2) | static_cast<uint64_t>(presentation);
 }
 
 constexpr MkwVRHookPoint kHookPoints[] = {
@@ -130,39 +189,43 @@ void MkwVRPolicyReset() noexcept {
 
 void MkwVRPolicyConfigure(const MkwVRPolicyConfig& config) noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
-    g_policy.config = SanitizeConfig(config);
+    ApplyPolicyMutation([&] { g_policy.config = SanitizeConfig(config); });
 }
 
 void MkwVRPolicySetSessionActive(bool active) noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
-    g_policy.session_active = active;
+    ApplyPolicyMutation([&] { g_policy.session_active = active; });
 }
 
 void MkwVRPolicySetAvailableBindings(uint32_t bindings) noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
-    g_policy.available_bindings = bindings;
+    ApplyPolicyMutation([&] { g_policy.available_bindings = bindings; });
 }
 
 void MkwVRPolicyPublishScene(const MkwVRSceneObservation& scene) noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
-    if (scene.mode != VRSceneMode::Race || g_policy.scene.mode != VRSceneMode::Race) {
-        // Never carry a camera sample across a menu/replay-to-race transition.
-        // A fresh RaceCamera observation must arrive before immersive mode can
-        // become active again.
-        g_policy.camera.valid = false;
-    }
-    g_policy.scene = scene;
+    ApplyPolicyMutation([&] {
+        if (scene.mode != VRSceneMode::Race || g_policy.scene.mode != VRSceneMode::Race) {
+            // Never carry a camera sample across a menu/replay-to-race transition.
+            // A fresh RaceCamera observation must arrive before immersive mode can
+            // become active again.
+            g_policy.camera.valid = false;
+        }
+        g_policy.scene = scene;
+    });
 }
 
 void MkwVRPolicyPublishRaceCamera(const MkwVRCameraObservation& camera) noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
-    g_policy.camera = camera;
-    g_policy.camera.valid = IsFiniteCamera(camera);
+    ApplyPolicyMutation([&] {
+        g_policy.camera = camera;
+        g_policy.camera.valid = IsFiniteCamera(camera);
+    });
 }
 
 void MkwVRPolicyInvalidateRaceCamera() noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
-    g_policy.camera.valid = false;
+    ApplyPolicyMutation([&] { g_policy.camera.valid = false; });
 }
 
 MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept {
@@ -174,6 +237,8 @@ MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept {
     snapshot.camera = g_policy.camera;
     snapshot.available_bindings = g_policy.available_bindings;
     snapshot.session_active = g_policy.session_active;
+    snapshot.safety_generation = g_policy.safety_generation;
+    snapshot.content_tag = MakeContentTag(g_policy, snapshot.presentation);
     return snapshot;
 }
 

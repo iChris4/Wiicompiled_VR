@@ -142,6 +142,11 @@ public:
     OpenXREventStatus PollEvents();
     bool RequestExitSession();
 
+    // Graphics backends call OpenXR entry points directly for swapchain work.
+    // Feed their results back here so positive loss-pending and negative
+    // session/instance-loss results update the central lifecycle state.
+    void ObserveResult(XrResult result) noexcept;
+
     // Explicit frame protocol. A successful WaitFrame must be followed by
     // BeginFrame and EndFrame using the same token. LocateViews is optional when
     // should_render is false; it is otherwise normally called after BeginFrame.
@@ -171,7 +176,9 @@ public:
         return m_session_state == XR_SESSION_STATE_VISIBLE ||
                m_session_state == XR_SESSION_STATE_FOCUSED;
     }
-    bool ShouldExit() const { return m_exit_requested || m_instance_loss_pending; }
+    bool ShouldExit() const {
+        return m_exit_requested || m_session_loss_pending || m_instance_loss_pending;
+    }
 
     XrInstance Instance() const { return m_instance; }
     XrSystemId SystemId() const { return m_system_id; }
@@ -179,6 +186,7 @@ public:
     XrSpace AppSpace() const { return m_app_space; }
     XrSpace ViewSpace() const { return m_view_space; }
     XrSessionState SessionState() const { return m_session_state; }
+    uint64_t SessionRunSerial() const { return m_session_run_serial; }
     XrReferenceSpaceType AppSpaceType() const { return m_app_space_type; }
     XrEnvironmentBlendMode EnvironmentBlendMode() const { return m_blend_mode; }
 
@@ -194,6 +202,10 @@ public:
     const OpenXRReferenceSpaceChange& LastReferenceSpaceChange() const {
         return m_reference_space_change;
     }
+    // Consumes every queued application-space change whose effective time is
+    // no later than display_time. Multiple future recenter events are retained
+    // independently rather than overwriting one another.
+    bool ConsumeAppSpaceChangesThrough(XrTime display_time);
     const OpenXRError& LastError() const { return m_last_error; }
 
 private:
@@ -212,6 +224,7 @@ private:
     bool EnumerateSwapchainFormats();
     bool HandleSessionStateChanged(const XrEventDataSessionStateChanged& event);
     bool IsFrameTokenCurrent(const OpenXRFrame& frame, FramePhase expected) const;
+    void ResetFrameState();
     void DestroyReferenceSpaces();
     void ResetSessionState();
     void ResetInstanceState();
@@ -237,10 +250,12 @@ private:
     XrEnvironmentBlendMode m_blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     bool m_session_running = false;
     bool m_exit_requested = false;
+    bool m_session_loss_pending = false;
     bool m_instance_loss_pending = false;
     bool m_shutting_down_session = false;
 
     FramePhase m_frame_phase = FramePhase::Idle;
+    uint64_t m_session_run_serial = 0;
     uint64_t m_next_frame_serial = 1;
     uint64_t m_active_frame_serial = 0;
     XrTime m_active_frame_display_time = 0;
@@ -255,6 +270,7 @@ private:
     std::vector<XrEnvironmentBlendMode> m_supported_blend_modes;
     std::vector<int64_t> m_swapchain_formats;
     OpenXRReferenceSpaceChange m_reference_space_change;
+    std::vector<OpenXRReferenceSpaceChange> m_pending_app_space_changes;
 };
 
 } // namespace mkw::vr

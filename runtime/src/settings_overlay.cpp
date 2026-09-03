@@ -99,6 +99,8 @@ bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
 bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
 bool g_showFps = RuntimeConfigFile::ShowFps(true);
 bool g_vrEnabled = RuntimeConfigFile::VrEnabled(false);
+bool g_vrStopAtDisplayCopy = RuntimeConfigFile::VrStopAtDisplayCopy(true);
+bool g_vrSkipCopyClears = RuntimeConfigFile::VrSkipCopyClears(true);
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -650,6 +652,35 @@ void DrawGraphicsSettings() {
         RuntimeConfigFile::SetVrEnabled(g_vrEnabled);
     }
     ImGui::TextDisabled("OpenXR mode changes take effect after restarting the game.");
+
+    // Unlike the toggle above, these two apply to the very next frame, so they
+    // can be compared against each other from inside a running race.
+    ImGui::Separator();
+    ImGui::Text("VR eye replay (EFB)");
+    if (ImGui::Checkbox("Stop eye at display copy", &g_vrStopAtDisplayCopy)) {
+        aurora_set_stereo_stop_at_display_copy(g_vrStopAtDisplayCopy);
+        RuntimeConfigFile::SetVrStopAtDisplayCopy(g_vrStopAtDisplayCopy);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Ends each eye at the frame's final GXCopyDisp, so an eye holds exactly the "
+            "image the game presented. Turn off to replay the whole pass list.");
+    }
+    if (ImGui::Checkbox("Skip EFB copy clears", &g_vrSkipCopyClears)) {
+        aurora_set_stereo_skip_copy_clears(g_vrSkipCopyClears);
+        RuntimeConfigFile::SetVrSkipCopyClears(g_vrSkipCopyClears);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Drops the EFB reset a GX copy performs after copying. That reset prepares the "
+            "Wii's reused EFB for the next frame; an eye attachment is built fresh, so "
+            "replaying it only erases the eye.");
+    }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled(
+        "Both apply on the next frame. Turning either off restores the raw replay and is "
+        "expected to black out the eyes.");
+    ImGui::PopTextWrapPos();
 }
 
 void DrawFpsOverlay() {
@@ -867,6 +898,8 @@ void InitializeRuntimeSettings() noexcept {
     aurora_set_display_mode(static_cast<AuroraDisplayMode>(g_displayMode));
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     aurora_set_disable_copy_filter(g_disableCopyFilter);
+    aurora_set_stereo_stop_at_display_copy(g_vrStopAtDisplayCopy);
+    aurora_set_stereo_skip_copy_clears(g_vrSkipCopyClears);
     aurora_set_skip_unready_pipelines(g_skipUnreadyPipelines);
     g_strapInputAccepted.store(false, std::memory_order_relaxed);
     g_startupDismissFrame.store(UINT64_MAX, std::memory_order_relaxed);

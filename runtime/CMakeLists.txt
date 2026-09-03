@@ -105,10 +105,16 @@ set(MKW_TRANSLATED_COMPILE_JOBS 0 CACHE STRING
 Scheduling only - never affects output bytes, so it is deliberately outside the canonical flag fingerprint.")
 set(MKW_CPPWINRT_INCLUDE_DIR "" CACHE PATH "Optional self-contained C++/WinRT include directory")
 
-# OpenXR is compiled into supported desktop builds, but remains opt-in at
-# runtime through [vr].enabled. Keeping the loader available in every package
-# lets one binary fall back to desktop mode when no active runtime is present.
-option(MKW_ENABLE_OPENXR "Build OpenXR VR support" ON)
+# The functional backend is currently Windows D3D12, so only Windows defaults
+# to carrying the loader. Linux keeps the capability-gated Vulkan scaffold
+# available to explicit developer builds without making a nonfunctional SDK
+# fetch part of every normal build.
+set(MKW_ENABLE_OPENXR_DEFAULT OFF)
+if(WIN32)
+    set(MKW_ENABLE_OPENXR_DEFAULT ON)
+endif()
+option(MKW_ENABLE_OPENXR "Build OpenXR VR support" ${MKW_ENABLE_OPENXR_DEFAULT})
+unset(MKW_ENABLE_OPENXR_DEFAULT)
 set(MKW_OPENXR_SDK_DIR "" CACHE PATH
     "Optional OpenXR-SDK source tree; when empty, use a package or fetch the pinned SDK")
 
@@ -251,11 +257,16 @@ if(MKW_ENABLE_OPENXR)
                 add_subdirectory("${MKW_OPENXR_SDK_DIR}"
                     "${CMAKE_BINARY_DIR}/openxr-sdk" EXCLUDE_FROM_ALL)
             else()
-                FetchContent_Declare(mkw_openxr
+                # Keep the FetchContent name aligned with the installer's
+                # BuildWorkspace/Dependencies/openxr directory. The bundled
+                # build passes FETCHCONTENT_SOURCE_DIR_OPENXR and runs fully
+                # disconnected, while developer builds may fetch this pin.
+                FetchContent_Declare(openxr
                     URL https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.61.tar.gz
+                    URL_HASH SHA256=d5e2773d282642e6e250bd10266f316fc3ff3b8602c83db009a1f434205998e6
                     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
                     EXCLUDE_FROM_ALL)
-                FetchContent_MakeAvailable(mkw_openxr)
+                FetchContent_MakeAvailable(openxr)
             endif()
         endif()
         if(TARGET OpenXR::openxr_loader)

@@ -55,6 +55,7 @@
 #include "runtime_log.h"
 #include "runtime_product.h"
 #include "recomp_mod_loader.h"
+#include "vr/openxr_integration.h"
 #include <aurora/aurora.h>
 #include <aurora/gfx.h>
 #include <dolphin/gx/GXAurora.h>
@@ -1362,6 +1363,16 @@ int RuntimeMain(int argc, char** argv) {
                 break;
             }
         }
+        const mkw::vr::OpenXRStartupResult openxrStartup =
+            mkw::vr::OpenXRPrepareAurora(auroraConfig);
+        if (openxrStartup == mkw::vr::OpenXRStartupResult::Unavailable) {
+            const std::string error = mkw::vr::OpenXRLastError();
+            if (RuntimeConfigFile::VrRequired(false)) {
+                throw std::runtime_error("OpenXR is required but unavailable: " + error);
+            }
+            RT_LOG(RT_TAG_RUNTIME) << "OpenXR unavailable; continuing with desktop rendering: "
+                                   << error << std::endl;
+        }
         const AuroraBackend requestedBackend = auroraConfig.desiredBackend;
 
         const AuroraInfo auroraInfo = aurora_initialize(0, nullptr, &auroraConfig);
@@ -1391,6 +1402,17 @@ int RuntimeMain(int argc, char** argv) {
                   << std::endl;
         g_auroraInitialized.store(true, std::memory_order_release);
 
+        if (openxrStartup == mkw::vr::OpenXRStartupResult::Prepared &&
+            !mkw::vr::OpenXRStartAfterAurora(auroraInfo.backend)) {
+            const std::string error = mkw::vr::OpenXRLastError();
+            if (RuntimeConfigFile::VrRequired(false)) {
+                throw std::runtime_error("OpenXR graphics binding failed: " + error);
+            }
+            RT_LOG(RT_TAG_RUNTIME)
+                << "OpenXR graphics binding failed; continuing with the desktop mirror: "
+                << error << std::endl;
+        }
+
         auto entry = ResolveEntry();
         InitializePersistentCpuContext();
         auto& cpu = GetPersistentCpuContext();
@@ -1417,6 +1439,7 @@ int RuntimeMain(int argc, char** argv) {
         // Shutdown fiber system
         Fiber::GuestFiberManager::Shutdown();
         WindowPlacementPersistence::Flush(true);
+        mkw::vr::OpenXRShutdownBeforeAurora();
         aurora_shutdown();
         SetRuntimeExitCodeImpl(0);
         ShutdownProcessTranscript();
@@ -1434,6 +1457,7 @@ int RuntimeMain(int argc, char** argv) {
         SetRuntimeExitCodeImpl(1);
         Fiber::GuestFiberManager::Shutdown();
         WindowPlacementPersistence::Flush(true);
+        mkw::vr::OpenXRShutdownBeforeAurora();
         aurora_shutdown();
         ShutdownProcessTranscript();
         return 1;
@@ -1445,6 +1469,7 @@ int RuntimeMain(int argc, char** argv) {
         SetRuntimeExitCodeImpl(1);
         Fiber::GuestFiberManager::Shutdown();
         WindowPlacementPersistence::Flush(true);
+        mkw::vr::OpenXRShutdownBeforeAurora();
         aurora_shutdown();
         ShutdownProcessTranscript();
         return 1;

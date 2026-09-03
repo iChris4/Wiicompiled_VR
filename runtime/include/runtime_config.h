@@ -49,6 +49,8 @@ struct RuntimeUserConfig {
     std::optional<float> vrRenderScale;
     std::optional<float> vrWorldUnitsPerMeter;
     std::optional<float> vrHudDistanceMeters;
+    std::optional<bool> vrStopAtDisplayCopy;
+    std::optional<bool> vrSkipCopyClears;
     std::optional<float> audioVolume;
     std::optional<float> audioMusicVolume;
     std::optional<float> audioSoundEffectsVolume;
@@ -284,7 +286,14 @@ inline void EnsureConfigFile() {
               "required = false\n"
               "render_scale = 1.0\n"
               "world_units_per_meter = 500.0\n"
-              "hud_distance_meters = 2.0\n\n"
+              "hud_distance_meters = 2.0\n"
+              "# EFB replay controls for the per-eye views, changeable live\n"
+              "# from the F10 menu. stop_at_display_copy ends each eye at the\n"
+              "# frame's final GXCopyDisp; skip_copy_clears drops the EFB\n"
+              "# reset a GX copy performs afterwards. Both keep that reset\n"
+              "# from erasing the eye, and both are safe to turn off.\n"
+              "stop_at_display_copy = true\n"
+              "skip_copy_clears = true\n\n"
               "[audio]\n"
               "volume = 1.0\n"
               "music_volume = 1.0\n"
@@ -431,6 +440,8 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         value && *value >= 0.25f && *value <= 10.0f) {
         config.vrHudDistanceMeters = *value;
     }
+    config.vrStopAtDisplayCopy = FindConfigValue<bool>(document, "vr", "stop_at_display_copy");
+    config.vrSkipCopyClears = FindConfigValue<bool>(document, "vr", "skip_copy_clears");
 
     auto readVolume = [&](std::string_view key) -> std::optional<float> {
         auto value = FindConfigFloat(document, "audio", key);
@@ -650,6 +661,16 @@ inline bool SetVrEnabled(bool value) {
     return WriteSetting("vr", "enabled", value ? "true" : "false");
 }
 
+inline bool SetVrStopAtDisplayCopy(bool value) {
+    Mutable().vrStopAtDisplayCopy = value;
+    return WriteSetting("vr", "stop_at_display_copy", value ? "true" : "false");
+}
+
+inline bool SetVrSkipCopyClears(bool value) {
+    Mutable().vrSkipCopyClears = value;
+    return WriteSetting("vr", "skip_copy_clears", value ? "true" : "false");
+}
+
 inline bool SetControllerButton(size_t index, std::string value) {
     if (index >= kControllerButtonKeys.size()) {
         return false;
@@ -819,6 +840,14 @@ inline float VrWorldUnitsPerMeter(float fallback = 500.0f) {
 
 inline float VrHudDistanceMeters(float fallback = 2.0f) {
     return std::clamp(Get().vrHudDistanceMeters.value_or(fallback), 0.25f, 10.0f);
+}
+
+inline bool VrStopAtDisplayCopy(bool fallback = true) {
+    return Get().vrStopAtDisplayCopy.value_or(fallback);
+}
+
+inline bool VrSkipCopyClears(bool fallback = true) {
+    return Get().vrSkipCopyClears.value_or(fallback);
 }
 
 inline std::string GraphicsApi(std::string fallback = "auto") {
