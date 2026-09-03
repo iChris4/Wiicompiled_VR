@@ -18,7 +18,8 @@ public class RegisterResidencyCodeGenTests
         RepresentationEnvironment? types = null,
         bool stateFree = false,
         uint entryPoint = 0x80001000u,
-        IReadOnlyDictionary<uint, GuestAbiContract>? guestAbiContracts = null)
+        IReadOnlyDictionary<uint, GuestAbiContract>? guestAbiContracts = null,
+        IReadOnlySet<uint>? fullContextCallTargets = null)
     {
         var contract = GuestAbiContractAnalyzer.Analyze(function);
         return new CxxLinearCodeGenerator().Emit(
@@ -27,6 +28,7 @@ public class RegisterResidencyCodeGenTests
             new FunctionAbiClassification(function.Name, ValueRepresentation.Void),
             types ?? new RepresentationEnvironment(new Dictionary<string, ValueRepresentation>()),
             guestAbiContracts: guestAbiContracts,
+            fullContextCallTargets: fullContextCallTargets,
             emitStateFreeLeafVariant: stateFree,
             stateFreeAbiContracts: stateFree
                 ? new Dictionary<uint, GuestAbiContract> { [entryPoint] = contract }
@@ -306,6 +308,71 @@ public class RegisterResidencyCodeGenTests
         Assert.Contains("    r3 = ctx->gpr[3];", afterCall, StringComparison.Ordinal);
         Assert.DoesNotContain("r4 = ctx->gpr[4];", afterCall, StringComparison.Ordinal);
         Assert.DoesNotContain("r5 = ctx->gpr[5];", afterCall, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ContextObservingTargetForcesAFullDirectCallBoundary()
+    {
+        var target = 0x80002000u;
+        var contracts = new Dictionary<uint, GuestAbiContract>
+        {
+            [target] = NarrowContract(gprRead: 1u << 4, gprWrite: 1u << 3)
+        };
+        var body = FunctionBody(
+            Emit(
+                CallerAcross("observed_call", $"0x{target:X8}"),
+                guestAbiContracts: contracts,
+                fullContextCallTargets: new HashSet<uint> { target }),
+            "observed_call");
+        var call = body.IndexOf($"InvokeDirectCpu<0x{target:X8}u>(ctx);", StringComparison.Ordinal);
+
+        Assert.True(call > 0);
+        // r5 is outside the guest callee's contract, but a host observer may
+        // inspect it through CpuContext.
+        Assert.Contains("ctx->gpr[5] = r5;", body[..call], StringComparison.Ordinal);
+        Assert.Contains("    r4 = ctx->gpr[4];", body[call..], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ContextObserverForcesFullBoundariesThroughIntermediateCallers()
+    {
+        const uint root = 0x80001000u;
+        const uint middle = 0x80002000u;
+        const uint observed = 0x80003000u;
+        var rootFunction = CallerAcross("transitive_observed_call", $"0x{middle:X8}");
+        var functions = new Dictionary<uint, IrFunction>
+        {
+            [root] = rootFunction,
+            [middle] = new IrFunction("middle", "entry", new[]
+            {
+                new IrBasicBlock("entry", new IrInstruction[]
+                {
+                    new IrCall(string.Empty, $"0x{observed:X8}", Array.Empty<IrValue>()),
+                    new IrReturn(null)
+                })
+            }),
+            [observed] = new IrFunction("observed", "entry", new[]
+            {
+                new IrBasicBlock("entry", new IrInstruction[] { new IrReturn(null) })
+            })
+        };
+        var contracts = GuestAbiInterproceduralAnalyzer.Analyze(
+            functions,
+            contextObservingEntryPoints: new[] { observed }).Contracts;
+
+        var body = FunctionBody(
+            Emit(
+                rootFunction,
+                entryPoint: root,
+                guestAbiContracts: contracts,
+                fullContextCallTargets: new HashSet<uint> { observed }),
+            "transitive_observed_call");
+        var call = body.IndexOf($"InvokeDirectCpu<0x{middle:X8}u>(ctx);", StringComparison.Ordinal);
+
+        Assert.True(contracts[middle].HasFullSynchronizationFence);
+        Assert.True(call > 0);
+        Assert.Contains("ctx->gpr[5] = r5;", body[..call], StringComparison.Ordinal);
+        Assert.Contains("    r4 = ctx->gpr[4];", body[call..], StringComparison.Ordinal);
     }
 
     [Fact]

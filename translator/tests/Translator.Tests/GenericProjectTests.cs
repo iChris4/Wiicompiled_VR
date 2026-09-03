@@ -110,6 +110,10 @@ public sealed class GenericProjectTests
                 translation:
                   entry_points: [0x80001000]
                   allow_unsupported_instructions: true
+                  entry_observer:
+                    header: instrumentation/entry_observer.h
+                    symbol: ObserveEntry
+                    entry_points: [0x80001000]
                 output:
                   root: out
                 """);
@@ -117,6 +121,10 @@ public sealed class GenericProjectTests
             var project = TranslationProjectConfig.Load(projectPath);
             Assert.Null(project.Inputs.Rel);
             Assert.Equal(entry, Assert.Single(project.Translation.EntryPoints));
+            var entryObserver = Assert.IsType<ProjectEntryObserver>(project.Translation.EntryObserver);
+            Assert.Equal("instrumentation/entry_observer.h", entryObserver.Header);
+            Assert.Equal("ObserveEntry", entryObserver.Symbol);
+            Assert.Contains(entry, entryObserver.EntryPoints);
 
             var dol = DolFile.Load(project.Inputs.Dol.Path);
             var image = new ProgramImageBuilder().Build(dol, ramBase: project.Memory.Base, ramSize: project.Memory.Size);

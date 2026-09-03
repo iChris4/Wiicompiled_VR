@@ -18,9 +18,13 @@ public static class GuestAbiInterproceduralAnalyzer
 {
     public static GuestAbiInterproceduralResult Analyze(
         IReadOnlyDictionary<uint, IrFunction> functions,
-        IReadOnlyDictionary<uint, GuestAbiContract>? externalContracts = null)
+        IReadOnlyDictionary<uint, GuestAbiContract>? externalContracts = null,
+        IEnumerable<uint>? contextObservingEntryPoints = null)
     {
         externalContracts ??= new Dictionary<uint, GuestAbiContract>();
+        var fullContextSet = (contextObservingEntryPoints ?? Array.Empty<uint>())
+            .Where(functions.ContainsKey)
+            .ToHashSet();
         var addresses = functions.Keys.OrderBy(static address => address).ToArray();
 
         // GuestAbiContractAnalyzer.Analyze is pure and the round's contract snapshot is frozen, so
@@ -40,7 +44,9 @@ public static class GuestAbiInterproceduralAnalyzer
             0,
             addresses.Length,
             parallelOptions,
-            index => current[index] = GuestAbiContractAnalyzer.Analyze(bodies[index]));
+            index => current[index] = AddFullContextEntryEffects(
+                GuestAbiContractAnalyzer.Analyze(bodies[index]),
+                fullContextSet.Contains(addresses[index])));
 
         var contracts = new Dictionary<uint, GuestAbiContract>(addresses.Length);
         for (var index = 0; index < addresses.Length; ++index) contracts.Add(addresses[index], current[index]);
@@ -95,7 +101,9 @@ public static class GuestAbiInterproceduralAnalyzer
             Parallel.For(0, worklistCount, parallelOptions, position =>
             {
                 var ordinal = worklist[position];
-                var next = GuestAbiContractAnalyzer.Analyze(bodies[ordinal], visible);
+                var next = AddFullContextEntryEffects(
+                    GuestAbiContractAnalyzer.Analyze(bodies[ordinal], visible),
+                    fullContextSet.Contains(addresses[ordinal]));
                 roundResults[position] = Equivalent(current[ordinal], next) ? null : next;
             });
 
@@ -123,6 +131,13 @@ public static class GuestAbiInterproceduralAnalyzer
 
         return new GuestAbiInterproceduralResult(contracts, BuildComponents(functions, contracts));
     }
+
+    private static GuestAbiContract AddFullContextEntryEffects(
+        GuestAbiContract contract,
+        bool requiresFullContext) =>
+        requiresFullContext
+            ? GuestAbiContractAnalyzer.WithReadOnlyContextObserver(contract)
+            : contract;
 
     /// <summary>
     /// Ordinals of functions this one calls directly, from raw IR rather than

@@ -49,6 +49,13 @@ public sealed record TranslationOptions(
     bool GqrConstantsRequireRuntimeGuard = false,
     bool EnableLeafAbiSpillElision = false,
     IReadOnlySet<uint>? ModOverridableCallTargets = null,
+    /// <summary>
+    /// Direct-call targets whose read-only host-side entry observer may inspect
+    /// any field in CpuContext, independently of the translated guest ABI.
+    /// Callers materialize all resident architectural state before these
+    /// boundaries. Observer APIs must accept a const CpuContext pointer.
+    /// </summary>
+    IReadOnlySet<uint>? FullContextCallTargets = null,
     bool GenerateCxx = true,
     bool DiscoveryOnly = false,
     /// <summary>
@@ -70,7 +77,15 @@ public sealed record TranslationOptions(
     /// acyclic and every exit is a plain return. Emergency opt-out; the
     /// straight-line shape keeps working with this off.
     /// </summary>
-    bool LeafInliningAllowMultiBlockCallees = true)
+    bool LeafInliningAllowMultiBlockCallees = true,
+    /// <summary>
+    /// Optional project-configured observer inserted at this function's public
+    /// CpuContext entry. The CLI excludes observed functions from leaf inlining
+    /// and state-free ABI lowering, and marks calls to them as full-context
+    /// boundaries, so no direct-call optimization can bypass or starve it.
+    /// </summary>
+    string? EntryObserverHeader = null,
+    string? EntryObserverSymbol = null)
 {
     public static TranslationOptions Default { get; } = new();
 }
@@ -746,7 +761,10 @@ public sealed class FunctionTranslator
             gqrCalleeWriteMasks: options.GqrCalleeWriteMasks,
             gqrConstantsRequireRuntimeGuard: options.GqrConstantsRequireRuntimeGuard,
             enableLeafAbiSpillElision: options.EnableLeafAbiSpillElision,
-            modOverridableCallTargets: options.ModOverridableCallTargets);
+            modOverridableCallTargets: options.ModOverridableCallTargets,
+            fullContextCallTargets: options.FullContextCallTargets,
+            entryObserverHeader: options.EntryObserverHeader,
+            entryObserverSymbol: options.EntryObserverSymbol);
     }
 
     private static IrTracePpc CreateTrace(PpcInstruction instruction)

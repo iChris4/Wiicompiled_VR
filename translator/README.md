@@ -56,6 +56,9 @@ the translator does not guess them.
 -  `translation.function_map.path` - optional symbol map used as the discovery oracle.
 -  `translation.allow_unsupported_instructions` - off by default; enabling it emits runtime traps
 instead of failing, and such a build can never ship.
+-  `translation.entry_observer` - optional header, C symbol, and entry-point list for a read-only
+host observer. Its callback must accept `(uint32_t, const CpuContext*)`; the translator materializes
+the complete guest context before every direct or transitive path that can reach it.
 
 Relative paths resolve from `workspace_root`, which itself resolves from the manifest directory.
 

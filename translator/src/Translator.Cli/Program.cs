@@ -121,8 +121,14 @@ var modPatchProfiles = new Lazy<IReadOnlyList<Translator.Cli.Configuration.Proje
 var modPatchedAddresses = new Lazy<IReadOnlySet<uint>>(() =>
     BuildModPatchedAddresses(modPatchProfiles.Value));
 var leafInliningBlockedTargets = new Lazy<IReadOnlySet<uint>>(() =>
-    BuildLeafInliningBlockedTargets(
-        modPatchedAddresses.Value, runtimeNativeGuestEffects.Value, baseTranslationExclusions.Value));
+{
+    var blocked = BuildLeafInliningBlockedTargets(
+        modPatchedAddresses.Value, runtimeNativeGuestEffects.Value, baseTranslationExclusions.Value)
+        .ToHashSet();
+    if (project?.Translation.EntryObserver is { } observer)
+        blocked.UnionWith(observer.EntryPoints);
+    return blocked;
+});
 
 // Leaf inlining is a front-end decision: the splice happens before SSA, so the
 // canonical graph the emission wave lowers is already inlined and every
@@ -417,6 +423,7 @@ int RunTranslateRecursive(string[] argsTail)
             outDir,
             RequireProject().Translation.EntryPoints
                 .Append(startAddr)
+                .Concat(RequireProject().Translation.EntryObserver?.EntryPoints ?? new HashSet<uint>())
                 .Concat(functionMap?.Addresses ?? Array.Empty<uint>()),
             includeGeneratedHistory: false);
         Console.WriteLine($"[translator] Loaded {knownBaseFunctionEntryPoints.Count:N0} known base function start(s) for tail-call boundary detection.");
@@ -434,11 +441,24 @@ int RunTranslateRecursive(string[] argsTail)
         var residentTranslationExclusions = baseTranslationExclusions.Value;
         Console.WriteLine(
             $"[translator] Leaf inlining: {leafInliningBlockedTargets.Value.Count:N0} address(es) are not " +
-            "inlinable (native, excluded from translation, or mod-patched).");
+            "inlinable (native, excluded from translation, mod-patched, or observed).");
 
         var queue = new Queue<(uint addr, int depth)>();
         queue.Enqueue((startAddr, 0));
         visited.Add(startAddr);
+
+        // Observers are an executable project contract, not advisory function-map
+        // metadata. Translate every configured target as a required root so a bad
+        // address fails the build instead of being silently dropped as a
+        // speculative map entry.
+        var observerEntryPoints =
+            RequireProject().Translation.EntryObserver?.EntryPoints ?? new HashSet<uint>();
+        foreach (var observerEntryPoint in observerEntryPoints.Order())
+        {
+            gqrUnknownEntryRoots.Add(observerEntryPoint);
+            if (visited.Add(observerEntryPoint))
+                queue.Enqueue((observerEntryPoint, 0));
+        }
 
         // Map entries the call-graph walk never reaches. They are translated, but
         // on a decode or lift failure they are skipped with a count instead of
@@ -730,18 +750,28 @@ int RunTranslateRecursive(string[] argsTail)
                 allowUnsupportedInstructions);
         }
 
-        // The call-graph walk from the entry point, then everything the configured map
-        // knows about that the walk never reached. Those two sources replace the
+        // The call-graph walk from the executable roots, then everything the configured
+        // map knows about that the walk never reached. Those two sources replace the
         // constructor, vtable, function-pointer and adjacent-prologue scans, which
         // guessed at exactly this set - and the hand-maintained force-translate
         // list that existed to paper over the addresses they still missed.
         ProcessQueue();
+        var missingObserverEntries = observerEntryPoints
+            .Where(address => !translated.Contains(address))
+            .Order()
+            .ToArray();
+        if (missingObserverEntries.Length != 0)
+        {
+            throw new InvalidDataException(
+                "Required entry observer target(s) were not translated: " +
+                string.Join(", ", missingObserverEntries.Select(static address => $"0x{address:X8}")));
+        }
         var walkReachable = count;
         ProcessSpeculativeSeeds();
         if (functionMap is not null)
         {
             Console.WriteLine(
-                $"[translator] Function starts: {walkReachable:N0} reached by the call-graph walk, " +
+                $"[translator] Function starts: {walkReachable:N0} required/root-reachable, " +
                 $"{count - walkReachable:N0} added speculatively from the map.");
             if (speculativeSkips.Count != 0)
             {
@@ -878,7 +908,8 @@ int RunTranslateRecursive(string[] argsTail)
             // rather than retaining every descendant dependency forever.
             var interproceduralGuestAbi = GuestAbiInterproceduralAnalyzer.Analyze(
                 canonicalGuestFunctions,
-                nativeGuestEffects.Contracts);
+                nativeGuestEffects.Contracts,
+                observerEntryPoints);
             var guestAbiContracts = interproceduralGuestAbi.Contracts
                 .ToDictionary(static pair => pair.Key, static pair => pair.Value);
             var recursiveComponents = interproceduralGuestAbi.StronglyConnectedComponents
@@ -1007,6 +1038,7 @@ int RunTranslateRecursive(string[] argsTail)
                     index,
                     eligible = component.All(address =>
                         !residentTranslationExclusions.Contains(address) &&
+                        residentPolicy.EntryObserver?.EntryPoints.Contains(address) != true &&
                         !localGuestAbiContracts[address].HasFullSynchronizationFence &&
                         GuestStateLivenessAnalyzer.CanDeconstructWithoutContext(canonicalGuestFunctions[address]) &&
                         (!directlyCalledGuestFunctions.Contains(address) ||
@@ -1090,8 +1122,8 @@ int RunTranslateRecursive(string[] argsTail)
                         StateFreeAbiContracts: stateFreeAbiContracts,
                         StateFreeCallSymbols: stateFreeCallSymbols,
                         StateFreeCallSiteVariants: stateFreeCallSiteVariantsByCaller.GetValueOrDefault(address),
-                         StateFreeEntryVariants: stateFreeEntryVariantsByTarget.GetValueOrDefault(address),
-                         ModOverridableCallTargets: modOverridableCallTargets),
+                        StateFreeEntryVariants: stateFreeEntryVariantsByTarget.GetValueOrDefault(address),
+                        ModOverridableCallTargets: modOverridableCallTargets),
                     residentPolicy,
                     address);
             }
@@ -4019,8 +4051,13 @@ static IReadOnlySet<uint> BuildModPatchedAddresses(
 static TranslationOptions WithProjectCodegenPolicy(
     TranslationOptions options,
     ProjectTranslation translation,
-    uint entryPoint) =>
-    options with
+    uint entryPoint)
+{
+    var fullContextCallTargets = options.FullContextCallTargets?.ToHashSet() ?? new HashSet<uint>();
+    if (translation.EntryObserver is { } observer)
+        fullContextCallTargets.UnionWith(observer.EntryPoints);
+
+    return options with
     {
         AllowUnsupportedInstructions = translation.AllowUnsupportedInstructions,
         // Leaf ABI spill elision is structurally self-guarding: it requires a
@@ -4028,7 +4065,19 @@ static TranslationOptions WithProjectCodegenPolicy(
         // leaf, so a partial mod chunk that only carries one half of an ABI
         // prologue is rejected rather than mis-transformed.
         EnableLeafAbiSpillElision = true,
+        EntryObserverHeader = translation.EntryObserver?.EntryPoints.Contains(entryPoint) == true
+            ? translation.EntryObserver.Header
+            : null,
+        EntryObserverSymbol = translation.EntryObserver?.EntryPoints.Contains(entryPoint) == true
+            ? translation.EntryObserver.Symbol
+            : null,
+        // Read-only observer callbacks can inspect fields outside the guest
+        // callee's inferred ABI. Apply the full materialization boundary here,
+        // rather than only on the base path, so continuations, overlays, modules,
+        // and payloads cannot expose stale resident CpuContext state either.
+        FullContextCallTargets = fullContextCallTargets.Count == 0 ? null : fullContextCallTargets,
     };
+}
 
 /// <summary>
 /// One option carried by one command. <paramref name="Value"/> is the metavariable

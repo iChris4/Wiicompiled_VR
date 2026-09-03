@@ -228,6 +228,26 @@ public static class GuestAbiContractAnalyzer
     }
 
     /// <summary>
+    /// Adds the architectural reads performed by a const host-side entry
+    /// observer. The translated body's write effects remain unchanged; the
+    /// fence forces complete materialization and propagates through callers.
+    /// </summary>
+    public static GuestAbiContract WithReadOnlyContextObserver(GuestAbiContract contract) =>
+        contract with
+        {
+            GprReadBeforeWriteMask = uint.MaxValue,
+            FprReadBeforeWriteMask = uint.MaxValue,
+            CrReadBeforeWriteMask = byte.MaxValue,
+            ReadsXerBeforeWrite = true,
+            ReadsCtrBeforeWrite = true,
+            ReadsLrBeforeWrite = true,
+            ReadsFpscrBeforeWrite = true,
+            GqrReadBeforeWriteMask = byte.MaxValue,
+            HidReadBeforeWriteMask = byte.MaxValue,
+            BoundaryFlags = contract.BoundaryFlags | GuestCallBoundaryFlags.RequiresCompleteContext,
+        };
+
+    /// <summary>
     /// Successor count (0, 1, or 2) and labels for <paramref name="block"/>; count-plus-out-params
     /// keeps the CFG walk allocation-free.
     /// </summary>

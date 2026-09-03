@@ -97,7 +97,8 @@ internal sealed class TranslationProjectConfig
         var translation = new ProjectTranslation(
             entryPoints,
             functionMapPath,
-            dto.Translation?.AllowUnsupportedInstructions ?? false);
+            dto.Translation?.AllowUnsupportedInstructions ?? false,
+            ResolveEntryObserver(dto.Translation?.EntryObserver));
 
         var abiDirectories = (dto.Runtime?.NativeAbiDirectories ?? [])
             .Select(pathValue => ResolvePath(workspaceRoot, pathValue))
@@ -262,6 +263,43 @@ internal sealed class TranslationProjectConfig
     private static string Require(string? value, string field) =>
         !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidDataException($"Translation project requires {field}.");
 
+    private static ProjectEntryObserver? ResolveEntryObserver(EntryObserverDto? dto)
+    {
+        if (dto is null)
+        {
+            return null;
+        }
+
+        var header = Require(dto.Header, "translation.entry_observer.header")
+            .Trim().Replace('\\', '/');
+        if (header.StartsWith("/", StringComparison.Ordinal) ||
+            header.Split('/').Any(static component => component is "" or "." or "..") ||
+            header.Any(static ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '_' or '-' or '.' or '/')))
+        {
+            throw new InvalidDataException(
+                "translation.entry_observer.header must be a safe relative include path.");
+        }
+
+        var symbol = Require(dto.Symbol, "translation.entry_observer.symbol").Trim();
+        if (!(char.IsAsciiLetter(symbol[0]) || symbol[0] == '_') ||
+            symbol.Skip(1).Any(static ch => !(char.IsAsciiLetterOrDigit(ch) || ch == '_')))
+        {
+            throw new InvalidDataException(
+                "translation.entry_observer.symbol must be a C identifier.");
+        }
+
+        var entryPoints = (dto.EntryPoints ?? [])
+            .Select((value, index) => ParseUInt32(
+                value, null, $"translation.entry_observer.entry_points[{index}]"))
+            .ToHashSet();
+        if (entryPoints.Count == 0)
+        {
+            throw new InvalidDataException(
+                "translation.entry_observer requires at least one entry point.");
+        }
+        return new ProjectEntryObserver(header, symbol, entryPoints);
+    }
+
     // Riivolution declarations are verbatim distribution metadata, not paths on this machine:
     // the XML lives inside the pack the runtime mounts, so it stays a forward-slashed
     // pack-relative string and is never resolved against the workspace root.
@@ -405,6 +443,14 @@ internal sealed class TranslationProjectConfig
         public List<string>? EntryPoints { get; init; }
         public FunctionMapDto? FunctionMap { get; init; }
         public bool? AllowUnsupportedInstructions { get; init; }
+        public EntryObserverDto? EntryObserver { get; init; }
+    }
+
+    private sealed class EntryObserverDto
+    {
+        public string? Header { get; init; }
+        public string? Symbol { get; init; }
+        public List<string>? EntryPoints { get; init; }
     }
 
     private sealed class FunctionMapDto
@@ -472,7 +518,12 @@ internal sealed record ProjectInputs(ProjectBinaryInput Dol, ProjectRelInput? Re
 internal sealed record ProjectTranslation(
     IReadOnlyList<uint> EntryPoints,
     string? FunctionMapPath,
-    bool AllowUnsupportedInstructions);
+    bool AllowUnsupportedInstructions,
+    ProjectEntryObserver? EntryObserver);
+internal sealed record ProjectEntryObserver(
+    string Header,
+    string Symbol,
+    IReadOnlySet<uint> EntryPoints);
 internal sealed record ProjectRuntime(
     IReadOnlyList<string> NativeAbiDirectories,
     string NativeRegistrationRoot);

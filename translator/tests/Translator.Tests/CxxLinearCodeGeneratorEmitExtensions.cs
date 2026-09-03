@@ -38,7 +38,10 @@ internal static class CxxLinearCodeGeneratorEmitExtensions
         bool gqrConstantsRequireRuntimeGuard = false,
         bool enableLeafAbiSpillElision = false,
         IReadOnlySet<uint>? modOverridableCallTargets = null,
-        bool enableGpuFifoBurstCoalescing = true) =>
+        IReadOnlySet<uint>? fullContextCallTargets = null,
+        bool enableGpuFifoBurstCoalescing = true,
+        string? entryObserverHeader = null,
+        string? entryObserverSymbol = null) =>
         generator.EmitWithFacts(
             entryPoint: entryPoint,
             ssa: ssa,
@@ -63,5 +66,8 @@ internal static class CxxLinearCodeGeneratorEmitExtensions
             gqrConstantsRequireRuntimeGuard: gqrConstantsRequireRuntimeGuard,
             enableLeafAbiSpillElision: enableLeafAbiSpillElision,
             modOverridableCallTargets: modOverridableCallTargets,
-            enableGpuFifoBurstCoalescing: enableGpuFifoBurstCoalescing).Code;
+            fullContextCallTargets: fullContextCallTargets,
+            enableGpuFifoBurstCoalescing: enableGpuFifoBurstCoalescing,
+            entryObserverHeader: entryObserverHeader,
+            entryObserverSymbol: entryObserverSymbol).Code;
 }

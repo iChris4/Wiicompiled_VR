@@ -19,13 +19,17 @@ public class GqrPrologueHoistingCodeGenTests
 {
     private static string Emit(
         IrFunction function,
-        IReadOnlyDictionary<uint, byte>? gqrCalleeWriteMasks = null) =>
+        IReadOnlyDictionary<uint, byte>? gqrCalleeWriteMasks = null,
+        IReadOnlyDictionary<string, uint>? gqrEntryConstants = null,
+        IReadOnlySet<uint>? fullContextCallTargets = null) =>
         new CxxLinearCodeGenerator().Emit(
             0x80001000u,
             new SsaTransformer().Convert(function),
             new FunctionAbiClassification(function.Name, ValueRepresentation.Void),
             new RepresentationEnvironment(new Dictionary<string, ValueRepresentation>()),
-            gqrCalleeWriteMasks: gqrCalleeWriteMasks);
+            gqrEntryConstants: gqrEntryConstants,
+            gqrCalleeWriteMasks: gqrCalleeWriteMasks,
+            fullContextCallTargets: fullContextCallTargets);
 
     private static IrCall PsqLoad(int index, string address = "r4") =>
         new("f1", "PPC_PsqL", [IrValue.Register(address), IrValue.Imm(0), IrValue.Imm(index)]);
@@ -139,6 +143,22 @@ public class GqrPrologueHoistingCodeGenTests
             gqrCalleeWriteMasks: new Dictionary<uint, byte> { [0x80002000u] = 0b0000_1000 });
 
         Assert.Equal(2, CountOccurrences(code, "mkw_gqr3 = ctx->gqr[3];"));
+    }
+
+    [Fact]
+    public void ReadOnlyContextObserverDoesNotInventGqrWrites()
+    {
+        var code = Emit(
+            Function("observed_call",
+                new IrCall(string.Empty, "func_80002000", []),
+                PsqLoad(3),
+                new IrReturn(null)),
+            gqrCalleeWriteMasks: new Dictionary<uint, byte> { [0x80002000u] = 0 },
+            gqrEntryConstants: new Dictionary<string, uint> { ["gqr3"] = 0x00070007u },
+            fullContextCallTargets: new HashSet<uint> { 0x80002000u });
+
+        Assert.DoesNotContain("mkw_gqr3", code, StringComparison.Ordinal);
+        Assert.Contains("PPC_PsqLKnownInline<0u, 3u, 0x00070007u>", code, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -85,6 +85,35 @@ public sealed class GuestAbiInterproceduralAnalyzerTests
     }
 
     [Fact]
+    public void FullContextEntryEffectsPropagateThroughAllCallers()
+    {
+        const uint root = 0x80001000u;
+        const uint middle = 0x80002000u;
+        const uint observed = 0x80003000u;
+        var functions = new Dictionary<uint, IrFunction>
+        {
+            [root] = Function("root",
+                new IrCall("lr", $"0x{middle:X8}", Array.Empty<IrValue>()),
+                new IrReturn(null)),
+            [middle] = Function("middle",
+                new IrCall("lr", $"0x{observed:X8}", Array.Empty<IrValue>()),
+                new IrReturn(null)),
+            [observed] = Function("observed", new IrReturn(null))
+        };
+
+        var result = GuestAbiInterproceduralAnalyzer.Analyze(
+            functions,
+            contextObservingEntryPoints: new[] { observed });
+
+        Assert.All(new[] { root, middle, observed },
+            address => Assert.True(result.Contracts[address].HasFullSynchronizationFence));
+        Assert.Equal(uint.MaxValue, result.Contracts[observed].GprReadBeforeWriteMask);
+        Assert.Equal(0u, result.Contracts[observed].GprPossibleWriteMask);
+        Assert.Equal(byte.MaxValue, result.Contracts[observed].GqrReadBeforeWriteMask);
+        Assert.Equal((byte)0, result.Contracts[observed].GqrPossibleWriteMask);
+    }
+
+    [Fact]
     public void DeepCallGraphDoesNotConsumeTheNativeStack()
     {
         const int count = 20_000;

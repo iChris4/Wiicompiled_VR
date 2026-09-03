@@ -100,9 +100,21 @@ public sealed partial class CxxLinearCodeGenerator
         bool gqrConstantsRequireRuntimeGuard = false,
         bool enableLeafAbiSpillElision = false,
         IReadOnlySet<uint>? modOverridableCallTargets = null,
-        bool enableGpuFifoBurstCoalescing = true)
+        IReadOnlySet<uint>? fullContextCallTargets = null,
+        bool enableGpuFifoBurstCoalescing = true,
+        string? entryObserverHeader = null,
+        string? entryObserverSymbol = null)
     {
         modOverridableCallTargets ??= new HashSet<uint>();
+        if (fullContextCallTargets is { Count: > 0 })
+        {
+            // The configured observer is read-only, but it can inspect fields
+            // outside the inferred guest ABI. Reuse the conservative boundary
+            // machinery so all resident state is materialized before entry.
+            var completeContextTargets = modOverridableCallTargets.ToHashSet();
+            completeContextTargets.UnionWith(fullContextCallTargets);
+            modOverridableCallTargets = completeContextTargets;
+        }
         nonReturningCallTargets ??= new HashSet<uint>();
         lrContinuationCallTargets ??= new HashSet<uint>();
         guestAbiContracts ??= new Dictionary<uint, GuestAbiContract>();
@@ -149,6 +161,10 @@ public sealed partial class CxxLinearCodeGenerator
         // tuple for every instruction of every emission of this body.
         var suppressedInstructionMasks = BuildSuppressedInstructionMasks(func, flagElision);
         var cxxName = SanitizeIdentifier(signature.Name);
+        var emitEntryObserver = !string.IsNullOrWhiteSpace(entryObserverHeader) &&
+                                !string.IsNullOrWhiteSpace(entryObserverSymbol);
+        if (emitEntryObserver)
+            guestAbiContract = GuestAbiContractAnalyzer.WithReadOnlyContextObserver(guestAbiContract);
         var pairedFlow = ComputePairedFlowStates(func, cfg, _guestAbiProvider);
         var pairedIn = pairedFlow.In;
         var pairedOut = pairedFlow.Out;
@@ -660,6 +676,21 @@ public sealed partial class CxxLinearCodeGenerator
         if (CanVersionGuardedGqrFunction(func, gqrEntryGuards))
         {
             code = ApplyGuardedGqrFunctionVersioning(code, implementationName, gqrEntryGuards);
+        }
+        if (emitEntryObserver)
+        {
+            var declaration = FunctionDefinitionSignature(implementationName);
+            var declarationStart = code.IndexOf(declaration, StringComparison.Ordinal);
+            if (declarationStart < 0)
+                throw new InvalidOperationException($"Entry observer could not find the function body for 0x{entryPoint:X8}.");
+            var openBrace = code.IndexOf('{', declarationStart + declaration.Length);
+            if (openBrace < 0)
+                throw new InvalidOperationException($"Entry observer found no function body for 0x{entryPoint:X8}.");
+            // The explicit const conversion makes the manifest's read-only
+            // callback contract a compile-time requirement for every project.
+            var observer = $"{Environment.NewLine}    {entryObserverSymbol}(0x{entryPoint:X8}u, static_cast<const CpuContext*>(ctx));";
+            code = $"#include \"{entryObserverHeader}\"" + Environment.NewLine +
+                   code.Insert(openBrace + 1, observer);
         }
 
         return new CxxEmissionResult(

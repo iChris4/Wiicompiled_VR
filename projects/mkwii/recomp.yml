@@ -34,6 +34,19 @@ translation:
   #just a precaution, but this should never be needed for MKWii
   allow_unsupported_instructions: false 
 
+  # PAL RMCP01 entry observers used by the OpenXR presentation policy. Keeping
+  # these in the game manifest prevents the generic translator from acquiring a
+  # Mario Kart runtime dependency merely because another title shares an address.
+  # The callback contract is read-only: (uint32_t, const CpuContext*).
+  entry_observer:
+    header: vr/mkw_vr_instrumentation.h
+    symbol: MkwVRObserveTranslatedFunctionEntry
+    entry_points:
+      - 0x80553C50 # RaceScene::OnEnter
+      - 0x805549B0 # RaceScene::OnExit
+      - 0x805A21D0 # RaceCamera::Update
+      - 0x805B1CD8 # ScnMgrRace::Draw
+
 runtime:
   native_registration_root: runtime/src
   native_abi_directories:

@@ -354,7 +354,7 @@ public sealed partial class CxxLinearCodeGenerator
     }
 
     /// <summary>
-    /// Resolves the boundary sync set for a direct guest call, falling back to <see cref="ResidencyBoundarySync.Full"/> when narrowing is disabled, residency is inactive, the callee has no contract or a full-sync fence, or a mod could replace the callee with a re-translation this body's contract doesn't describe.
+    /// Resolves the boundary sync set for a direct guest call, falling back to <see cref="ResidencyBoundarySync.Full"/> when narrowing is disabled, residency is inactive, the callee has no contract or a full-sync fence, or host-side behavior (such as a mod replacement or entry observer) can access state outside the guest contract.
     /// </summary>
     private static ResidencyBoundarySync ResolveDirectCallBoundarySync(
         uint target,
