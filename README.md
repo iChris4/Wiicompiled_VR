@@ -36,6 +36,13 @@ The graphics layer is built on
 **High internal resolution.** 
 Play at several times the console's resolution.
 
+**Experimental OpenXR VR.**
+Windows builds can render through a D3D12 OpenXR runtime without CPU readback. Menus and
+unsupported scenes appear as a head-locked virtual screen; a validated single-camera race switches
+to immersive stereo rendering. VR is opt-in and falls back to the normal desktop renderer if the
+runtime or headset is unavailable. See [`OPENXR.md`](OPENXR.md) for setup, configuration, and the
+current limitations.
+
 **Music ducking.** 
 Start playing something else, Spotify, a YouTube video, and
 the game automatically mutes its own music until the other audio stops. Optional, if you'd
@@ -178,6 +185,8 @@ All translated output is verified against real hardware behavior and most import
   project's whole graphics layer sits on. MIT licensed.
 - **[Dawn](https://dawn.googlesource.com/dawn)** - Google's WebGPU implementation, powering
   aurora's Direct3D, Vulkan and OpenGL backends.
+- **[OpenXR](https://www.khronos.org/openxr/)** - the Khronos cross-platform API used by the
+  experimental VR renderer.
 - **[Dolphin Emulator](https://github.com/dolphin-emu/dolphin)** - an invaluable reference for Wii
   hardware behavior during development, plus the source of the free DSP coefficient ROM and the
   unmodified default WiiConnect24 bootstrap tree bundled with the runtime.

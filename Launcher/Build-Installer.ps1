@@ -98,7 +98,7 @@ Assert-Directory $dependencySources 'Pinned offline dependency sources'
 # to compile (launcher/Prepare-NativePrebuilt.ps1).
 # Kept in step with InstalledLayout.DependencyNames by Test-PinnedFacts.ps1: the installed host
 # refuses to call a toolkit complete unless every one of these directories is present.
-$requiredDependencies = @('abseil-cpp','cppwinrt','dawn_prebuilt','fmt','freetype','imgui','libusb','native_prebuilt','png','SDL','sqlite3','tracy','xxhash','zlib','zstd')
+$requiredDependencies = @('abseil-cpp','cppwinrt','dawn_prebuilt','fmt','freetype','imgui','libusb','native_prebuilt','openxr','png','SDL','sqlite3','tracy','xxhash','zlib','zstd')
 
 # The precompiled archives are only interchangeable with what the user's machine
 # compiles if both came from this toolchain and this flag set, so a stale package
@@ -225,6 +225,7 @@ Write-Host '[3/6] Writing manifests and third-party license inventory...'
 Copy-Item (Join-Path $portableTools 'README-LICENSES.txt') (Join-Path $payloadRoot 'licenses\Portable-build-tools.txt')
 Copy-Item (Join-Path $repoRoot 'aurora-main\LICENSE') (Join-Path $payloadRoot 'licenses\Aurora-LICENSE.txt')
 Copy-Item (Join-Path $dependencySources 'cppwinrt\LICENSE.txt') (Join-Path $payloadRoot 'licenses\CppWinRT-LICENSE.txt')
+Copy-Item (Join-Path $dependencySources 'openxr\LICENSE') (Join-Path $payloadRoot 'licenses\OpenXR-SDK-LICENSE.txt')
 # The precompiled aurora/third-party archives are built from the very sources
 # already shipped under build-workspace\Dependencies and aurora-main, so they add
 # no third-party component and therefore no new license obligation.

@@ -189,12 +189,13 @@ $pins = Get-MkwProjectPins $project
 # (the real RAM guard, capping concurrent clang compiles of memory-hungry translated TUs via the Ninja
 # MKW_TRANSLATED_COMPILE_JOBS pool), and $globalJobs (Ninja's overall parallelism for everything else).
 # An explicit -Parallel pins all three.
-$memoryGiB = [math]::Max(1, [math]::Floor((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB))
 if ($Parallel -gt 0) {
     $translatorThreads = $Parallel
     $translatedJobs = $Parallel
     $globalJobs = $Parallel
 } else {
+    $memoryGiB = [math]::Max(1, [math]::Floor(
+        (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB))
     $translatorThreads = [math]::Max(1, [math]::Min([Environment]::ProcessorCount, 16))
     $translatedJobs = [math]::Max(1, [math]::Min([Environment]::ProcessorCount,
         [math]::Floor($memoryGiB / 2)))

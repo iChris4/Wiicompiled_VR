@@ -141,6 +141,7 @@ included in the installer's `licenses/` folder.
 | SQLite | 3.51.3 amalgamation | Public domain | <https://sqlite.org/> |
 | Tracy Profiler | pinned commit | BSD-3-Clause | <https://github.com/wolfpld/tracy> |
 | C++/WinRT | - | MIT (Microsoft) | <https://github.com/microsoft/cppwinrt> |
+| OpenXR-SDK | 1.1.61 | Apache-2.0 | <https://github.com/KhronosGroup/OpenXR-SDK> |
 | nodtool (disc image extraction) | v2.0.0-alpha.10 | MIT OR Apache-2.0 | <https://github.com/encounter/nod> |
 
 ### Dual-licensed components - elections made by this project

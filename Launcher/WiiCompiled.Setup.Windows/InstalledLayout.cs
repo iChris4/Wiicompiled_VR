@@ -27,7 +27,7 @@ internal static class InstalledLayout
     public static readonly string[] DependencyNames =
     [
         "abseil-cpp", "cppwinrt", "dawn_prebuilt", "fmt", "freetype", "imgui", "libusb", "native_prebuilt",
-        "png", "SDL", "sqlite3", "tracy", "xxhash", "zlib", "zstd"
+        "openxr", "png", "SDL", "sqlite3", "tracy", "xxhash", "zlib", "zstd"
     ];
 }
 
