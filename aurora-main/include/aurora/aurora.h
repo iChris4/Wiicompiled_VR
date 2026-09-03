@@ -82,14 +82,17 @@ enum { AURORA_STEREO_EYE_COUNT = 2 };
 /**
  * One eye of a stereo frame supplied by the host application.
  *
- * projection is a row-major, renderer-ready 4x4 projection matrix. It uses
- * the same convention as the matrix uploaded by GXSetProjection after
- * Aurora's depth-range adjustment.
+ * projection is row-major and supplies the OpenXR frustum's X/Y scale and
+ * asymmetric-center terms at [0][0], [0][2], [1][1], and [1][2]. Aurora
+ * applies those four values to each perspective GX draw while preserving the
+ * draw's own depth mapping and renderer depth-range adjustment.
  *
  * viewFromCenter is a row-major affine 3x4 transform from the game's
  * recorded center-eye view space into this eye's view space. Identity keeps
  * the recorded view and is useful when the game has already applied the eye
  * transform before issuing GX commands.
+ *
+ * Both transforms are ignored in AURORA_STEREO_FRAME_VIRTUAL_SCREEN mode.
  */
 typedef struct {
   uint32_t width;
@@ -98,13 +101,30 @@ typedef struct {
   float viewFromCenter[12];
 } AuroraStereoEye;
 
+typedef enum {
+  // Replay perspective GX draws with the supplied per-eye transforms.
+  AURORA_STEREO_FRAME_IMMERSIVE_REPLAY = 0,
+  // Copy the completed mono present source to both eye outputs. The OpenXR
+  // backend can present these images as a compositor quad layer.
+  AURORA_STEREO_FRAME_VIRTUAL_SCREEN = 1,
+} AuroraStereoFrameMode;
+
+// aurora_end_frame() uses this sentinel when its caller cannot associate a
+// sealed frame with an application safety state. Immersive providers are only
+// accepted through aurora_end_frame_tagged() with an exact matching tag.
+#define AURORA_STEREO_CONTENT_TAG_UNKNOWN UINT64_MAX
+
 /**
  * Stereo data for one sealed GX frame. frameToken is opaque to Aurora and is
- * forwarded unchanged to the internal stereo output sink.
+ * forwarded unchanged to the internal stereo output sink. contentTag must
+ * match the tag latched by aurora_end_frame_tagged() for immersive replay.
  */
 typedef struct {
   uint64_t frameToken;
   AuroraStereoEye eyes[AURORA_STEREO_EYE_COUNT];
+  // Appended to preserve the frameToken/eyes prefix used by older providers.
+  AuroraStereoFrameMode mode;
+  uint64_t contentTag;
 } AuroraStereoFrame;
 
 /**
@@ -186,6 +206,9 @@ void aurora_shutdown();
 const AuroraEvent* aurora_update();
 bool aurora_begin_frame();
 void aurora_end_frame();
+// Seal the current frame with an opaque application safety tag. Aurora rejects
+// an immersive provider packet unless its contentTag matches this exact frame.
+void aurora_end_frame_tagged(uint64_t contentTag);
 typedef void (*AuroraFrameWorkerWaitCallback)();
 // Called from the producer thread at bounded intervals while Aurora waits for
 // the asynchronous frame worker. The callback must not enter Aurora.
@@ -195,6 +218,11 @@ void aurora_set_frame_worker_wait_callback(AuroraFrameWorkerWaitCallback callbac
 void aurora_set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdata);
 void aurora_wait_for_frame_worker();
 bool aurora_wait_for_frame_worker_for(uint32_t timeoutMicros);
+// Producer-thread shutdown barrier. If an asynchronous cycle is waiting for
+// the next begin-frame permission, grant that permission and wait until the
+// worker is fully done. Unlike aurora_wait_for_frame_worker(), this is safe in
+// the gap between aurora_end_frame() and aurora_begin_frame().
+void aurora_quiesce_frame_worker();
 // Absolute schedule for the next sealed frame, on steady_clock: baseNanos anchors the group and
 // intervalNanos is the period, so slot k of N+1 fires at base + k*interval/(N+1). Zeros clear it.
 void aurora_set_present_schedule(uint64_t baseNanos, uint64_t intervalNanos);

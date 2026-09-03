@@ -49,6 +49,7 @@ std::recursive_mutex& renderer_gpu_mutex() noexcept {
 } // namespace aurora
 
 extern "C" bool aurora_wait_for_frame_worker_for(uint32_t) { return true; }
+extern "C" void aurora_quiesce_frame_worker() {}
 
 // --- aurora::log_internal ---
 namespace aurora {
@@ -453,6 +454,13 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
   record.persistentCopy = persistentCopy;
   testing::s_resolvePassRecords.push_back(std::move(record));
 }
+// The recorded resolve is the display copy's; the flag only steers render-pass
+// bookkeeping that lives in common.cpp, which this target does not compile.
+void mark_last_resolve_as_display_copy() noexcept {}
+void set_stereo_stop_at_display_copy(bool value) noexcept {}
+bool get_stereo_stop_at_display_copy() noexcept { return true; }
+void set_stereo_skip_copy_clears(bool value) noexcept {}
+bool get_stereo_skip_copy_clears() noexcept { return true; }
 void queue_palette_conv(tex_palette_conv::ConvRequest req) {}
 void begin_offscreen(uint32_t width, uint32_t height) {}
 void end_offscreen() {}

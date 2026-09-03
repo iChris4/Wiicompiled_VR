@@ -540,11 +540,27 @@ bool initialize(AuroraBackend auroraBackend) {
         .requiredFeatureCount = requiredInstanceFeatures.size(),
         .requiredFeatures = requiredInstanceFeatures.data(),
     };
+#ifdef WEBGPU_DAWN
+    // Dawn hides its D3D12 shared-resource feature from adapter enumeration
+    // unless unsafe APIs are exposed by the instance. OpenXR's same-device
+    // bridge is the only Aurora path that needs it, so keep the wider Dawn API
+    // surface scoped to an explicitly requested XR interop instance.
+    const std::array xrInteropInstanceToggles{"allow_unsafe_apis"};
+    wgpu::DawnTogglesDescriptor instanceToggles({
+        .enabledToggleCount = xrInteropInstanceToggles.size(),
+        .enabledToggles = xrInteropInstanceToggles.data(),
+    });
+    if (g_config.xrInterop) {
+      instanceDescriptor.nextInChain = &instanceToggles;
+      Log.info("Enabling Dawn unsafe APIs for OpenXR D3D12 resource interop");
+    }
+#endif
 #if defined(WEBGPU_DAWN) && !defined(__MINGW32__)
     // DawnNative.h's C++ constructor has an MSVC ABI that cannot cross into llvm-mingw, and the
     // descriptor only restates Dawn's defaults, so use the public WebGPU descriptor here.
     dawn::native::DawnInstanceDescriptor dawnInstanceDescriptor;
     dawnInstanceDescriptor.backendValidationLevel = dawn::native::BackendValidationLevel::Disabled;
+    dawnInstanceDescriptor.nextInChain = instanceDescriptor.nextInChain;
     instanceDescriptor.nextInChain = &dawnInstanceDescriptor;
 #endif
     g_instance = wgpu::CreateInstance(&instanceDescriptor);
@@ -680,7 +696,8 @@ bool initialize(AuroraBackend auroraBackend) {
       }
 #if defined(WEBGPU_DAWN) && defined(_WIN32)
       if (g_config.xrInterop && g_backendType == wgpu::BackendType::D3D12 &&
-          feature == wgpu::FeatureName::SharedTextureMemoryD3D12Resource) {
+          (feature == wgpu::FeatureName::SharedTextureMemoryD3D12Resource ||
+           feature == wgpu::FeatureName::SharedFenceDXGISharedHandle)) {
         requiredFeatures.push_back(feature);
       }
 #endif

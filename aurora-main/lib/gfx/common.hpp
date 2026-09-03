@@ -362,6 +362,17 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
                   const std::array<u32, 3>* copyFilterCoefficients = nullptr, bool forceOpaqueAlpha = false,
                   float copyFilterRowStride = 1.0f, bool clampTop = false, bool clampBottom = false,
                   bool persistentCopy = false);
+// Marks the resolve immediately preceding the current continuation pass as the
+// EFB-to-display copy. Immersive replay uses its source rectangle as the eye
+// viewport instead of exposing the Wii's larger scratch EFB workspace.
+void mark_last_resolve_as_display_copy() noexcept;
+
+// Immersive-replay EFB controls, both on by default. Safe to flip at any time:
+// the frame worker reads them atomically once per eye.
+void set_stereo_stop_at_display_copy(bool value) noexcept;
+bool get_stereo_stop_at_display_copy() noexcept;
+void set_stereo_skip_copy_clears(bool value) noexcept;
+bool get_stereo_skip_copy_clears() noexcept;
 
 void begin_offscreen(uint32_t width, uint32_t height);
 void end_offscreen();

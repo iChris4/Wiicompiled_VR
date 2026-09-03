@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -182,12 +183,38 @@ struct RenderPass {
   bool resolveNeedsConversion = false;
   bool resolveNeedsShaderSampling = false;
   bool resolveLinearSampling = false;
+  bool displayCopyResolve = false;
+  // This pass is the continuation resolve_pass opened after a GXCopyDisp, so its
+  // clears describe that copy's EFB reset rather than anything the game drew.
+  // Deliberately not set for GXCopyTex: a mid-frame copy clear establishes the
+  // background the rest of the frame draws over, and an eye still needs it.
+  bool postCopyClear = false;
   bool snapshotColorResolveSource = false;
   bool efbTarget = false;
   std::vector<tex_palette_conv::ConvRequest> paletteConvs;
 };
 static std::vector<RenderPass> g_renderPasses;
 static u32 g_currentRenderPass = UINT32_MAX;
+
+// Immersive-replay EFB controls. The settings overlay writes these from the UI
+// thread while the frame worker reads them mid-encode, so they are atomic. Both
+// default to the corrected behaviour; clearing either restores the raw replay
+// for A/B comparison without a rebuild.
+static std::atomic_bool g_stereoStopAtDisplayCopy{true};
+static std::atomic_bool g_stereoSkipCopyClears{true};
+
+void set_stereo_stop_at_display_copy(bool value) noexcept {
+  g_stereoStopAtDisplayCopy.store(value, std::memory_order_relaxed);
+}
+bool get_stereo_stop_at_display_copy() noexcept {
+  return g_stereoStopAtDisplayCopy.load(std::memory_order_relaxed);
+}
+void set_stereo_skip_copy_clears(bool value) noexcept {
+  g_stereoSkipCopyClears.store(value, std::memory_order_relaxed);
+}
+bool get_stereo_skip_copy_clears() noexcept {
+  return g_stereoSkipCopyClears.load(std::memory_order_relaxed);
+}
 
 // Recycle command storage: discarding passes used to free their command lists too, so each frame
 // rebuilt hundreds of KB from zero capacity. The passes themselves are cheap to recreate.
@@ -620,6 +647,10 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
       .clearDepthValue = clearDepthValue,
       .clearColor = useAttachmentColorClear,
       .clearDepth = useAttachmentDepthClear,
+      // This continuation still renders into the same main EFB attachments.
+      // Stereo replay filters on this flag; dropping it after a GX copy made
+      // every later race pass mono-only and left the eye targets cleared.
+      .efbTarget = prevPass.efbTarget,
   };
   push_render_pass(std::move(newPass));
   ++g_currentRenderPass;
@@ -643,11 +674,31 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
             },
         .depth = clearDepthValue,
         .useScissor = !clearFullTarget,
+        .copyClear = true,
         .scissor = rect,
     });
   }
   push_command(CommandType::SetViewport, Command::Data{.setViewport = g_cachedViewport});
   push_command(CommandType::SetScissor, Command::Data{.setScissor = g_cachedScissor});
+}
+
+void mark_last_resolve_as_display_copy() noexcept {
+  if (g_currentRenderPass == 0 || g_currentRenderPass > g_renderPasses.size()) {
+    Log.warn("Could not identify the render pass preceding a GX display copy");
+    return;
+  }
+  auto& resolvedPass = g_renderPasses[g_currentRenderPass - 1];
+  if (!resolvedPass.resolveTarget || !resolvedPass.efbTarget) {
+    Log.warn("GX display-copy marker did not follow a main-EFB resolve");
+    return;
+  }
+  resolvedPass.displayCopyResolve = true;
+  // resolve_pass has already opened the continuation that carries this copy's
+  // EFB reset, and only here is it known to belong to a display copy. The guard
+  // above admits g_currentRenderPass == size(), which has no continuation.
+  if (g_currentRenderPass < g_renderPasses.size()) {
+    g_renderPasses[g_currentRenderPass].postCopyClear = true;
+  }
 }
 
 void queue_palette_conv(tex_palette_conv::ConvRequest req) {
@@ -1102,17 +1153,99 @@ void abort_frame() noexcept {
   end_pipeline_frame();
 }
 
-static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame) noexcept {
-  size_t requiredBytes = 0;
-  for (const auto& pass : g_renderPasses) {
-    if (!pass.efbTarget) {
+// What immersive replay should reproduce out of a sealed frame: the rectangle
+// the game presented, and the last pass that still contributes to it.
+struct StereoDisplaySource {
+  ClipRect region{};
+  // Inclusive index of the pass holding the final GXCopyDisp resolve. Passes
+  // after it only reset the EFB for the next frame, so an eye that replays them
+  // erases the image it just built. -1 means no display copy was found and the
+  // whole pass list is replayed against the full-EFB fallback region.
+  int32_t lastDisplayCopyPass = -1;
+  bool foundDisplayCopy = false;
+};
+
+static StereoDisplaySource stereo_display_source(const std::vector<RenderPass>& passes) noexcept {
+  StereoDisplaySource out{};
+  ClipRect fullRegion{};
+  for (const auto& pass : passes) {
+    if (!pass.efbTarget || pass.targetSize.width == 0 || pass.targetSize.height == 0) {
       continue;
+    }
+    fullRegion = {
+        .x = 0,
+        .y = 0,
+        .width = static_cast<int32_t>(pass.targetSize.width),
+        .height = static_cast<int32_t>(pass.targetSize.height),
+    };
+    break;
+  }
+
+  // The desktop present source is replaced by each GXCopyDisp, so the final
+  // valid display copy—not a union of every copy—is the frame shown to users.
+  for (auto it = passes.rbegin(); it != passes.rend(); ++it) {
+    const auto& pass = *it;
+    if (!pass.efbTarget || !pass.displayCopyResolve || pass.targetSize.width == 0 ||
+        pass.targetSize.height == 0) {
+      continue;
+    }
+    const int32_t passIndex = static_cast<int32_t>(std::distance(passes.begin(), it.base())) - 1;
+
+    const int32_t targetWidth = static_cast<int32_t>(pass.targetSize.width);
+    const int32_t targetHeight = static_cast<int32_t>(pass.targetSize.height);
+    const int32_t left = std::clamp(pass.resolveRect.x, 0, targetWidth);
+    const int32_t top = std::clamp(pass.resolveRect.y, 0, targetHeight);
+    const int32_t right = std::clamp(pass.resolveRect.x + pass.resolveRect.width, left, targetWidth);
+    const int32_t bottom = std::clamp(pass.resolveRect.y + pass.resolveRect.height, top, targetHeight);
+    if (right <= left || bottom <= top) {
+      continue;
+    }
+    out.region = {left, top, right - left, bottom - top};
+    out.lastDisplayCopyPass = passIndex;
+    out.foundDisplayCopy = true;
+    return out;
+  }
+
+  out.region = fullRegion;
+  return out;
+}
+
+static void log_stereo_display_source_region(ClipRect region, bool foundDisplayCopy) noexcept {
+  static ClipRect lastLogged{};
+  static bool logged = false;
+  if (region.width > 0 && region.height > 0 && (!logged || region != lastLogged)) {
+    logged = true;
+    lastLogged = region;
+    Log.info("Immersive display-copy source region: {}x{} at ({}, {}){}", region.width,
+             region.height, region.x, region.y,
+             foundDisplayCopy ? "" : " (full-EFB fallback)");
+  }
+}
+
+static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame) noexcept {
+  const StereoDisplaySource displaySource = stereo_display_source(g_renderPasses);
+  const ClipRect displayRegion = displaySource.region;
+  // This is the producer-side preparation path; eye replay can query the pure
+  // helper concurrently without touching this diagnostic state.
+  log_stereo_display_source_region(displayRegion, displaySource.foundDisplayCopy);
+  size_t requiredBytes = 0;
+  size_t efbPassCount = 0;
+  size_t perspectiveDrawCount = 0;
+  size_t replayPerspectiveDrawCount = 0;
+  for (const auto& pass : g_renderPasses) {
+    if (pass.efbTarget) {
+      ++efbPassCount;
     }
     for (const auto& command : pass.commands) {
       if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX ||
           !command.data.draw.gx.uniformReplayLayout.perspective) {
         continue;
       }
+      ++perspectiveDrawCount;
+      if (!pass.efbTarget) {
+        continue;
+      }
+      ++replayPerspectiveDrawCount;
       const auto& draw = command.data.draw.gx;
       const auto& layout = draw.uniformReplayLayout;
       const size_t projectionEnd = static_cast<size_t>(layout.projectionOffset) + sizeof(Mat4x4<float>);
@@ -1127,6 +1260,13 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
       }
       requiredBytes += static_cast<size_t>(draw.uniformRange.size) * AURORA_STEREO_EYE_COUNT;
     }
+  }
+  static bool replayCoverageLogged = false;
+  if (!replayCoverageLogged) {
+    replayCoverageLogged = true;
+    Log.info("Immersive replay coverage: {} of {} passes target the EFB; {} of {} perspective draws replay",
+             efbPassCount, g_renderPasses.size(), replayPerspectiveDrawCount,
+             perspectiveDrawCount);
   }
 
   // end_batch_impl appends MaxUniformSize bytes after this for safe dynamic-offset reads.
@@ -1154,7 +1294,13 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
         draw.stereoUniformRanges[eyeIndex] = range;
         const auto& eye = stereoFrame.eyes[eyeIndex];
 
-        std::memcpy(uniform.data() + layout.projectionOffset, &eye.projection, sizeof(eye.projection));
+        Mat4x4<float> gameProjection;
+        std::memcpy(&gameProjection, uniform.data() + layout.projectionOffset,
+                    sizeof(gameProjection));
+        const auto projection =
+            stereo_replay::compose_projection(eye.projection, gameProjection);
+        std::memcpy(uniform.data() + layout.projectionOffset, &projection,
+                    sizeof(projection));
 
         for (uint32_t matrix = 0; matrix < layout.positionMatrixCount; ++matrix) {
           if ((layout.positionMatrixMask & (1u << matrix)) == 0) {
@@ -1174,13 +1320,13 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
           std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
         }
 
-        if (pass.targetSize.width != 0 && pass.targetSize.height != 0) {
+        if (displayRegion.width > 0 && displayRegion.height > 0) {
           float renderSize[2];
           std::memcpy(renderSize, uniform.data() + 8, sizeof(renderSize));
           renderSize[0] *= static_cast<float>(eye.target.size.width) /
-                           static_cast<float>(pass.targetSize.width);
+                           static_cast<float>(displayRegion.width);
           renderSize[1] *= static_cast<float>(eye.target.size.height) /
-                           static_cast<float>(pass.targetSize.height);
+                           static_cast<float>(displayRegion.height);
           std::memcpy(uniform.data() + 8, renderSize, sizeof(renderSize));
         }
       }
@@ -1296,8 +1442,12 @@ struct RenderInvocation {
   int32_t interpolatedFrame = -1;
   uint32_t stereoEye = UINT32_MAX;
   const ReplayTarget* target = nullptr;
+  ClipRect replaySourceRegion{};
+  // Inclusive index of the last pass to replay; -1 replays every pass.
+  int32_t replayLastPass = -1;
   bool finalize = true;
   bool replayOnlyEfb = false;
+  bool skipCopyClears = false;
   bool encodeTextureBakes = true;
   bool encodeResolves = true;
   bool captureDepth = true;
@@ -1313,6 +1463,11 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
   // interpolation weight, so encode them on the native render and let replay slots sample them.
   for (u32 i = 0; i < renderPasses.size(); ++i) {
     const auto& passInfo = renderPasses[i];
+    if (invocation.replayLastPass >= 0 && i > static_cast<u32>(invocation.replayLastPass)) {
+      // Only immersive replay sets this, and it never encodes bakes or resolves,
+      // so nothing later in the list is owed any work.
+      break;
+    }
     if (invocation.replayOnlyEfb && !passInfo.efbTarget) {
       continue;
     }
@@ -1331,6 +1486,10 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
     }
 
     const bool overrideTarget = invocation.target != nullptr && passInfo.efbTarget;
+    // A GX copy clear resets the Wii's reused EFB for the next frame. An eye
+    // attachment is built fresh per frame and per eye, so reproducing that reset
+    // only erases what the replay already drew.
+    const bool dropCopyClear = invocation.skipCopyClears && overrideTarget && passInfo.postCopyClear;
     const auto colorView = overrideTarget ? invocation.target->colorView : passInfo.colorView;
     const auto resolveView = overrideTarget ? invocation.target->resolveView : passInfo.resolveView;
     const auto depthView = overrideTarget ? invocation.target->depthView : passInfo.depthView;
@@ -1338,7 +1497,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
         wgpu::RenderPassColorAttachment{
             .view = colorView,
             .resolveTarget = resolveView,
-            .loadOp = passInfo.clearColor ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
+            .loadOp = passInfo.clearColor && !dropCopyClear ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
             .storeOp = wgpu::StoreOp::Store,
             .clearValue =
                 {
@@ -1351,7 +1510,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
     };
     const wgpu::RenderPassDepthStencilAttachment depthStencilAttachment{
         .view = depthView,
-        .depthLoadOp = passInfo.clearDepth ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
+        .depthLoadOp = passInfo.clearDepth && !dropCopyClear ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
         .depthStoreOp = wgpu::StoreOp::Store,
         .depthClearValue = passInfo.clearDepthValue,
     };
@@ -1479,12 +1638,20 @@ void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedF
 void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd,
                        const StereoReplayFrame& stereoFrame, uint32_t eye, bool finalize) {
   CHECK(eye < AURORA_STEREO_EYE_COUNT, "invalid stereo eye {}", eye);
+  const auto displaySource = stereo_display_source(frame.data().passes);
+  // GXCopyDisp publishes the frame and then clears the EFB for the next one.
+  // The eye is a fresh per-frame attachment, not the reused EFB, so replaying
+  // past that copy blanks the very image the game presented.
+  const int32_t lastPass = get_stereo_stop_at_display_copy() ? displaySource.lastDisplayCopyPass : -1;
   render_impl(frame.data().passes, cmd,
               RenderInvocation{
                   .stereoEye = eye,
                   .target = &stereoFrame.eyes[eye].target,
+                  .replaySourceRegion = displaySource.region,
+                  .replayLastPass = lastPass,
                   .finalize = finalize,
                   .replayOnlyEfb = true,
+                  .skipCopyClears = get_stereo_skip_copy_clears(),
                   .encodeTextureBakes = false,
                   .encodeResolves = false,
                   .captureDepth = false,
@@ -1530,11 +1697,33 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
   const auto& sourceSize = renderPasses[idx].targetSize;
   const bool overrideTarget = invocation.target != nullptr && renderPasses[idx].efbTarget;
   const auto targetSize = overrideTarget ? invocation.target->size : sourceSize;
-  const float scaleX = overrideTarget && sourceSize.width != 0
-                           ? static_cast<float>(targetSize.width) / static_cast<float>(sourceSize.width)
+  const int32_t sourceWidth = static_cast<int32_t>(sourceSize.width);
+  const int32_t sourceHeight = static_cast<int32_t>(sourceSize.height);
+  int32_t sourceRegionLeft = 0;
+  int32_t sourceRegionTop = 0;
+  int32_t sourceRegionRight = sourceWidth;
+  int32_t sourceRegionBottom = sourceHeight;
+  if (overrideTarget && invocation.replaySourceRegion.width > 0 &&
+      invocation.replaySourceRegion.height > 0) {
+    const auto& region = invocation.replaySourceRegion;
+    sourceRegionLeft = std::clamp(region.x, 0, sourceWidth);
+    sourceRegionTop = std::clamp(region.y, 0, sourceHeight);
+    sourceRegionRight = std::clamp(region.x + region.width, sourceRegionLeft, sourceWidth);
+    sourceRegionBottom = std::clamp(region.y + region.height, sourceRegionTop, sourceHeight);
+    if (sourceRegionRight == sourceRegionLeft || sourceRegionBottom == sourceRegionTop) {
+      sourceRegionLeft = 0;
+      sourceRegionTop = 0;
+      sourceRegionRight = sourceWidth;
+      sourceRegionBottom = sourceHeight;
+    }
+  }
+  const int32_t sourceRegionWidth = sourceRegionRight - sourceRegionLeft;
+  const int32_t sourceRegionHeight = sourceRegionBottom - sourceRegionTop;
+  const float scaleX = overrideTarget && sourceRegionWidth > 0
+                           ? static_cast<float>(targetSize.width) / static_cast<float>(sourceRegionWidth)
                            : 1.0f;
-  const float scaleY = overrideTarget && sourceSize.height != 0
-                           ? static_cast<float>(targetSize.height) / static_cast<float>(sourceSize.height)
+  const float scaleY = overrideTarget && sourceRegionHeight > 0
+                           ? static_cast<float>(targetSize.height) / static_cast<float>(sourceRegionHeight)
                            : 1.0f;
 
   for (const auto& cmd : renderPasses[idx].commands) {
@@ -1563,28 +1752,29 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
       // reproduced in clip space. Passing the raw swapped pair diverged per backend in release builds.
       const float minDepth = std::clamp(std::min(vp.znear, vp.zfar), 0.0f, 1.0f);
       const float maxDepth = std::clamp(std::max(vp.znear, vp.zfar), 0.0f, 1.0f);
-      pass.SetViewport(vp.left * scaleX, vp.top * scaleY, vp.width * scaleX, vp.height * scaleY,
-                       minDepth, maxDepth);
+      pass.SetViewport((vp.left - static_cast<float>(sourceRegionLeft)) * scaleX,
+                       (vp.top - static_cast<float>(sourceRegionTop)) * scaleY,
+                       vp.width * scaleX, vp.height * scaleY, minDepth, maxDepth);
     } break;
     case CommandType::SetScissor: {
       const auto& sc = cmd.data.setScissor;
-      const auto sourceLeft = std::clamp(sc.x, 0, static_cast<int32_t>(sourceSize.width));
-      const auto sourceTop = std::clamp(sc.y, 0, static_cast<int32_t>(sourceSize.height));
+      const auto sourceLeft = std::clamp(sc.x, sourceRegionLeft, sourceRegionRight);
+      const auto sourceTop = std::clamp(sc.y, sourceRegionTop, sourceRegionBottom);
       const auto sourceRight =
-          std::clamp(sc.x + sc.width, sourceLeft, static_cast<int32_t>(sourceSize.width));
+          std::clamp(sc.x + sc.width, sourceLeft, sourceRegionRight);
       const auto sourceBottom =
-          std::clamp(sc.y + sc.height, sourceTop, static_cast<int32_t>(sourceSize.height));
+          std::clamp(sc.y + sc.height, sourceTop, sourceRegionBottom);
       const auto left = static_cast<uint32_t>(std::clamp(
-          static_cast<int32_t>(std::floor(static_cast<float>(sourceLeft) * scaleX)), 0,
+          static_cast<int32_t>(std::floor(static_cast<float>(sourceLeft - sourceRegionLeft) * scaleX)), 0,
           static_cast<int32_t>(targetSize.width)));
       const auto top = static_cast<uint32_t>(std::clamp(
-          static_cast<int32_t>(std::floor(static_cast<float>(sourceTop) * scaleY)), 0,
+          static_cast<int32_t>(std::floor(static_cast<float>(sourceTop - sourceRegionTop) * scaleY)), 0,
           static_cast<int32_t>(targetSize.height)));
       const auto right = static_cast<uint32_t>(std::clamp(
-          static_cast<int32_t>(std::ceil(static_cast<float>(sourceRight) * scaleX)),
+          static_cast<int32_t>(std::ceil(static_cast<float>(sourceRight - sourceRegionLeft) * scaleX)),
           static_cast<int32_t>(left), static_cast<int32_t>(targetSize.width)));
       const auto bottom = static_cast<uint32_t>(std::clamp(
-          static_cast<int32_t>(std::ceil(static_cast<float>(sourceBottom) * scaleY)),
+          static_cast<int32_t>(std::ceil(static_cast<float>(sourceBottom - sourceRegionTop) * scaleY)),
           static_cast<int32_t>(top), static_cast<int32_t>(targetSize.height)));
       pass.SetScissorRect(left, top, right - left, bottom - top);
     } break;
@@ -1604,9 +1794,53 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
         }
         gx::render(draw.gx, pass, encodeState, renderPasses[idx].requireReadyPipelines, uniformOverride);
       } break;
-      case ShaderType::Clear:
-        clear::render(draw.clear, pass, renderPasses[idx].targetSize, encodeState.currentPipeline);
-        break;
+      case ShaderType::Clear: {
+        auto clearDraw = draw.clear;
+        if (invocation.skipCopyClears && overrideTarget && clearDraw.copyClear &&
+            renderPasses[idx].postCopyClear) {
+          // The scissored twin of the attachment-load-op case above: the copy's
+          // EFB reset, rescaled into eye space, covers the whole eye.
+          break;
+        }
+        if (overrideTarget && clearDraw.useScissor) {
+          const auto& sc = clearDraw.scissor;
+          const auto sourceLeft = std::clamp(sc.x, sourceRegionLeft, sourceRegionRight);
+          const auto sourceTop = std::clamp(sc.y, sourceRegionTop, sourceRegionBottom);
+          const auto sourceRight =
+              std::clamp(sc.x + sc.width, sourceLeft, sourceRegionRight);
+          const auto sourceBottom =
+              std::clamp(sc.y + sc.height, sourceTop, sourceRegionBottom);
+          const auto left = std::clamp(
+              static_cast<int32_t>(
+                  std::floor(static_cast<float>(sourceLeft - sourceRegionLeft) * scaleX)),
+              0,
+              static_cast<int32_t>(targetSize.width));
+          const auto top = std::clamp(
+              static_cast<int32_t>(
+                  std::floor(static_cast<float>(sourceTop - sourceRegionTop) * scaleY)),
+              0,
+              static_cast<int32_t>(targetSize.height));
+          const auto right = std::clamp(
+              static_cast<int32_t>(
+                  std::ceil(static_cast<float>(sourceRight - sourceRegionLeft) * scaleX)),
+              left,
+              static_cast<int32_t>(targetSize.width));
+          const auto bottom = std::clamp(
+              static_cast<int32_t>(
+                  std::ceil(static_cast<float>(sourceBottom - sourceRegionTop) * scaleY)),
+              top,
+              static_cast<int32_t>(targetSize.height));
+          clearDraw.scissor = ClipRect{
+              .x = left,
+              .y = top,
+              .width = right - left,
+              .height = bottom - top,
+          };
+        }
+        // Clear draws set their own viewport and scissor. Stereo replay must use
+        // the eye attachment extent here, not the original EFB/desktop extent.
+        clear::render(clearDraw, pass, targetSize, encodeState.currentPipeline);
+      } break;
       }
     } break;
     case CommandType::DebugMarker: {

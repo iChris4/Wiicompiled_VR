@@ -35,6 +35,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <fstream>
 #include <memory>
@@ -75,6 +76,7 @@ struct StereoProviderRegistration {
 #ifdef AURORA_ENABLE_GX
 struct StereoSinkRegistration {
   stereo::SinkCallback callback = nullptr;
+  stereo::SubmitCallback submitted = nullptr;
   void* userdata = nullptr;
 };
 #endif
@@ -242,7 +244,7 @@ enum class ImGuiFramePolicy {
 bool begin_frame_impl(bool pumpEvents, ImGuiFramePolicy imguiPolicy = ImGuiFramePolicy::Immediate,
                       bool* imguiNewFrameOwed = nullptr) noexcept;
 bool begin_frame_render_state_impl(ImGuiFramePolicy imguiPolicy, bool* imguiNewFrameOwed) noexcept;
-void end_frame_impl(bool pumpEvents, bool drainFifo) noexcept;
+void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag) noexcept;
 
 // The two publication points of a frame-worker cycle, cleared together under `mutex`. Sealed:
 // producer-shared renderer state is free again. Done: slots encoded, presented, ImGui restarted.
@@ -259,6 +261,9 @@ struct FrameWorkerState {
   bool started = false;
   bool stop = false;
   bool jobPending = false;
+  // Written with jobPending and copied by the worker under this mutex. It
+  // belongs to that exact queued frame, not to the producer's next frame.
+  uint64_t contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
   // Readiness is polled thousands of times per frame, so these flags double as a publication
   // barrier. `sealed` is released before `ready`, and both are cleared under `mutex`.
   std::atomic_bool sealed{true};
@@ -299,7 +304,7 @@ bool frame_worker_requested() noexcept {
 
 #ifdef AURORA_ENABLE_GX
 // Returns false when a stop request was observed mid-cycle.
-bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame) noexcept;
+bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag) noexcept;
 #endif
 
 void frame_worker_main() noexcept {
@@ -315,21 +320,26 @@ void frame_worker_main() noexcept {
 #endif
 
   for (;;) {
+    uint64_t contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
     {
       std::unique_lock lock(g_frameWorker.mutex);
       g_frameWorker.cv.wait(lock, [] { return g_frameWorker.stop || g_frameWorker.jobPending; });
       if (g_frameWorker.stop) {
         break;
       }
+      contentTag = g_frameWorker.contentTag;
+      g_frameWorker.contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
       g_frameWorker.jobPending = false;
     }
 
     // The CPU already decoded the sealed frame at its GX boundary; the worker only owns
     // encode/submit/present, so it never touches the producer's next FIFO buffer.
 #ifdef AURORA_ENABLE_GX
-    if (!run_frame_worker_cycle(sealedFrame)) {
+    if (!run_frame_worker_cycle(sealedFrame, contentTag)) {
       break;
     }
+#else
+    (void)contentTag;
 #endif
   }
 
@@ -353,6 +363,7 @@ void ensure_frame_worker_started() noexcept {
   }
   g_frameWorker.stop = false;
   g_frameWorker.jobPending = false;
+  g_frameWorker.contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
   g_frameWorker.sealed.store(true, std::memory_order_release);
   g_frameWorker.ready.store(true, std::memory_order_release);
   g_frameWorker.prepareAllowed = false;
@@ -421,6 +432,8 @@ void stop_frame_worker() noexcept {
   g_frameWorker.started = false;
   g_frameWorker.threadId = {};
   g_frameWorker.framePrepared = false;
+  g_frameWorker.jobPending = false;
+  g_frameWorker.contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
 }
 
 uint32_t align_to(uint32_t value, uint32_t alignment) noexcept {
@@ -496,6 +509,11 @@ struct StereoEyeTarget {
   webgpu::TextureWithSampler color;
   webgpu::TextureWithSampler resolvedColor;
   webgpu::TextureWithSampler depth;
+  uint32_t requestedWidth = 0;
+  uint32_t requestedHeight = 0;
+  uint32_t samples = 0;
+  wgpu::TextureFormat colorFormat = wgpu::TextureFormat::Undefined;
+  wgpu::TextureFormat depthFormat = wgpu::TextureFormat::Undefined;
 
   const webgpu::TextureWithSampler& output() const noexcept {
     return resolvedColor.texture ? resolvedColor : color;
@@ -506,8 +524,9 @@ std::array<StereoEyeTarget, AURORA_STEREO_EYE_COUNT> g_stereoEyeTargets;
 void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height) {
   auto& target = g_stereoEyeTargets[eyeIndex];
   const uint32_t samples = webgpu::g_graphicsConfig.msaaSamples;
-  if (target.color.texture && target.color.size.width == width && target.color.size.height == height &&
-      ((samples > 1 && target.resolvedColor.texture) || (samples == 1 && !target.resolvedColor.texture))) {
+  if (target.color.texture && target.requestedWidth == width && target.requestedHeight == height &&
+      target.samples == samples && target.colorFormat == webgpu::g_graphicsConfig.surfaceConfiguration.format &&
+      target.depthFormat == webgpu::g_graphicsConfig.depthFormat) {
     return;
   }
 
@@ -531,9 +550,15 @@ void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height
   target.depth.view = target.depth.texture.CreateView();
   target.depth.size = target.color.size;
   target.depth.format = webgpu::g_graphicsConfig.depthFormat;
+  target.requestedWidth = width;
+  target.requestedHeight = height;
+  target.samples = samples;
+  target.colorFormat = target.color.format;
+  target.depthFormat = target.depth.format;
 }
 
-std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame) noexcept {
+std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame,
+                                                      uint64_t contentTag) noexcept {
   StereoProviderRegistration registration;
   {
     std::lock_guard lock(g_stereoRegistrationMutex);
@@ -554,14 +579,36 @@ std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame) noe
   if (!provided) {
     return std::nullopt;
   }
+  if (frame.mode != AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && frame.mode != AURORA_STEREO_FRAME_VIRTUAL_SCREEN) {
+    Log.warn("Stereo frame {} has invalid mode {}; rendering in mono", logicalFrame,
+             static_cast<uint32_t>(frame.mode));
+    return std::nullopt;
+  }
+  // A virtual-screen packet only copies the completed mono image and remains
+  // a safe fallback across a transition. Immersive replay changes the GX
+  // transforms, so it requires the exact tag latched for this sealed content.
+  if (frame.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY &&
+      (contentTag == AURORA_STEREO_CONTENT_TAG_UNKNOWN || frame.contentTag != contentTag)) {
+    Log.debug("Stereo frame {} content tag does not match its sealed frame; rendering in mono",
+              logicalFrame);
+    return std::nullopt;
+  }
 
   const auto finite = [](const float* values, size_t count) {
-    return std::all_of(values, values + count, [](float value) { return std::isfinite(value); });
+    // aurora_core is built with -ffast-math, so std::isfinite may be folded to
+    // true. Inspecting the IEEE-754 exponent keeps the provider boundary safe
+    // under the target's real release flags.
+    return std::all_of(values, values + count, [](const float& value) {
+      uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+      return (bits & 0x7f800000u) != 0x7f800000u;
+    });
   };
   for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
     const auto& input = frame.eyes[eye];
-    if (input.width == 0 || input.height == 0 || !finite(input.projection, 16) ||
-        !finite(input.viewFromCenter, 12)) {
+    const bool transformsValid = frame.mode == AURORA_STEREO_FRAME_VIRTUAL_SCREEN ||
+                                 (finite(input.projection, 16) && finite(input.viewFromCenter, 12));
+    if (input.width == 0 || input.height == 0 || !transformsValid) {
       Log.warn("Stereo frame {} has invalid eye {} dimensions or transforms; rendering in mono",
                logicalFrame, eye);
       return std::nullopt;
@@ -593,19 +640,58 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input) 
   return replay;
 }
 
-void run_stereo_sink(wgpu::CommandEncoder& encoder, uint64_t frameToken, uint32_t logicalFrame) noexcept {
+void encode_virtual_screen_eye(wgpu::CommandEncoder& encoder, const webgpu::PresentSource& source,
+                               uint32_t eyeIndex) {
+  const auto& output = g_stereoEyeTargets[eyeIndex].output();
+  const std::array attachments{
+      wgpu::RenderPassColorAttachment{
+          .view = output.view,
+          .loadOp = wgpu::LoadOp::Clear,
+          .storeOp = wgpu::StoreOp::Store,
+          .clearValue = {.r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0},
+      },
+  };
+  const wgpu::RenderPassDescriptor descriptor{
+      .label = eyeIndex == 0 ? "Virtual screen left eye" : "Virtual screen right eye",
+      .colorAttachmentCount = attachments.size(),
+      .colorAttachments = attachments.data(),
+  };
+  {
+    const auto pass = encoder.BeginRenderPass(&descriptor);
+    if (source.bindGroup && source.size.width != 0 && source.size.height != 0) {
+      const auto viewport = webgpu::calculate_present_viewport(
+          output.size.width, output.size.height, source.size.width, source.size.height);
+      pass.SetPipeline(webgpu::g_CopyPipeline);
+      pass.SetBindGroup(0, source.bindGroup, 0, nullptr);
+      pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height,
+                       viewport.znear, viewport.zfar);
+      pass.Draw(3);
+    }
+    pass.End();
+  }
+}
+
+struct PendingStereoSink {
+  stereo::SinkFrame frame;
+  stereo::SubmitCallback submitted = nullptr;
+  void* userdata = nullptr;
+};
+
+std::optional<PendingStereoSink> run_stereo_sink(wgpu::CommandEncoder& encoder, uint64_t frameToken,
+                                                 uint32_t logicalFrame, AuroraStereoFrameMode mode) noexcept {
   StereoSinkRegistration registration;
   {
     std::lock_guard lock(g_stereoRegistrationMutex);
     registration = g_stereoSink;
   }
   if (registration.callback == nullptr) {
-    return;
+    return std::nullopt;
   }
 
   stereo::SinkFrame frame{
       .frameToken = frameToken,
       .logicalFrame = logicalFrame,
+      .mode = mode,
   };
   for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
     const auto& output = g_stereoEyeTargets[eye].output();
@@ -616,7 +702,14 @@ void run_stereo_sink(wgpu::CommandEncoder& encoder, uint64_t frameToken, uint32_
         .format = output.format,
     };
   }
-  registration.callback(encoder, frame, registration.userdata);
+  if (!registration.callback(encoder, frame, registration.userdata)) {
+    return std::nullopt;
+  }
+  return PendingStereoSink{
+      .frame = frame,
+      .submitted = registration.submitted,
+      .userdata = registration.userdata,
+  };
 }
 
 void request_surface_reconfigure() noexcept {
@@ -1368,11 +1461,19 @@ void shutdown() noexcept {
   stop_frame_worker();
 #ifdef AURORA_ENABLE_GX
   stop_presenter();
+  g_stereoEyeTargets = {};
   g_presentationImagePools = {};
   imgui::shutdown();
   gfx::shutdown();
   webgpu::shutdown();
 #endif
+  {
+    std::lock_guard lock(g_stereoRegistrationMutex);
+    g_stereoProvider = {};
+#ifdef AURORA_ENABLE_GX
+    g_stereoSink = {};
+#endif
+  }
   input::shutdown();
   window::shutdown();
 }
@@ -1473,6 +1574,10 @@ bool begin_frame_render_state_impl(ImGuiFramePolicy imguiPolicy, bool* imguiNewF
 struct SealedFrameContext {
   wgpu::CommandEncoder encoder; // slot 0's encoder; already holds the staging copies
   webgpu::PresentSource presentSource{};
+  std::optional<gfx::StereoReplayFrame> stereoReplay;
+  uint64_t stereoFrameToken = 0;
+  AuroraStereoFrameMode stereoFrameMode = AURORA_STEREO_FRAME_IMMERSIVE_REPLAY;
+  bool immersiveStereoPrepared = false;
   uint64_t scheduleBaseNanos = 0;
   uint64_t scheduleIntervalNanos = 0;
   uint32_t interpolatedFrameCount = 0;
@@ -1485,7 +1590,8 @@ struct SealedFrameContext {
 
 // Phase 1: everything that touches producer-shared renderer state. Needs g_rendererGpuMutex and
 // a FIFO already drained into the recorded pass list.
-void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx) {
+void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx,
+                       uint64_t contentTag) {
   ZoneScopedN("Seal frame");
   const auto encoderDescriptor = wgpu::CommandEncoderDescriptor{
       .label = "Redraw encoder",
@@ -1494,7 +1600,32 @@ void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx) {
   // Probe-sized CPU-consumed copies read back asynchronously. Their downscale blits push uniforms,
   // so prepare them while the producer's staging buffers are still mapped.
   gfx::efb_ram::seal_async_downloads();
-  gfx::end_frame(ctx.encoder);
+  // current_frame() advances inside gfx::end_frame; unsigned wrap maps the
+  // pre-first-frame UINT32_MAX value to logical frame zero.
+  ctx.logicalFrame = gfx::current_frame() + 1;
+  if (const auto stereoInput = request_stereo_frame(ctx.logicalFrame, contentTag)) {
+    ctx.stereoFrameToken = stereoInput->frameToken;
+    ctx.stereoFrameMode = stereoInput->mode;
+    ctx.stereoReplay = make_stereo_replay_frame(*stereoInput);
+  }
+  if (ctx.stereoReplay && ctx.stereoFrameMode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY) {
+    // Keep the accepted frame alive even if the additional eye-uniform copies
+    // do not fit. The encode phase will duplicate the completed mono image to
+    // both eyes, allowing the sink to release/end the already-acquired XR
+    // frame instead of orphaning it indefinitely.
+    ctx.immersiveStereoPrepared = gfx::end_frame(ctx.encoder, *ctx.stereoReplay);
+    static bool immersiveReplaySuccessLogged = false;
+    static bool immersiveReplayFallbackLogged = false;
+    if (ctx.immersiveStereoPrepared && !immersiveReplaySuccessLogged) {
+      immersiveReplaySuccessLogged = true;
+      Log.info("Immersive stereo GX replay prepared successfully for both eyes");
+    } else if (!ctx.immersiveStereoPrepared && !immersiveReplayFallbackLogged) {
+      immersiveReplayFallbackLogged = true;
+      Log.warn("Immersive stereo GX replay preparation failed; duplicating the mono image into the projection layer");
+    }
+  } else {
+    gfx::end_frame(ctx.encoder);
+  }
   gfx::g_stats.presentedFrameCount = 0;
   gfx::g_stats.interpolatedFrameCount = 0;
   // Latched before the producer's next gfx::begin_frame() calls
@@ -1540,33 +1671,40 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
       return {};
     }
     if (!ctx.interpolationActive) {
-      return PresentClock::time_point{std::chrono::nanoseconds{
-          ctx.scheduleBaseNanos - ctx.scheduleIntervalNanos + kNativePresentOffsetNanos}};
+      return PresentClock::time_point{
+          std::chrono::nanoseconds{ctx.scheduleBaseNanos - ctx.scheduleIntervalNanos + kNativePresentOffsetNanos}};
     }
-    const uint64_t offsetNanos =
-        (ctx.scheduleIntervalNanos * static_cast<uint64_t>(slot)) / presentationJobCount;
+    const uint64_t offsetNanos = (ctx.scheduleIntervalNanos * static_cast<uint64_t>(slot)) / presentationJobCount;
     return PresentClock::time_point{std::chrono::nanoseconds{ctx.scheduleBaseNanos + offsetNanos}};
   };
   std::vector<PresentationJob> presentationJobs;
   presentationJobs.reserve(presentationJobCount);
+  std::optional<PendingStereoSink> pendingStereoSink;
 
   // Each slot is submitted as soon as it is encoded, so the GPU starts slot 0 while slot 1 is still
   // recording. Queue order preserves the ordering the single batched buffer gave.
   const wgpu::CommandBufferDescriptor cmdBufDescriptor{
       .label = "Presentation slot command buffer",
   };
-  const auto submitEncodedSlot = [&](wgpu::CommandEncoder& target) {
+  const auto submitEncodedSlot = [&](wgpu::CommandEncoder& target,
+                                     const PendingStereoSink* stereoSubmission = nullptr) {
     const auto buffer = target.Finish(&cmdBufDescriptor);
-    std::lock_guard submitLock(g_queueSubmitMutex);
-    g_queue.Submit(1, &buffer);
+    {
+      std::lock_guard submitLock(g_queueSubmitMutex);
+      g_queue.Submit(1, &buffer);
+      // The native backend may enqueue follow-up work on Dawn's underlying
+      // graphics queue. Keep it adjacent to this submission so presenter or
+      // EFB work cannot interleave between the WebGPU copy and that handoff.
+      if (stereoSubmission != nullptr && stereoSubmission->submitted != nullptr) {
+        stereoSubmission->submitted(stereoSubmission->frame, stereoSubmission->userdata);
+      }
+    }
   };
 
   if (ctx.replayInterpolatedFrames) {
-    for (uint32_t interpolatedFrame = 0; interpolatedFrame < ctx.interpolatedFrameCount;
-         ++interpolatedFrame) {
+    for (uint32_t interpolatedFrame = 0; interpolatedFrame < ctx.interpolatedFrameCount; ++interpolatedFrame) {
       gfx::render(sealedFrame, encoder, static_cast<int32_t>(interpolatedFrame), false);
-      auto image =
-          acquire_presentation_image(interpolatedFrame, ctx.snapshotWidth, ctx.snapshotHeight);
+      auto image = acquire_presentation_image(interpolatedFrame, ctx.snapshotWidth, ctx.snapshotHeight);
       encode_presentation_snapshot(encoder, ctx.presentSource, *image, true);
       presentationJobs.push_back({
           .image = std::move(image),
@@ -1581,15 +1719,15 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
 
   // A demanded CPU-visible EFB readback submits a prefix of the frame, so replaying the resumed
   // stream would mutate an already-rendered EFB. Render once, then duplicate into the slots.
-  gfx::render(sealedFrame, encoder, -1, true);
+  const bool stereoOutput = ctx.stereoReplay.has_value();
+  const bool immersiveReplay = stereoOutput && ctx.immersiveStereoPrepared;
+  gfx::render(sealedFrame, encoder, -1, !immersiveReplay);
   // The copy targets now hold this frame's resolves, so queue their readbacks on the same encoder;
   // completion is harvested in gfx::after_submit, never waited on here.
   gfx::efb_ram::encode_async_downloads(encoder);
   if (!ctx.replayInterpolatedFrames) {
-    for (uint32_t interpolatedFrame = 0; interpolatedFrame < ctx.interpolatedFrameCount;
-         ++interpolatedFrame) {
-      auto image =
-          acquire_presentation_image(interpolatedFrame, ctx.snapshotWidth, ctx.snapshotHeight);
+    for (uint32_t interpolatedFrame = 0; interpolatedFrame < ctx.interpolatedFrameCount; ++interpolatedFrame) {
+      auto image = acquire_presentation_image(interpolatedFrame, ctx.snapshotWidth, ctx.snapshotHeight);
       encode_presentation_snapshot(encoder, ctx.presentSource, *image, true);
       presentationJobs.push_back({
           .image = std::move(image),
@@ -1602,9 +1740,35 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
       encoder = g_device.CreateCommandEncoder(&encoderDescriptor);
     }
   }
-  auto finalImage =
-      acquire_presentation_image(ctx.interpolatedFrameCount, ctx.snapshotWidth, ctx.snapshotHeight);
+  auto finalImage = acquire_presentation_image(ctx.interpolatedFrameCount, ctx.snapshotWidth, ctx.snapshotHeight);
   encode_presentation_snapshot(encoder, ctx.presentSource, *finalImage, true);
+
+  // Keep both eye replays and the sink copy in the final submission. The
+  // duplicate-slot path above may submit and rotate the encoder several
+  // times, so encoding stereo before it would pair the post-submit callback
+  // with the wrong command buffer.
+  if (immersiveReplay) {
+    for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+      gfx::render_stereo_eye(sealedFrame, encoder, *ctx.stereoReplay, eye, eye + 1 == AURORA_STEREO_EYE_COUNT);
+    }
+  } else if (stereoOutput) {
+    // Use the completed mono snapshot so virtual-screen XR includes ImGui at
+    // the same scale and aspect as the desktop presentation. Rendering the
+    // same ImGui draw data directly into differently-sized eye textures would
+    // make the backend restore the desktop-sized viewport.
+    const webgpu::PresentSource completedMono{
+        .bindGroup = finalImage->bindGroup,
+        .texture = finalImage->texture.texture,
+        .size = finalImage->texture.size,
+        .format = finalImage->texture.format,
+    };
+    for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+      encode_virtual_screen_eye(encoder, completedMono, eye);
+    }
+  }
+  if (stereoOutput) {
+    pendingStereoSink = run_stereo_sink(encoder, ctx.stereoFrameToken, ctx.logicalFrame, ctx.stereoFrameMode);
+  }
   auto pendingFrameCapture = encode_frame_capture(encoder, ctx.presentSource);
   presentationJobs.push_back({
       .image = std::move(finalImage),
@@ -1612,7 +1776,7 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
       .presentAt = slotPresentDeadline(ctx.interpolatedFrameCount),
       .interpolated = false,
   });
-  submitEncodedSlot(encoder);
+  submitEncodedSlot(encoder, pendingStereoSink ? &*pendingStereoSink : nullptr);
 
   // A group that finished encoding past its anchor slides forward by whole display periods, never
   // per slot. The cursor keeps two groups off one anchor, which bursts then holds for a period.
@@ -1719,7 +1883,7 @@ void record_frame_telemetry() {
 
 // One complete frame-worker cycle. The scene encode only leaves the renderer mutex when
 // interpolation actually inserts slots; otherwise both phases publish together.
-bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame) noexcept {
+bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag) noexcept {
   ZoneScopedN("Frame worker cycle");
   webgpu::fail_if_device_lost();
   SealedFrameContext ctx;
@@ -1727,7 +1891,7 @@ bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame) noexcept {
   bool overlapEncode = false;
   {
     std::lock_guard gpuLock(g_rendererGpuMutex);
-    seal_frame_locked(sealedFrame, ctx);
+    seal_frame_locked(sealedFrame, ctx, contentTag);
     overlapEncode = ctx.interpolationActive;
     if (!overlapEncode) {
       presentationJobs = encode_sealed_frame(sealedFrame, ctx);
@@ -1787,7 +1951,7 @@ bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame) noexcept {
 
 // Synchronous frame submission: seal, encode and present inline on the calling thread. Used when
 // the frame worker is disabled (RenderDoc captures) and on the boot path.
-void end_frame_impl(bool pumpEvents, bool drainFifo) noexcept {
+void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag) noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
   webgpu::fail_if_device_lost();
@@ -1802,7 +1966,7 @@ void end_frame_impl(bool pumpEvents, bool drainFifo) noexcept {
     if (drainFifo) {
       gx::fifo::drain();
     }
-    seal_frame_locked(sealedFrame, ctx);
+    seal_frame_locked(sealedFrame, ctx, contentTag);
     presentationJobs = encode_sealed_frame(sealedFrame, ctx);
   }
   publish_presentations(std::move(presentationJobs), ctx.interpolationActive);
@@ -1810,6 +1974,7 @@ void end_frame_impl(bool pumpEvents, bool drainFifo) noexcept {
 #else
   (void)pumpEvents;
   (void)drainFifo;
+  (void)contentTag;
 #endif
 }
 
@@ -1878,12 +2043,12 @@ bool begin_frame() noexcept {
   return prepared;
 }
 
-void end_frame() noexcept {
+void end_frame(uint64_t contentTag) noexcept {
 #ifdef AURORA_ENABLE_GX
   webgpu::fail_if_device_lost();
 #endif
   if (!frame_worker_requested()) {
-    end_frame_impl(true, true);
+    end_frame_impl(true, true, contentTag);
     return;
   }
 
@@ -1903,6 +2068,7 @@ void end_frame() noexcept {
     g_frameWorker.framePrepared = false;
     g_frameWorker.sealed.store(false, std::memory_order_release);
     g_frameWorker.ready.store(false, std::memory_order_release);
+    g_frameWorker.contentTag = contentTag;
     g_frameWorker.jobPending = true;
     g_frameWorker.prepareAllowed = false;
   }
@@ -1922,7 +2088,47 @@ std::chrono::nanoseconds wait_for_frame_worker_sealed() noexcept {
 bool wait_for_frame_worker_for(std::chrono::microseconds timeout) noexcept {
   return wait_for_frame_worker_private_for(FrameWorkerPhase::Done, timeout);
 }
+void quiesce_frame_worker() noexcept {
+  {
+    std::lock_guard lock(g_frameWorker.mutex);
+    if (!g_frameWorker.started || g_frameWorker.threadId == std::this_thread::get_id() ||
+        g_frameWorker.ready.load(std::memory_order_acquire)) {
+      return;
+    }
+    // This may race the worker just after it passed the prepare wait. In that
+    // case the permit is harmless and is cleared after DONE before another job
+    // can be queued by this producer thread.
+    g_frameWorker.prepareAllowed = true;
+  }
+  g_frameWorker.cv.notify_all();
+  wait_for_frame_worker_private(FrameWorkerPhase::Done);
+  {
+    std::lock_guard lock(g_frameWorker.mutex);
+    g_frameWorker.prepareAllowed = false;
+  }
+}
 std::recursive_mutex& renderer_gpu_mutex() noexcept { return g_rendererGpuMutex; }
+
+void set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdata) noexcept {
+  std::lock_guard lock(g_stereoRegistrationMutex);
+  g_stereoProvider = {
+      .callback = provider,
+      .userdata = userdata,
+  };
+}
+
+#ifdef AURORA_ENABLE_GX
+namespace stereo {
+void set_sink(SinkCallback callback, SubmitCallback submitted, void* userdata) noexcept {
+  std::lock_guard lock(g_stereoRegistrationMutex);
+  g_stereoSink = {
+      .callback = callback,
+      .submitted = submitted,
+      .userdata = userdata,
+  };
+}
+} // namespace stereo
+#endif
 } // namespace aurora
 
 // C API bindings
@@ -1932,14 +2138,19 @@ AuroraInfo aurora_initialize(int argc, char* argv[], const AuroraConfig* config)
 void aurora_shutdown() { aurora::shutdown(); }
 const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
-void aurora_end_frame() { aurora::end_frame(); }
+void aurora_end_frame() { aurora::end_frame(AURORA_STEREO_CONTENT_TAG_UNKNOWN); }
+void aurora_end_frame_tagged(uint64_t contentTag) { aurora::end_frame(contentTag); }
 void aurora_set_frame_worker_wait_callback(AuroraFrameWorkerWaitCallback callback) {
   aurora::g_frameWorkerWaitCallback.store(callback, std::memory_order_release);
+}
+void aurora_set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdata) {
+  aurora::set_stereo_frame_provider(provider, userdata);
 }
 void aurora_wait_for_frame_worker() { aurora::wait_for_frame_worker(); }
 bool aurora_wait_for_frame_worker_for(uint32_t timeoutMicros) {
   return aurora::wait_for_frame_worker_for(std::chrono::microseconds(timeoutMicros));
 }
+void aurora_quiesce_frame_worker() { aurora::quiesce_frame_worker(); }
 void aurora_set_present_schedule(uint64_t baseNanos, uint64_t intervalNanos) {
   aurora::g_presentScheduleBaseNanos.store(baseNanos, std::memory_order_release);
   aurora::g_presentScheduleIntervalNanos.store(intervalNanos, std::memory_order_release);
@@ -2068,6 +2279,12 @@ void aurora_set_log_level(AuroraLogLevel level) { aurora::g_config.logLevel = le
 void aurora_set_pause_on_focus_lost(bool value) { aurora::g_config.pauseOnFocusLost = value; }
 void aurora_set_disable_copy_filter(bool disabled) { aurora::g_config.disableCopyFilter = disabled; }
 bool aurora_get_disable_copy_filter() { return aurora::g_config.disableCopyFilter; }
+void aurora_set_stereo_stop_at_display_copy(bool enabled) {
+  aurora::gfx::set_stereo_stop_at_display_copy(enabled);
+}
+bool aurora_get_stereo_stop_at_display_copy() { return aurora::gfx::get_stereo_stop_at_display_copy(); }
+void aurora_set_stereo_skip_copy_clears(bool enabled) { aurora::gfx::set_stereo_skip_copy_clears(enabled); }
+bool aurora_get_stereo_skip_copy_clears() { return aurora::gfx::get_stereo_skip_copy_clears(); }
 void aurora_set_background_input(bool value) {
   aurora::g_config.allowJoystickBackgroundEvents = value;
   aurora::window::set_background_input(value);

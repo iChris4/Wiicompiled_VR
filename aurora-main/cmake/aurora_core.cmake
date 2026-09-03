@@ -33,6 +33,13 @@ endif ()
 if (AURORA_ENABLE_GX)
     target_compile_definitions(aurora_core PUBLIC AURORA_ENABLE_GX WEBGPU_DAWN)
     target_sources(aurora_core PRIVATE lib/webgpu/gpu.cpp lib/webgpu/gpu_cache.cpp lib/dawn/BackendBinding.cpp)
+    # The translation unit supplies C ABI fallback stubs when Dawn D3D12 is
+    # unavailable. Keep those symbols linkable on every Windows GX build so an
+    # OpenXR-enabled runtime can fail back to desktop mode at runtime instead
+    # of producing unresolved interop references.
+    if (CMAKE_SYSTEM_NAME STREQUAL Windows)
+        target_sources(aurora_core PRIVATE lib/webgpu/d3d12_interop.cpp)
+    endif ()
     target_link_libraries(aurora_core PRIVATE dawn::webgpu_dawn)
     if (DAWN_ENABLE_VULKAN)
         target_compile_definitions(aurora_core PRIVATE DAWN_ENABLE_BACKEND_VULKAN)

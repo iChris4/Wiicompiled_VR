@@ -82,6 +82,19 @@ uint32_t aurora_get_queued_pipeline_count();
 void aurora_set_disable_copy_filter(bool disabled);
 bool aurora_get_disable_copy_filter();
 
+// Immersive (stereo) replay EFB controls, both enabled by default, and both
+// live: they take effect on the next frame with no restart.
+//
+// stop_at_display_copy ends each eye's replay at the frame's final GXCopyDisp,
+// so an eye holds exactly the image the game presented. skip_copy_clears drops
+// the EFB reset a GX copy performs after copying, which on the Wii prepares the
+// reused EFB for the next frame but on a per-frame eye attachment only erases
+// the replay. Disable either to compare against the raw replay.
+void aurora_set_stereo_stop_at_display_copy(bool enabled);
+bool aurora_get_stereo_stop_at_display_copy();
+void aurora_set_stereo_skip_copy_clears(bool enabled);
+bool aurora_get_stereo_skip_copy_clears();
+
 // Guest-RAM write tracking. `generation` changes whenever guest RAM covering a host range was
 // written (or returns AURORA_GUEST_WRITE_UNTRACKED); `notify` reports writes aurora made itself.
 #define AURORA_GUEST_WRITE_UNTRACKED UINT64_MAX

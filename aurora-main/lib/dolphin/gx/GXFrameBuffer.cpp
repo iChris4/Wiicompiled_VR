@@ -446,6 +446,7 @@ void GXCopyDisp(void* dest, GXBool clear) {
                             static_cast<float>(rect.height) / std::max<float>(g_gxState.dispCopySrc.height, 1.0f),
                             (g_gxState.copyClamp & GX_CLAMP_TOP) != 0,
                             (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0);
+  aurora::gfx::mark_last_resolve_as_display_copy();
   aurora::gx::set_display_copy_present_source();
 }
 

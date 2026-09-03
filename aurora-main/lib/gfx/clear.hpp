@@ -11,6 +11,10 @@ struct DrawData {
   wgpu::Color color;
   float depth = 0.f;
   bool useScissor = false;
+  // Set for the EFB clear a GX copy performs after copying. Immersive replay
+  // can drop these: an eye attachment is not the Wii's reused EFB, so the
+  // post-copy reset would erase the image the copy just published.
+  bool copyClear = false;
   ClipRect scissor{};
 };
 
