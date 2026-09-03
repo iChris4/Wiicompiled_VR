@@ -135,9 +135,18 @@ elseif (_aurora_sdl3_provider STREQUAL "vendor")
     endif ()
 
     include(FetchContent)
+    # Source fixes for the vendored SDL (see AuroraSDL3Patches.cmake). A freshly
+    # downloaded tarball is patched by the PATCH_COMMAND; a tree handed in through
+    # FETCHCONTENT_SOURCE_DIR_SDL skips the download steps, so patch it here.
+    set(_aurora_sdl3_patches "${CMAKE_CURRENT_LIST_DIR}/AuroraSDL3Patches.cmake")
+    include("${_aurora_sdl3_patches}")
+    if (DEFINED FETCHCONTENT_SOURCE_DIR_SDL AND EXISTS "${FETCHCONTENT_SOURCE_DIR_SDL}")
+      aurora_sdl3_apply_patches("${FETCHCONTENT_SOURCE_DIR_SDL}")
+    endif ()
     FetchContent_Declare(SDL
       URL "https://github.com/libsdl-org/SDL/releases/download/release-${AURORA_SDL3_VERSION}/SDL3-${AURORA_SDL3_VERSION}.tar.gz"
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      PATCH_COMMAND "${CMAKE_COMMAND}" -DSDL_SOURCE_DIR=<SOURCE_DIR> -P "${_aurora_sdl3_patches}"
       EXCLUDE_FROM_ALL
     )
     FetchContent_MakeAvailable(SDL)

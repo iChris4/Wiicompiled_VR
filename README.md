@@ -60,12 +60,38 @@ Everything you change is saved to `Config.toml` on the spot and restored next la
 
 **Real controller support.** 
 Controllers are fed to the game as a GameCube controller.
-The port does NOT pretend to be a Wii Remote or Classic Controller.
 Mappings are positional (`south`, `east`, `west`, `north`) rather than Xbox-labelled, so the
 same config makes sense on Xbox, PlayStation, Nintendo and generic SDL pads alike, and extra
 inputs like paddles, touchpads and share buttons show up when the hardware reports them.
 The official Wii U / Switch GameCube adapter (WUP-028) works too; as with Dolphin, on Windows the
 adapter must be switched to the WinUSB driver once (Zadig).
+
+**Real Wii Remotes over Bluetooth.**
+Pair a Wii Remote with Windows (Settings > Bluetooth > Add device, press 1+2 or SYNC, leave the
+PIN empty) and the game reads it as an actual Wii Remote through KPAD: Wii Remote icons and
+prompts, Wii Wheel tilt steering, wheelies and tricks all come from the game's own motion code.
+Nunchuk and Classic Controller are real Wii extensions too: the game gets the Nunchuk's stick,
+C/Z and accelerometer, and the Classic Controller through `KPADGetUnifiedWpadStatus` with its own
+layout and icons, so its buttons do what the game says they do and no mapping is involved. Plug an
+extension in or pull it out mid-game and the game switches control scheme like on the console
+(the runtime patches SDL's Wii driver, which otherwise loses the remote for good on an extension
+change). Only the Wii U Pro Controller, which has no Wii-era equivalent, is fed to the game as a
+GameCube pad with Nintendo's layout. If a remote drops out or was switched on after launch, the
+runtime keeps rescanning Bluetooth until it comes back (F10 > Controller settings > Wii Remotes). SDL's read of
+the remote's factory accelerometer calibration often times out over Bluetooth (`console.log`
+then says "Using fallback accelerometer calibration") and it falls back to a nominal zero point,
+so the same menu has a one-button calibration (remote flat, buttons up) that removes the small
+tilt offset some remotes show.
+
+Known limitations of the Wii Remote path:
+- No IR pointer yet: menus are navigated with the D-pad and A (the game treats the remote as
+  pointing away from the screen).
+- Battery level is not reported to the game and the remote's speaker is not implemented.
+- Only the Wii Remote's own accelerometer is calibrated; the Nunchuk's uses SDL's fixed zero point.
+- The Classic Controller's L/R triggers reach the game as digital (full pull on click): SDL does not
+  expose their analog travel.
+- Turn the Wii Remote support off in that menu if you use a Mayflash DolphinBar, which already
+  presents the remote as a regular gamepad.
 
 ## Requirements
 
@@ -73,6 +99,8 @@ adapter must be switched to the WinUSB driver once (Zadig).
 - GPU: GTX 1650 / RX 6400 / Arc A310 or higher
 - CPU: Intel Core i5-8400 / AMD Ryzen 5 2600 (4c/6c, ~3.5GHz+) or higher
 - About 20 GB of free disk space during installation (Final game size ~5 GB)
+- macOS 14 (Sonoma) or later on Apple Silicon
+- On macOS, Apple Xcode Command Line Tools (Setup opens Apple's installer when they are missing)
 - A clean, unmodified **PAL `RMCP01`** disc image of Mario Kart Wii, dumped by you. ISO, GCM,
   GCZ, CISO, WBFS, WIA and RVZ are accepted.
 
@@ -92,6 +120,7 @@ For an easy experience, use [Wheel Wizard](https://github.com/TeamWheelWizard/Wh
 image under Settings, turn on **WiiCompiled (beta)**, and hit install from the Home page.
 Wheel Wizard downloads the setup tool from this repo and walks you through install, updates and
 launching. The backend itself is deliberately command-line only, Wheel Wizard is a wrapper around it.
+
 
 > [!CAUTION]
 > Only take builds from this repository's

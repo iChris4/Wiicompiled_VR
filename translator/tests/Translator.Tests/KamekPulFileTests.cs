@@ -50,6 +50,27 @@ public class KamekPulFileTests
     }
 
     [Fact]
+    public void ParsesKamekV2CombinedChunks()
+    {
+        var p = BuildChunk(0x10, [0x4E, 0x80, 0x00, 0x20],
+            [BuildCommand(KamekCommandId.Branch, true, 0x8053369C, [0x100])], KamekChunk.Magic1V2);
+        var combined = new byte[0x10 + p.Length];
+        WriteU32(combined, 0, (uint)p.Length);
+        p.CopyTo(combined, 0x10);
+
+        var pul = KamekPulFile.Parse(combined);
+
+        Assert.True(pul.IsCombined);
+        Assert.Equal(0x10u, pul.SelectRegion("P").BssSize);
+        Assert.Equal(KamekCommandId.Branch, pul.SelectRegion("P").Commands.Single().Id);
+
+        var raw = KamekPulFile.Parse(p);
+
+        Assert.False(raw.IsCombined);
+        Assert.Equal((uint)p.Length, raw.Chunks.Single().ChunkSize);
+    }
+
+    [Fact]
     public void EncodesPpcBranchLikeKamek()
     {
         Assert.Equal(0x48000144u, KamekPpcEncoding.EncodeBranch(0x8053369C, 0x805337E0, link: false));
@@ -83,18 +104,19 @@ public class KamekPulFileTests
         Assert.Equal(chunk.Commands.Count, chunk.CommandCounts.Values.Sum());
     }
 
-    private static byte[] BuildChunk(uint bssSize, byte[] code, byte[][] commands)
+    private static byte[] BuildChunk(uint bssSize, byte[] code, byte[][] commands,
+        uint magic1 = KamekChunk.Magic1)
     {
         var commandSize = commands.Sum(c => c.Length);
         var chunkSize = KamekChunk.HeaderSize + code.Length + commandSize;
         var data = new byte[chunkSize];
         WriteU32(data, 0x00, KamekChunk.Magic0);
-        WriteU32(data, 0x04, KamekChunk.Magic1);
+        WriteU32(data, 0x04, magic1);
         WriteU32(data, 0x08, bssSize);
         WriteU32(data, 0x0C, (uint)code.Length);
         WriteU32(data, 0x10, 0);
         WriteU32(data, 0x14, 0);
-        WriteU32(data, 0x18, (uint)chunkSize);
+        WriteU32(data, 0x18, magic1 == KamekChunk.Magic1V2 ? 0u : (uint)chunkSize);
         code.CopyTo(data, KamekChunk.HeaderSize);
 
         var offset = KamekChunk.HeaderSize + code.Length;

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Translator.Core\Translator.Core.csproj" />
+    <ProjectReference Include="..\..\..\Launcher\WiiCompiled.Setup.Common\WiiCompiled.Setup.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

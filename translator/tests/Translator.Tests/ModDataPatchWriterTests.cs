@@ -28,8 +28,10 @@ public sealed class ModDataPatchWriterTests
 
             var assemblyPath = Path.Combine(root, "cpp", "mod_data_patches_blobs.S");
             var assembly = File.ReadAllText(assemblyPath);
-            Assert.Contains(".globl kModuleImage", assembly, StringComparison.Ordinal);
-            Assert.Contains(".globl kKamekCodeSha1Digest", assembly, StringComparison.Ordinal);
+            var symbolPrefix = OperatingSystem.IsMacOS() ? "_" : "";
+            Assert.Contains($".globl {symbolPrefix}kModuleImage", assembly, StringComparison.Ordinal);
+            Assert.Contains($".globl {symbolPrefix}kKamekCodeSha1Digest", assembly, StringComparison.Ordinal);
+            Assert.DoesNotContain("__APPLE__", assembly, StringComparison.Ordinal);
             Assert.Contains(".incbin", assembly, StringComparison.Ordinal);
 
             var timestamps = new[] { cppPath, assemblyPath }

@@ -270,7 +270,13 @@ static int32_t EnsureSslCredentials(SslSession& ssl) {
 
     SCHANNEL_CRED cred{};
     cred.dwVersion = SCHANNEL_CRED_VERSION;
-    cred.dwFlags = SCH_USE_STRONG_CRYPTO | SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MANUAL_CRED_VALIDATION;
+    // Leave certificate validation to Schannel. SCH_CRED_MANUAL_CRED_VALIDATION
+    // suppresses that validation and requires an explicit CertGetCertificateChain
+    // implementation, which this HLE does not provide. The target hostname passed
+    // to InitializeSecurityContextA below is therefore checked together with the
+    // server certificate chain.
+    cred.dwFlags = SCH_USE_STRONG_CRYPTO | SCH_CRED_NO_DEFAULT_CREDS |
+                   SCH_CRED_AUTO_CRED_VALIDATION;
 
     TimeStamp expiry{};
     const SECURITY_STATUS status = AcquireCredentialsHandleA(
@@ -287,6 +293,13 @@ static int32_t SslHandshakeImpl(SslSession& ssl) {
     if (ssl.plaintextWfc) {
         ssl.handshaked = true;
         return SSL_OK;
+    }
+
+    // Schannel can authenticate a certificate chain without authenticating a
+    // server identity when no target name is supplied. Refuse that ambiguous
+    // mode rather than accepting a certificate for an unrelated endpoint.
+    if (ssl.hostname.empty()) {
+        return SSL_ERR_VCOMMONNAME;
     }
 
     const int32_t credRet = EnsureSslCredentials(ssl);
@@ -331,7 +344,7 @@ static int32_t SslHandshakeImpl(SslSession& ssl) {
 
         const SECURITY_STATUS status = InitializeSecurityContextA(
             &ssl.cred, ssl.haveContext ? &ssl.context : nullptr,
-            ssl.hostname.empty() ? nullptr : const_cast<char*>(ssl.hostname.c_str()), flags, 0, SECURITY_NATIVE_DREP,
+            const_cast<char*>(ssl.hostname.c_str()), flags, 0, SECURITY_NATIVE_DREP,
             inDescPtr, 0, &ssl.context, &outDesc, &attrs, &expiry);
         if (status != SEC_E_INVALID_HANDLE) {
             ssl.haveContext = true;
@@ -567,10 +580,9 @@ int32_t HandleSslIoctlv(uint32_t cmd, const std::vector<IoVector>& in, const std
 
     switch (cmd) {
     case IOCTLV_NET_SSL_NEW: {
-        // out[0] carries the verify option. Its value is not consulted - every
-        // certificate check is delegated to Schannel with
-        // SCH_CRED_MANUAL_CRED_VALIDATION - but it is still read so that a
-        // request pointing outside guest memory faults here as it always has.
+        // out[0] carries the guest verify option. Host TLS verification is
+        // always enforced by Schannel, but still read this value so a request
+        // pointing outside guest memory faults here as it always has.
         if (!out.empty() && out[0].address && out[0].size >= 4) {
             (void)Memory::Read32(out[0].address);
         }

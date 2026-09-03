@@ -4,6 +4,7 @@
 #include <dolphin/pad.h>
 #include <dolphin/si.h>
 #include <SDL3/SDL_mouse.h>
+#include <SDL3/SDL_joystick.h>
 
 #include <array>
 #include <atomic>
@@ -185,6 +186,32 @@ std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsJoyPair{{
     {SDL_GAMEPAD_BUTTON_NORTH, PAD_BUTTON_Y},
     {SDL_GAMEPAD_BUTTON_START, PAD_BUTTON_START},
     {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, PAD_TRIGGER_Z},
+    {PAD_NATIVE_BUTTON_INVALID, PAD_TRIGGER_L},
+    {PAD_NATIVE_BUTTON_INVALID, PAD_TRIGGER_R},
+    {SDL_GAMEPAD_BUTTON_DPAD_UP, PAD_BUTTON_UP},
+    {SDL_GAMEPAD_BUTTON_DPAD_DOWN, PAD_BUTTON_DOWN},
+    {SDL_GAMEPAD_BUTTON_DPAD_LEFT, PAD_BUTTON_LEFT},
+    {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, PAD_BUTTON_RIGHT},
+}};
+
+// Wii U Pro Controllers through SDL's HIDAPI Wii driver. No SDL_GamepadType
+// singles them out, so they are picked by the name the driver gives them (see
+// __PADSetDefaultMapping). Wii Remotes, with or without a Nunchuk or Classic
+// Controller, are read by the game through KPAD instead and never get a
+// GameCube mapping (the runtime hides those ports from PADRead).
+
+// Nintendo's labelled layout: A on the right accelerates, B at the bottom
+// brakes. SDL's Wii driver reports ZL/ZR as the LEFT_TRIGGER/RIGHT_TRIGGER
+// axes, never as shoulder buttons, so they are left unbound here and picked up
+// by aurora's default axis mapping (g_defaultAxes) the same way every
+// analog-trigger pad's L/R is.
+std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsWiiUPro{{
+    {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_A},
+    {SDL_GAMEPAD_BUTTON_SOUTH, PAD_BUTTON_B},
+    {SDL_GAMEPAD_BUTTON_NORTH, PAD_BUTTON_X},
+    {SDL_GAMEPAD_BUTTON_WEST, PAD_BUTTON_Y},
+    {SDL_GAMEPAD_BUTTON_START, PAD_BUTTON_START},
+    {SDL_GAMEPAD_BUTTON_BACK, PAD_TRIGGER_Z},
     {PAD_NATIVE_BUTTON_INVALID, PAD_TRIGGER_L},
     {PAD_NATIVE_BUTTON_INVALID, PAD_TRIGGER_R},
     {SDL_GAMEPAD_BUTTON_DPAD_UP, PAD_BUTTON_UP},
@@ -409,8 +436,26 @@ static void reset_alt_button_mapping(aurora::input::GameController* controller) 
   }
 }
 
+// SDL's hidapi Wii driver names the pad "Nintendo Wii U Pro Controller"; the
+// other names it produces are Wii Remotes, which the game reads through KPAD
+// and which therefore never take a GameCube mapping.
+static bool wii_default_mapping(const aurora::input::GameController* controller,
+                                std::array<PADButtonMapping, PAD_BUTTON_COUNT>& out) {
+  const char* name = SDL_GetGamepadName(controller->m_controller);
+  if (name == nullptr || SDL_strstr(name, "Wii U Pro Controller") == nullptr) {
+    return false;
+  }
+  out = g_defaultButtonsWiiUPro;
+  return true;
+}
+
+// Picks the default button table for a controller by name (Wii pads) or SDL gamepad type.
 void __PADSetDefaultMapping(aurora::input::GameController* controller) /*  NOLINT(*-reserved-identifier) */
 {
+  if (wii_default_mapping(controller, controller->m_buttonMapping)) {
+    reset_alt_button_mapping(controller);
+    return;
+  }
   switch (SDL_GetGamepadType(controller->m_controller)) {
   case SDL_GAMEPAD_TYPE_XBOX360:
     controller->m_buttonMapping = g_defaultButtonsXBox360;
@@ -745,6 +790,47 @@ u32 PADRead(PADStatus* status) {
 
     if (controller) {
       EnsureMappingLoaded(controller);
+
+      // Wii U Pro Controller raw D-pad fallback. SDL's HIDAPI Wii driver posts
+      // the D-pad as joystick buttons 11-14 (the SDL_GAMEPAD_BUTTON_DPAD_*
+      // values) and never as a hat, but the mapping SDL generates for HIDAPI
+      // pads binds the D-pad to hat 0, so SDL_GetGamepadButton(DPAD_*) stays
+      // false. Keep this restricted to the Wii driver's pad so raw button
+      // indices don't interfere with other controller types.
+      const char* name = SDL_GetGamepadName(controller->m_controller);
+      const bool isWiiUPro = name != nullptr && SDL_strstr(name, "Wii U Pro Controller") != nullptr;
+
+      if (isWiiUPro) {
+        SDL_Joystick* joystick =
+            SDL_GetGamepadJoystick(controller->m_controller);
+
+        uint32_t raw = 0;
+        const int buttonCount = SDL_GetNumJoystickButtons(joystick);
+
+        for (int b = 0; b < buttonCount && b < 32; ++b) {
+          if (SDL_GetJoystickButton(joystick, b)) {
+            raw |= (1u << b);
+          }
+        }
+
+        // Up    = button 11
+        if (raw & (1u << 11)) {
+          status[i].button |= PAD_BUTTON_UP;
+        }
+        // Down  = button 12
+        if (raw & (1u << 12)) {
+          status[i].button |= PAD_BUTTON_DOWN;
+        }
+        // Left  = button 13
+        if (raw & (1u << 13)) {
+          status[i].button |= PAD_BUTTON_LEFT;
+        }
+        // Right = button 14
+        if (raw & (1u << 14)) {
+          status[i].button |= PAD_BUTTON_RIGHT;
+        }
+      }
+
       bool leftTriggerSet = false;
       bool rightTriggerSet = false;
       std::ranges::for_each(controller->m_buttonMapping, [&controller, &i, &status, &leftTriggerSet,
@@ -777,6 +863,7 @@ u32 PADRead(PADStatus* status) {
           rightTriggerSet = true;
         }
       });
+
 
       // TODO: Add serializable mappings for these (probably not necessary)?
       static constexpr std::array<std::pair<SDL_GamepadButton, PADExtButton>, PAD_EXT_BUTTON_COUNT> kExtButtonMappings{{

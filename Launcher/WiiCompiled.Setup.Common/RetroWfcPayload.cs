@@ -53,9 +53,22 @@ public static class RetroWfcPayload
 
         var root = Path.GetFullPath(stagedDirectory);
         var payload = Path.Combine(root, RetroWfcOfflinePayloadFile);
-        if (!File.Exists(payload))
+        try
+        {
+            if ((File.GetAttributes(payload) & FileAttributes.Directory) != 0)
+                throw new InvalidDataException(
+                    "The staged Retro-WFC payload directory does not contain binary\\payload.RMCPD00.bin.");
+        }
+        catch (FileNotFoundException)
+        {
             throw new InvalidDataException(
                 "The staged Retro-WFC payload directory does not contain binary\\payload.RMCPD00.bin.");
+        }
+        catch (DirectoryNotFoundException)
+        {
+            throw new InvalidDataException(
+                "The staged Retro-WFC payload directory does not contain binary\\payload.RMCPD00.bin.");
+        }
         ValidateRetroWfcPayloadFile(payload, signingKey);
         return root;
     }

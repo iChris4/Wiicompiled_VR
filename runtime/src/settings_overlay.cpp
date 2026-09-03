@@ -5,6 +5,7 @@
 #include "music_attenuation.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "wii_remote_input.h"
 
 #include <imgui.h>
 #include <SDL3/SDL_events.h>
@@ -282,6 +283,15 @@ void ApplyConfiguredMappings() {
         if (controllerIndex < 0) {
             continue;
         }
+        // The [controller] bindings are positional and shared by every port, so
+        // they describe whatever pad the user set them up with (usually an Xbox
+        // layout: a = south). A Wii U Pro Controller has a fixed, known layout
+        // (A on the east position) that aurora already maps by name; applying
+        // the shared bindings on top swaps A/B and X/Y. (Wii Remotes with any
+        // extension never reach the PAD layer: the game reads them through KPAD.)
+        if (WiiRemoteInput::KindForPort(port) == WiiRemoteInput::Kind::WiiUPro) {
+            continue;
+        }
 
         uint32_t count = 0;
         if (PADGetButtonMappings(port, &count) == nullptr || count != PAD_BUTTON_COUNT) {
@@ -313,6 +323,141 @@ void ApplyConfiguredMappings() {
     }
 }
 
+bool g_wiiRemotesEnabled = RuntimeConfigFile::WiiRemotesEnabled(true);
+bool g_wiiContinuousScan = RuntimeConfigFile::WiiContinuousScanEnabled(true);
+
+// Accelerometer readout and zero-point calibration for a bare remote / remote + Nunchuk.
+void DrawWiiRemoteAccelerometer(uint32_t port) {
+    ImGui::SeparatorText("Accelerometer");
+    float sdlG[3] = {};
+    float kpad[3] = {};
+    if (WiiRemoteInput::ReadAccelDebug(port, sdlG, kpad)) {
+        ImGui::Text("KPAD acc: x %+.2f  y %+.2f  z %+.2f g", kpad[0], kpad[1], kpad[2]);
+        ImGui::TextDisabled("Flat, buttons up: (0, -1, 0). Sideways as a wheel: (1, 0, 0); z follows the turn.");
+    } else {
+        ImGui::TextDisabled("No accelerometer data yet.");
+    }
+    // SDL's read of the remote's calibration block often times out over Bluetooth
+    // and it falls back to a nominal zero point, leaving a small per-axis bias;
+    // measured here with the remote at rest.
+    if (WiiRemoteInput::IsAccelCalibrating()) {
+        ImGui::ProgressBar(WiiRemoteInput::AccelCalibrationProgress(), ImVec2(220.0f, 0.0f), "Hold still...");
+    } else if (ImGui::Button("Calibrate (remote lying flat, buttons up)")) {
+        WiiRemoteInput::StartAccelCalibration(port);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Put the remote down on a flat surface with the buttons facing up and do not touch it\n"
+                          "for about two seconds. Corrects the steering offset of a remote held sideways.");
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!RuntimeConfigFile::HasWiiAccelOffset() || WiiRemoteInput::IsAccelCalibrating());
+    if (ImGui::Button("Clear calibration")) {
+        WiiRemoteInput::ClearAccelCalibration();
+    }
+    ImGui::EndDisabled();
+    if (const char* message = WiiRemoteInput::AccelCalibrationMessage()) {
+        ImGui::TextWrapped("%s", message);
+    } else if (RuntimeConfigFile::HasWiiAccelOffset()) {
+        const std::array<double, 3> offset = RuntimeConfigFile::WiiAccelOffset();
+        ImGui::TextDisabled("Stored offset: x %+.3f  y %+.3f  z %+.3f g", offset[0], offset[1], offset[2]);
+    } else {
+        ImGui::TextDisabled("Not calibrated (using SDL's zero point; see console.log for \"fallback accelerometer calibration\").");
+    }
+}
+
+// Wii Remotes (Bluetooth) menu: driver switch, pairing help, continuous scanning and the port's controller kind.
+void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
+    if (!ImGui::BeginMenu("Wii Remotes (Bluetooth)")) {
+        return;
+    }
+    if (ImGui::Checkbox("Use Wii Remotes / Wii U Pro Controllers", &g_wiiRemotesEnabled)) {
+        RuntimeConfigFile::SetWiiRemotesEnabled(g_wiiRemotesEnabled);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Takes effect on the next launch. Turn this off if you use a Mayflash DolphinBar.");
+    }
+    ImGui::TextDisabled("Pairing: Windows Settings > Bluetooth > Add device, then press 1+2");
+    ImGui::TextDisabled("(or the red SYNC button) on the remote. Leave the PIN empty.");
+    ImGui::TextDisabled("A remote that was paired before also needs to be turned on with 1+2/SYNC.");
+    if (ImGui::Checkbox("Keep scanning for Wii Remotes (like Dolphin's Continuous Scanning)",
+                        &g_wiiContinuousScan)) {
+        RuntimeConfigFile::SetWiiContinuousScanEnabled(g_wiiContinuousScan);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("While no Wii controller is connected, re-check Bluetooth every 2 seconds so a\n"
+                          "remote that dropped out (\"Communications with the controller have been\n"
+                          "interrupted\") or was turned on after launch comes back by itself.");
+    }
+    // The driver hint is only read at launch, so a rescan after the user turned
+    // the setting off would still re-enumerate Wii devices in this session.
+    ImGui::BeginDisabled(!g_wiiRemotesEnabled);
+    if (ImGui::Button("Rescan now")) {
+        WiiRemoteInput::RescanNow();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (WiiRemoteInput::IsScanning()) {
+        ImGui::TextDisabled("Scanning... (%u so far) - press 1+2 on the remote", WiiRemoteInput::ScanCount());
+    } else {
+        ImGui::TextDisabled("Not scanning");
+    }
+    ImGui::Separator();
+
+    const WiiRemoteInput::Kind kind = WiiRemoteInput::KindForPort(selectedGamePort);
+    ImGui::Text("Port %u: %s", static_cast<unsigned>(selectedGamePort + 1), WiiRemoteInput::KindLabel(kind));
+    if (kind == WiiRemoteInput::Kind::RemoteWithClassic) {
+        WiiRemoteInput::KpadSample sample;
+        if (WiiRemoteInput::ReadKpadSample(selectedGamePort, sample)) {
+            // WPAD_CL_BUTTON_* bits, in the game's own layout (no mapping involved).
+            const auto held = [&](uint32_t bit, const char* on, const char* off) { return (sample.clHold & bit) ? on : off; };
+            ImGui::Text("Classic: %s %s %s %s  %s %s  %s %s  %s %s  %s %s %s %s", held(0x0010, "A", "a"),
+                        held(0x0040, "B", "b"), held(0x0008, "X", "x"), held(0x0020, "Y", "y"), held(0x2000, "L", "l"),
+                        held(0x0200, "R", "r"), held(0x0080, "ZL", "zl"), held(0x0004, "ZR", "zr"),
+                        held(0x0400, "PLUS", "plus"), held(0x1000, "MINUS", "minus"), held(0x0001, "UP", "up"),
+                        held(0x4000, "DOWN", "down"), held(0x0002, "LEFT", "left"), held(0x8000, "RIGHT", "right"));
+            ImGui::Text("Sticks: L %+.2f %+.2f (WPAD %+d %+d)  R %+.2f %+.2f (WPAD %+d %+d)", sample.clLStick[0],
+                        sample.clLStick[1], static_cast<int>(sample.clLStickRaw[0]),
+                        static_cast<int>(sample.clLStickRaw[1]), sample.clRStick[0], sample.clRStick[1],
+                        static_cast<int>(sample.clRStickRaw[0]), static_cast<int>(sample.clRStickRaw[1]));
+            ImGui::TextDisabled("Capitals = held. The game reads this Classic Controller through KPAD, as on the");
+            ImGui::TextDisabled("console: its buttons mean what the game says they mean, no mapping applies.");
+        }
+    }
+    if (kind == WiiRemoteInput::Kind::WiiUPro) {
+        if (SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(selectedGamePort))) {
+            // SDL's Wii driver posts the D-pad as joystick buttons 11-14 (the
+            // SDL_GAMEPAD_BUTTON_DPAD_* values) while its default HIDAPI mapping
+            // expects a hat, so SDL_GetGamepadButton never sees them; read the
+            // joystick directly, like the fallback in aurora's PADRead does.
+            SDL_Joystick* joystick = SDL_GetGamepadJoystick(gamepad);
+            const auto rawButton = [&](int index) {
+                return joystick != nullptr && SDL_GetJoystickButton(joystick, index);
+            };
+            ImGui::Text("Raw D-pad: %s %s %s %s", rawButton(SDL_GAMEPAD_BUTTON_DPAD_UP) ? "UP" : "up",
+                        rawButton(SDL_GAMEPAD_BUTTON_DPAD_DOWN) ? "DOWN" : "down",
+                        rawButton(SDL_GAMEPAD_BUTTON_DPAD_LEFT) ? "LEFT" : "left",
+                        rawButton(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) ? "RIGHT" : "right");
+            ImGui::Text("Raw face buttons: %s %s %s %s", rawButton(SDL_GAMEPAD_BUTTON_EAST) ? "A" : "a",
+                        rawButton(SDL_GAMEPAD_BUTTON_SOUTH) ? "B" : "b", rawButton(SDL_GAMEPAD_BUTTON_NORTH) ? "X" : "x",
+                        rawButton(SDL_GAMEPAD_BUTTON_WEST) ? "Y" : "y");
+            ImGui::Text("Raw ZL/ZR: %d / %d (pressed above 0)",
+                        SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER),
+                        SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+            ImGui::TextDisabled("Capitals = held. If a button never turns to capitals while physically held,");
+            ImGui::TextDisabled("that press is not reaching SDL at all (a driver-level issue, not a mapping one).");
+            ImGui::TextDisabled("This pad uses Nintendo's own layout (a/b/x/y as labelled); the shared");
+            ImGui::TextDisabled("button mapping above does not apply to it.");
+        }
+    }
+    if (kind == WiiRemoteInput::Kind::Remote || kind == WiiRemoteInput::Kind::RemoteWithNunchuk ||
+        kind == WiiRemoteInput::Kind::RemoteWithClassic) {
+        DrawWiiRemoteAccelerometer(selectedGamePort);
+    }
+
+    ImGui::EndMenu();
+}
+
+// Controller settings menu: port selection, controller assignment and button mapping.
 void DrawControllerSettings() {
     for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
         const std::string label = "Port " + std::to_string(port + 1);
@@ -332,6 +477,7 @@ void DrawControllerSettings() {
     }
     ImGui::Separator();
     controller_mapping_wizard::DrawSetupList();
+    DrawWiiRemoteSettings(selectedGamePort);
     const uint32_t controllerCount = PADCount();
     if (controllerCount == 0) {
         ImGui::TextDisabled("No controller connected");
@@ -931,6 +1077,11 @@ void Draw() noexcept {
     // Wait for the frame worker's DONE phase: it has replayed the previous frame's ImGui draw lists
     // and started the next ImGui frame, so all overlay callers can now safely issue ImGui commands.
     aurora_wait_for_frame_worker();
+    // Also drive the Wii Remote rescan from here: PADRead runs it too, but this
+    // runs once per presented frame whatever the game is doing (e.g. sitting in
+    // its "communications interrupted" prompt without polling pads). Same guest
+    // thread as PADRead, so no concurrent access to the scanner's state.
+    WiiRemoteInput::Poll();
     ApplyConfiguredMappings();
     PersistDisplayModeIfChanged();
     UpdateCursorAutoHide();

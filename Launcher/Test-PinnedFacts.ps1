@@ -77,14 +77,28 @@ if ($runtimeEntry -ne $pins.EntryPoint) {
     Add-Failure "system_bridge.h enters at $runtimeEntry but recomp.yml translates from $($pins.EntryPoint)."
 }
 
-# --- The pinned dependency set: Build-Installer.ps1 stages it, the installed host requires it.
+# --- The pinned dependency set: Build-Installer.ps1 stages it, the installed host requires it,
+# --- and Prepare-Dependencies.ps1 must be able to supply every source tree. native_prebuilt is
+# --- intentionally produced later by Prepare-NativePrebuilt.ps1; cppwinrt is generated separately
+# --- by Prepare-Dependencies.ps1 rather than appearing in its downloaded $packages array.
 $installedLayout = Read-SourceFile (Join-Path $setup 'InstalledLayout.cs') 'InstalledLayout.cs'
 $buildInstaller = Read-SourceFile (Join-Path $launcher 'Build-Installer.ps1') 'Build-Installer.ps1'
-Compare-Set (Get-QuotedList $installedLayout '(?s)DependencyNames\s*=\s*\[(.*?)\]' '"([^"]+)"' `
-        'InstalledLayout.DependencyNames') `
-    (Get-QuotedList $buildInstaller '(?s)\$requiredDependencies\s*=\s*@\((.*?)\)' "'([^']+)'" `
-        'Build-Installer.ps1 $requiredDependencies') `
+$dependencyNames = Get-QuotedList $installedLayout '(?s)DependencyNames\s*=\s*\[(.*?)\]' `
+    '"([^"]+)"' 'InstalledLayout.DependencyNames'
+$installerDependencies = Get-QuotedList $buildInstaller `
+    '(?s)\$requiredDependencies\s*=\s*@\((.*?)\)' "'([^']+)'" `
+    'Build-Installer.ps1 $requiredDependencies'
+Compare-Set $dependencyNames $installerDependencies `
     'InstalledLayout.DependencyNames' 'Build-Installer.ps1 $requiredDependencies'
+$dependencyPreparer = Read-SourceFile (Join-Path $launcher 'Prepare-Dependencies.ps1') `
+    'Prepare-Dependencies.ps1'
+$downloadedDependencies = Get-QuotedList $dependencyPreparer `
+    '(?sm)\$packages\s*=\s*@\((.*?)^\)' "Name\s*=\s*'([^']+)'" `
+    'Prepare-Dependencies.ps1 $packages'
+$preparedDependencies = @($downloadedDependencies) + @('cppwinrt')
+$sourceDependencies = @($dependencyNames | Where-Object { $_ -ne 'native_prebuilt' })
+Compare-Set $sourceDependencies $preparedDependencies `
+    'InstalledLayout.DependencyNames source entries' 'Prepare-Dependencies.ps1 outputs'
 
 # --- The runtime assets copied beside a product: the host hashes exactly these names, so the build
 # --- script must publish every one of them or every product reports its support files as stale.

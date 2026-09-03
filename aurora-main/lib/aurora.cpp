@@ -277,6 +277,14 @@ FrameWorkerState g_frameWorker;
 bool frame_worker_requested() noexcept {
 #ifdef AURORA_ENABLE_GX
   static const bool enabled = [] {
+#if defined(__APPLE__)
+    // ImGui's SDL backend may raise an SDL window from ImGui::NewFrame(). On
+    // macOS that reaches AppKit, whose window operations are main-thread-only;
+    // doing it on the frame worker terminates the process with EXC_BREAKPOINT.
+    // Keep all SDL/ImGui work on the calling thread until the worker no longer
+    // owns frame preparation on Apple platforms.
+    return false;
+#endif
 #if defined(_WIN32)
     // RenderDoc's D3D12 layer is injected before Aurora starts and needs device and command
     // ownership on one thread, so keep frame submission synchronous there.
@@ -1824,6 +1832,15 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
 
 // Phase 3: hand the encoded group to whoever owns presentation.
 void publish_presentations(std::vector<PresentationJob>&& presentationJobs, bool interpolationActive) {
+#if defined(__APPLE__)
+  (void)interpolationActive;
+  // Presenting reaches SDL/AppKit, whose window operations must stay on the
+  // main thread. Interpolation normally starts the presenter worker, so keep
+  // its jobs synchronous on Apple platforms.
+  for (const auto& job : presentationJobs) {
+    present_presentation_job(job);
+  }
+#else
   // Keep presentation on the presenter whenever the async frame worker runs, even with
   // interpolation off, so every mode shares one surface/resize path. RenderDoc keeps the sync path.
   if (frame_worker_requested() || interpolationActive ||
@@ -1834,6 +1851,7 @@ void publish_presentations(std::vector<PresentationJob>&& presentationJobs, bool
       present_presentation_job(job);
     }
   }
+#endif
 }
 
 void record_frame_telemetry() {

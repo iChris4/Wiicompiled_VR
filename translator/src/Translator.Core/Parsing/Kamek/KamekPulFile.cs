@@ -33,7 +33,7 @@ public sealed class KamekPulFile
 
         if (!KamekChunk.HasMagic(data, 0))
         {
-            throw new InvalidDataException("File is neither a combined Code.pul nor a raw Kamek v3 chunk.");
+            throw new InvalidDataException("File is neither a combined Code.pul nor a raw supported Kamek chunk.");
         }
 
         var rawChunk = KamekChunk.Parse(data, 0, expectedSize: 0, index: 0);

@@ -36,6 +36,9 @@
 #endif
 
 namespace GuestFlat {
+#if !defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
+bool g_requiresCheckedAccess = false;
+#endif
 namespace {
 
 #if defined(_WIN32)
@@ -47,6 +50,16 @@ constexpr DWORD kMemPreservePlaceholder = 0x00000002;
 #endif
 constexpr size_t kAllocationGranularity = 0x10000;  // 64 KiB
 constexpr size_t kHostPageSize = 0x1000;
+
+// Only hosts that can expose a page larger than 4 KiB need to discover their
+// size at runtime; see RequiresCheckedAccess() in guest_flat_memory.h.
+#if !defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
+size_t HostPageSize()
+{
+    const long size = sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<size_t>(size) : kGuestPageSize;
+}
+#endif
 
 // Named, platform-neutral protection modes so every fault-interception call site below (the
 // MMIO window, the executable-write guard, deferred-EFB-read protection, the on-demand
@@ -349,7 +362,7 @@ bool IsMmio(uint32_t address) { return MemoryInline::IsMmioAddress(address); }
 bool IsGpuFifo(uint32_t address) { return MemoryInline::IsGpuFifoAddress(address); }
 
 void ApplyExecutableProtectionLocked() {
-    if (g_base == nullptr) return;
+    if (g_base == nullptr || RequiresCheckedAccess()) return;
     auto& protectedPages = ExecutableProtectedPages();
     for (const auto& range : ExecutableRanges()) {
         // Only pages fully inside the range are protected: edge pages often share a page with data
@@ -497,6 +510,10 @@ bool IsActive() {
 void Initialize(const std::vector<RegionRequest>& regions) {
     std::lock_guard<std::mutex> lock(StateMutex());
 
+#if !defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
+    g_requiresCheckedAccess = HostPageSize() > kGuestPageSize;
+#endif
+
     if (g_initialized) {
         if (!SameLayout(g_activeRegions, regions)) {
             throw std::runtime_error(
@@ -615,7 +632,7 @@ uint8_t* HostPointer(uint32_t guestAddress) {
 }
 
 void ProtectDeferredRange(uint32_t address, size_t length) {
-    if (!g_initialized || length == 0) return;
+    if (RequiresCheckedAccess() || !g_initialized || length == 0) return;
     const uint64_t end = static_cast<uint64_t>(address) + length;
     if (end > kGuestSpaceSize) return;
     std::lock_guard<std::mutex> lock(StateMutex());
@@ -630,7 +647,7 @@ void ProtectDeferredRange(uint32_t address, size_t length) {
 }
 
 void UnprotectDeferredRange(uint32_t address, size_t length) {
-    if (!g_initialized || length == 0) return;
+    if (RequiresCheckedAccess() || !g_initialized || length == 0) return;
     std::lock_guard<std::mutex> lock(StateMutex());
     auto& ranges = DeferredRanges();
     const uint64_t end = static_cast<uint64_t>(address) + length;
@@ -645,7 +662,7 @@ void UnprotectDeferredRange(uint32_t address, size_t length) {
 }
 
 void RegisterExecutableRange(uint32_t start, uint32_t end) {
-    if (end <= start) return;
+    if (RequiresCheckedAccess() || end <= start) return;
     std::lock_guard<std::mutex> lock(StateMutex());
     auto& ranges = ExecutableRanges();
     if (std::any_of(ranges.begin(), ranges.end(), [&](const GuardedRange& range) {

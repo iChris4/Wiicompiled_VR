@@ -4,6 +4,7 @@
 
 #include "nand_internal.h"
 
+#include "discord_presence.h"
 #include "runtime_log.h"
 
 extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx);
@@ -201,9 +202,69 @@ static int32_t HandleDolphinIoctlv(uint32_t cmd, uint32_t numIn, uint32_t numOut
         }
 
         case DOLPHIN_IOCTL_SET_SPEED_LIMIT:
-        case DOLPHIN_IOCTL_DISCORD_SET_CLIENT:
-        case DOLPHIN_IOCTL_DISCORD_SET_PRESENCE:
+            return ISFS_OK;
+
+        case DOLPHIN_IOCTL_DISCORD_SET_CLIENT: {
+            if (numIn != 1 || numOut != 0 || vectorPtr == 0) {
+                return ISFS_EINVAL;
+            }
+            const IosVector client = ReadIosVector(vectorPtr, 0);
+            if (!IsValidGuestRange(client.address, client.size)) {
+                return ISFS_EINVAL;
+            }
+            if (RuntimeConfigFile::DiscordPresenceEnabled()) {
+                DiscordPresence::SetClient(ReadGuestCString(client.address, client.size));
+            }
+            return ISFS_OK;
+        }
+
+        case DOLPHIN_IOCTL_DISCORD_SET_PRESENCE: {
+            if (numIn != 10 || numOut != 0 || vectorPtr == 0) {
+                return ISFS_EINVAL;
+            }
+            std::array<IosVector, 10> values{};
+            for (uint32_t index = 0; index < values.size(); ++index) {
+                values[index] = ReadIosVector(vectorPtr, index);
+                if (!IsValidGuestRange(values[index].address, values[index].size)) {
+                    return ISFS_EINVAL;
+                }
+            }
+            if (RuntimeConfigFile::DiscordPresenceEnabled()) {
+                DiscordPresence::Activity activity;
+                activity.details = ReadGuestCString(values[0].address, values[0].size);
+                activity.state = ReadGuestCString(values[1].address, values[1].size);
+                activity.largeImageKey = ReadGuestCString(values[2].address, values[2].size);
+                activity.largeImageText = ReadGuestCString(values[3].address, values[3].size);
+                activity.smallImageKey = ReadGuestCString(values[4].address, values[4].size);
+                activity.smallImageText = ReadGuestCString(values[5].address, values[5].size);
+                if (values[6].size >= 8 && Memory::Contains(values[6].address, 8)) {
+                    activity.startTimestamp = static_cast<int64_t>(
+                        (static_cast<uint64_t>(Memory::Read32(values[6].address)) << 32) |
+                        Memory::Read32(values[6].address + 4));
+                }
+                if (values[7].size >= 8 && Memory::Contains(values[7].address, 8)) {
+                    activity.endTimestamp = static_cast<int64_t>(
+                        (static_cast<uint64_t>(Memory::Read32(values[7].address)) << 32) |
+                        Memory::Read32(values[7].address + 4));
+                }
+                if (values[8].size >= 4) {
+                    activity.partySize = Memory::Read32(values[8].address);
+                }
+                if (values[9].size >= 4) {
+                    activity.partyMax = Memory::Read32(values[9].address);
+                }
+                DiscordPresence::SetActivity(std::move(activity));
+            }
+            return ISFS_OK;
+        }
+
         case DOLPHIN_IOCTL_DISCORD_RESET:
+            if (numIn != 0 || numOut != 0) {
+                return ISFS_EINVAL;
+            }
+            if (RuntimeConfigFile::DiscordPresenceEnabled()) {
+                DiscordPresence::Reset();
+            }
             return ISFS_OK;
 
         case DOLPHIN_IOCTL_GET_SYSTEM_TIME: {

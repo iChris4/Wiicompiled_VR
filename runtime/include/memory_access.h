@@ -231,6 +231,13 @@ MKW_MEMORY_FORCE_INLINE uint8_t* ResolveRangeHost(uint32_t base, int32_t minOffs
     (void)needsRead;
     const uint32_t guestStart = base + static_cast<uint32_t>(minOffset);
     if (length == 0 || length > kPageSize || guestStart > UINT32_MAX - (length - 1)) return nullptr;
+    if (GuestFlat::RequiresCheckedAccess()) {
+        // A host page can cover multiple independently-special Wii pages.
+        // Returning null keeps resolved accesses on the checked Memory::*
+        // path, which materializes deferred reads and applies write policy.
+        (void)needsWrite;
+        return nullptr;
+    }
     if (needsWrite &&
         (FlatWriteNeedsPolicy(guestStart) || FlatWriteNeedsPolicy(guestStart + (length - 1))))
         [[unlikely]] return nullptr;
@@ -522,6 +529,13 @@ MKW_MEMORY_FORCE_INLINE void WriteResolvedFloat64(uint8_t* r, uint32_t o, uint32
 // around `*(T*)(base + addr)`, no page-table load or limit check (interception model documented
 // in guest_flat_memory.h). The one exception kept inline is the MMIO write policy, since the
 // written value can't be recovered from a fault record.
+//
+// When a host VM page is larger than a 4 KiB Wii page, guest-view protections
+// cannot distinguish adjacent special Wii pages. The general FlatRead*/
+// FlatWrite* helpers then use the checked page-table path, which materializes
+// deferred reads and applies executable-write/MMIO policy before touching RAM.
+// FlatWriteRam* remains direct because the translator emits it only for
+// addresses it has proven are ordinary RAM.
 
 template <typename T>
 MKW_MEMORY_FORCE_INLINE T FlatLoad(uint32_t address) {
@@ -536,47 +550,62 @@ MKW_MEMORY_FORCE_INLINE void FlatStore(uint32_t address, T value) {
     std::memcpy(MKW_FLAT_GUEST_BASE + address, &swapped, sizeof(T));
 }
 
-MKW_MEMORY_FORCE_INLINE uint8_t FlatRead8(uint32_t address) { return FlatLoad<uint8_t>(address); }
-MKW_MEMORY_FORCE_INLINE uint16_t FlatRead16(uint32_t address) { return FlatLoad<uint16_t>(address); }
-MKW_MEMORY_FORCE_INLINE uint32_t FlatRead32(uint32_t address) { return FlatLoad<uint32_t>(address); }
+MKW_MEMORY_FORCE_INLINE uint8_t FlatRead8(uint32_t address) {
+    if (GuestFlat::RequiresCheckedAccess()) return Memory::Read8(address);
+    return FlatLoad<uint8_t>(address);
+}
+MKW_MEMORY_FORCE_INLINE uint16_t FlatRead16(uint32_t address) {
+    if (GuestFlat::RequiresCheckedAccess()) return Memory::Read16(address);
+    return FlatLoad<uint16_t>(address);
+}
+MKW_MEMORY_FORCE_INLINE uint32_t FlatRead32(uint32_t address) {
+    if (GuestFlat::RequiresCheckedAccess()) return Memory::Read32(address);
+    return FlatLoad<uint32_t>(address);
+}
 
 MKW_MEMORY_FORCE_INLINE float FlatReadFloat32(uint32_t address) {
-    const uint32_t bits = FlatLoad<uint32_t>(address);
+    const uint32_t bits = FlatRead32(address);
     float value = 0.0f;
     std::memcpy(&value, &bits, sizeof(value));
     return value;
 }
 
 MKW_MEMORY_FORCE_INLINE double FlatReadFloat64(uint32_t address) {
-    const uint64_t bits = FlatLoad<uint64_t>(address);
+    const uint64_t bits = GuestFlat::RequiresCheckedAccess()
+        ? Memory::Read64(address) : FlatLoad<uint64_t>(address);
     double value = 0.0;
     std::memcpy(&value, &bits, sizeof(value));
     return value;
 }
 
 MKW_MEMORY_FORCE_INLINE void FlatWrite8(uint32_t address, uint8_t value) {
+    if (GuestFlat::RequiresCheckedAccess()) { Memory::Write8(address, value); return; }
     if (FlatWriteNeedsPolicy(address)) [[unlikely]] { Write8Slow(address, value); return; }
     FlatStore<uint8_t>(address, value);
 }
 
 MKW_MEMORY_FORCE_INLINE void FlatWrite16(uint32_t address, uint16_t value) {
+    if (GuestFlat::RequiresCheckedAccess()) { Memory::Write16(address, value); return; }
     if (FlatWriteNeedsPolicy(address)) [[unlikely]] { Write16Slow(address, value); return; }
     FlatStore<uint16_t>(address, value);
 }
 
 MKW_MEMORY_FORCE_INLINE void FlatWrite32(uint32_t address, uint32_t value) {
+    if (GuestFlat::RequiresCheckedAccess()) { Memory::Write32(address, value); return; }
     if (FlatWriteNeedsPolicy(address)) [[unlikely]] { Write32Slow(address, value); return; }
     FlatStore<uint32_t>(address, value);
 }
 
 
 MKW_MEMORY_FORCE_INLINE void FlatWriteFloat32(uint32_t address, double value) {
+    if (GuestFlat::RequiresCheckedAccess()) { Memory::WriteFloat32(address, value); return; }
     const uint32_t bits = ConvertPpcDoubleToSingleBits(value);
     if (FlatWriteNeedsPolicy(address)) [[unlikely]] { WriteFloat32Slow(address, value); return; }
     FlatStore<uint32_t>(address, bits);
 }
 
 MKW_MEMORY_FORCE_INLINE void FlatWriteFloat64(uint32_t address, double value) {
+    if (GuestFlat::RequiresCheckedAccess()) { Memory::WriteFloat64(address, value); return; }
     uint64_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     if (FlatWriteNeedsPolicy(address)) [[unlikely]] { WriteFloat64Slow(address, value); return; }

@@ -88,17 +88,23 @@ Assert-File $setupProject '.NET setup project'
 Assert-File $translatorProject 'Translator CLI project'
 
 if (-not (Test-Path -LiteralPath (Join-Path $portableTools 'llvm-mingw\bin\x86_64-w64-mingw32-clang++.exe'))) {
+    # A PowerShell script, not a native executable - it never touches $LASTEXITCODE, and its own
+    # $ErrorActionPreference = 'Stop' + throw already aborts this run on failure.
     & (Join-Path $PSScriptRoot 'Prepare-PortableTools.ps1') -Destination $portableTools
-    if ($LASTEXITCODE -ne 0) { throw 'Portable tool preparation failed.' }
 }
 Assert-File (Join-Path $portableTools 'CMake\bin\cmake.exe') 'Portable CMake'
 Assert-File (Join-Path $portableTools 'Ninja\ninja.exe') 'Portable Ninja'
-Assert-Directory $dependencySources 'Pinned offline dependency sources'
 # native_prebuilt carries the aurora/third-party archives the user no longer has
 # to compile (launcher/Prepare-NativePrebuilt.ps1).
 # Kept in step with InstalledLayout.DependencyNames by Test-PinnedFacts.ps1: the installed host
 # refuses to call a toolkit complete unless every one of these directories is present.
 $requiredDependencies = @('abseil-cpp','cppwinrt','dawn_prebuilt','fmt','freetype','imgui','libusb','native_prebuilt','openxr','png','SDL','sqlite3','tracy','xxhash','zlib','zstd')
+$missingSources = @($requiredDependencies | Where-Object { $_ -ne 'native_prebuilt' } |
+    Where-Object { -not (Test-Path -LiteralPath (Join-Path $dependencySources $_) -PathType Container) })
+if ($missingSources.Count -gt 0) {
+    & (Join-Path $PSScriptRoot 'Prepare-Dependencies.ps1') -Destination $dependencySources
+}
+Assert-Directory $dependencySources 'Pinned offline dependency sources'
 
 # The precompiled archives are only interchangeable with what the user's machine
 # compiles if both came from this toolchain and this flag set, so a stale package
@@ -165,8 +171,7 @@ Assert-File $translator 'Self-contained translator'
 
 # Resolved via the shared WiiCompiled.Setup.Common.Cli helper (also used by build-appimage.sh on
 # Linux) rather than a separate download/version-pin copy here: it downloads and caches the same way
-# NodToolProvider.cs always does (Launcher/artifacts/nodtool.exe), replacing the old manual
-# -DolphinToolPath handoff with an automated, pinned acquisition step.
+# NodToolProvider.cs always does (Launcher/artifacts/nodtool.exe)
 $nodToolCliProject = Join-Path $PSScriptRoot 'WiiCompiled.Setup.Common.Cli'
 $nodTool = (& dotnet run --project $nodToolCliProject -c Release -- --workspace $repoRoot | Select-Object -Last 1)
 if ($LASTEXITCODE -ne 0) { throw "nodtool resolution failed with exit code $LASTEXITCODE." }
@@ -277,7 +282,7 @@ foreach ($required in @('ToolkitFingerprint','TranslationFingerprint','NativeToo
 
 $manifest = [ordered]@{
     SchemaVersion = 2
-    ProductVersion = '0.2.25'
+    ProductVersion = '0.2.26'
     ExpectedGameId = $pins.GameId
     ExpectedDolSha256 = $pins.DolSha256
     ExpectedRelSha256 = $pins.RelSha256
@@ -293,11 +298,12 @@ $manifest = [ordered]@{
 $manifest | ConvertTo-Json | Set-Content (Join-Path $payloadRoot 'payload-manifest.json') -Encoding UTF8
 
 Write-Host '[4/6] Enforcing the copyright and generated-code boundary...'
+# Both audits are PowerShell scripts that throw directly on failure (Test-PayloadBoundary.ps1
+# never invokes a native command at all, so it never touches $LASTEXITCODE); there is no exit
+# code to check here, and doing so risks reading a stale value from an unrelated earlier command.
 & (Join-Path $PSScriptRoot 'Test-PayloadBoundary.ps1') -PayloadRoot $payloadRoot
-if ($LASTEXITCODE -ne 0) { throw 'Payload boundary audit failed.' }
 & (Join-Path $PSScriptRoot 'Test-NativeDependencies.ps1') -PayloadRoot $payloadRoot -SetupHost $setupHost `
     -LlvmReadobjPath (Join-Path $portableTools 'llvm-mingw\bin\llvm-readobj.exe')
-if ($LASTEXITCODE -ne 0) { throw 'Native dependency audit failed.' }
 
 Write-Host '[5/6] Creating the canonical installer payload...'
 $payloadZip = Join-Path $workRoot 'payload.zip'

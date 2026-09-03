@@ -6,6 +6,12 @@ namespace Translator.Core.Parsing.Kamek;
 public sealed class KamekChunk
 {
     public const uint Magic0 = 0x4B616D65;
+    /// <summary>
+    /// Kamek v2 is still emitted by current Retro Rewind releases. Its command
+    /// stream matches v3, but combined v2 files carry each chunk length only in
+    /// the outer size table.
+    /// </summary>
+    public const uint Magic1V2 = 0x6B000002;
     public const uint Magic1 = 0x6B000003;
     public const int HeaderSize = 0x20;
 
@@ -58,7 +64,7 @@ public sealed class KamekChunk
         }
 
         return BinaryPrimitives.ReadUInt32BigEndian(data.Slice(offset, 4)) == Magic0 &&
-            BinaryPrimitives.ReadUInt32BigEndian(data.Slice(offset + 4, 4)) == Magic1;
+            IsSupportedFormatVersion(BinaryPrimitives.ReadUInt32BigEndian(data.Slice(offset + 4, 4)));
     }
 
     public static KamekChunk Parse(byte[] data, int offset, int expectedSize, int index)
@@ -74,7 +80,7 @@ public sealed class KamekChunk
 
         var magic0 = reader.ReadUInt32();
         var magic1 = reader.ReadUInt32();
-        if (magic0 != Magic0 || magic1 != Magic1)
+        if (magic0 != Magic0 || !IsSupportedFormatVersion(magic1))
         {
             throw new InvalidDataException($"Kamek chunk {index} at 0x{offset:X} has invalid magic 0x{magic0:X8}/0x{magic1:X8}.");
         }
@@ -83,8 +89,14 @@ public sealed class KamekChunk
         var codeSize = reader.ReadUInt32();
         var ctorStart = reader.ReadUInt32();
         var ctorEnd = reader.ReadUInt32();
-        var chunkSize = reader.ReadUInt32();
+        var declaredChunkSize = reader.ReadUInt32();
         _ = reader.ReadUInt32(); // reserved
+
+        // v3 writes each chunk's length in its header. v2 leaves that field at
+        // zero and relies on the combined-file table (or the raw file length).
+        var chunkSize = magic1 == Magic1V2
+            ? checked((uint)(expectedSize != 0 ? expectedSize : data.Length - offset))
+            : declaredChunkSize;
 
         if (chunkSize < HeaderSize + codeSize)
         {
@@ -171,4 +183,7 @@ public sealed class KamekChunk
         KamekCommandId.BranchLink => 1,
         _ => throw new ArgumentOutOfRangeException(nameof(id), id, "Unsupported Kamek command id")
     };
+
+    private static bool IsSupportedFormatVersion(uint magic1) =>
+        magic1 is Magic1V2 or Magic1;
 }

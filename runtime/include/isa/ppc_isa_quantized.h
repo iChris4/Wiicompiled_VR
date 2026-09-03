@@ -264,6 +264,8 @@ inline void PpcWritePairPsqInline(uint32_t addr, T first, T second)
 // reading stale bytes, and unmapped pages commit on demand, same as MemoryInline::Flat* loads.
 MKW_PPC_FORCE_INLINE const uint8_t* PpcTryGetPsqReadableHostInline(uint32_t addr)
 {
+    if (GuestFlat::RequiresCheckedAccess()) [[unlikely]]
+        return nullptr;
     return MKW_FLAT_GUEST_BASE + addr;
 }
 
@@ -274,6 +276,8 @@ MKW_PPC_FORCE_INLINE const uint8_t* PpcTryGetPsqReadableHostInline(uint32_t addr
 // executable, and unmapped pages still trap.
 MKW_PPC_FORCE_INLINE uint8_t* PpcTryGetPsqWritableHostInline(uint32_t addr)
 {
+    if (GuestFlat::RequiresCheckedAccess()) [[unlikely]]
+        return nullptr;
     if (addr > UINT32_MAX - 7u) [[unlikely]]
         return nullptr;
     if (MemoryInline::FlatWriteNeedsPolicy(addr) ||

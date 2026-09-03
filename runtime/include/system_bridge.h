@@ -36,6 +36,7 @@ extern thread_local uint32_t g_sehLastAccessType;
 
 void WriteFatalLog(std::string_view reason);
 void SetRuntimeExitCode(int code);
+void MarkFatalErrorReported();
 
 // Centralized crash reporting (defined in main.cpp). Every fatal path funnels
 // through these so the per-run log folder always receives the same artifact
