@@ -17,6 +17,7 @@ struct PolicyState {
     MkwVRCameraObservation camera{};
     uint32_t available_bindings = MkwVRBindingNone;
     bool session_active = false;
+    bool first_person_engaged = false;
     uint64_t safety_generation = 1;
 };
 
@@ -55,6 +56,9 @@ MkwVRPolicyConfig SanitizeConfig(const MkwVRPolicyConfig& config) noexcept {
     }
     if (!IsFinitePositive(&sanitized.hud_scale)) {
         sanitized.hud_scale = kDefaultConfig.hud_scale;
+    }
+    if (!IsFinitePositive(&sanitized.first_person_units_per_meter)) {
+        sanitized.first_person_units_per_meter = kDefaultConfig.first_person_units_per_meter;
     }
     return sanitized;
 }
@@ -231,6 +235,21 @@ void MkwVRPolicyInvalidateRaceCamera() noexcept {
     ApplyPolicyMutation([&] { g_policy.camera.valid = false; });
 }
 
+void MkwVRPolicySetFirstPersonEngaged(bool engaged) noexcept {
+    std::lock_guard<std::mutex> lock(g_policy_mutex);
+    // Not routed through ApplyPolicyMutation: where the camera sits does not
+    // change which content is safe to present, and advancing the safety
+    // generation here would drop a frame to mono on every engage.
+    g_policy.first_person_engaged = engaged;
+}
+
+void MkwVRPolicySetFirstPersonUnitsPerMeter(float units_per_meter) noexcept {
+    std::lock_guard<std::mutex> lock(g_policy_mutex);
+    if (IsFinitePositive(&units_per_meter)) {
+        g_policy.config.first_person_units_per_meter = units_per_meter;
+    }
+}
+
 MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
     MkwVRPolicySnapshot snapshot;
@@ -240,6 +259,8 @@ MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept {
     snapshot.camera = g_policy.camera;
     snapshot.available_bindings = g_policy.available_bindings;
     snapshot.session_active = g_policy.session_active;
+    snapshot.first_person_engaged =
+        g_policy.first_person_engaged && snapshot.presentation == VRPresentationMode::ImmersiveRace;
     snapshot.safety_generation = g_policy.safety_generation;
     snapshot.content_tag = MakeContentTag(g_policy, snapshot.presentation);
     return snapshot;

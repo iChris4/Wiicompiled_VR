@@ -8,6 +8,7 @@
 #include "fiber_manager.h"
 #include "platform/host_platform.h"
 #include "runtime_log.h"
+#include "vr/mkw_vr_first_person.h"
 #include "vr/mkw_vr_policy.h"
 #include "vr/openxr_integration.h"
 
@@ -516,6 +517,27 @@ void PaceToRetraceBoundary(Clock::time_point deadline) {
     VI_HLE_ProcessRetracesDeferred(1);
 }
 
+// Hands Aurora the first-person camera relocation observed while this frame's
+// GX commands were produced. It has to be published here rather than by the XR
+// pacing thread: the anchor only makes sense against the recorded camera of
+// this exact frame, and the pacing thread does not know which frame its packet
+// will be paired with.
+void PublishVrSceneAnchor() {
+    static bool s_engaged = false;
+    const mkw::vr::FirstPersonAnchor anchor = mkw::vr::MkwVRFirstPersonGetAnchor();
+    aurora_set_stereo_scene_anchor(anchor.valid ? anchor.anchor_from_scene.data() : nullptr);
+
+    const bool engaged = anchor.valid;
+    if (engaged == s_engaged) {
+        return;
+    }
+    s_engaged = engaged;
+    // The world scale changes with the camera, and the virtual screen's metres
+    // are converted at that scale, so the two have to move together.
+    mkw::vr::MkwVRPolicySetFirstPersonEngaged(engaged);
+    settings_overlay::RefreshVrHudVirtualScreen();
+}
+
 } // namespace
 
 // Single owner of the Aurora frame presentation sequence: seals the active frame, optionally paces the
@@ -584,6 +606,7 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
     }
 
     mkw::vr::OpenXRServiceProducerFrameBoundary();
+    PublishVrSceneAnchor();
     // Latch the current policy safety state into this exact Aurora job. The
     // asynchronous worker may ask for an XR packet after the guest has already
     // begun the next frame, so immersive replay is accepted only when both

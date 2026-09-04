@@ -5,6 +5,8 @@
 #include "music_attenuation.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "vr/mkw_vr_first_person.h"
+#include "vr/mkw_vr_policy.h"
 #include "wii_remote_input.h"
 
 #include <imgui.h>
@@ -103,6 +105,11 @@ bool g_vrEnabled = RuntimeConfigFile::VrEnabled(false);
 bool g_vrStopAtDisplayCopy = RuntimeConfigFile::VrStopAtDisplayCopy(true);
 bool g_vrSkipCopyClears = RuntimeConfigFile::VrSkipCopyClears(true);
 bool g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
+bool g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson(false);
+float g_vrFirstPersonUnitsPerMeter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter(10.0f);
+float g_vrFirstPersonHeadUp = RuntimeConfigFile::VrFirstPersonHeadUpMeters(1.0f);
+float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMeters(0.0f);
+float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters(0.0f);
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -708,9 +715,11 @@ void DrawAudioSettings() {
 
 // The virtual screen's placement comes from the launch-time [vr] geometry, the
 // same metres the menu quad is built from, converted into the world units the
-// eye replay works in.
+// eye replay works in. Those units follow the camera: the first-person view
+// renders at its own scale, and the screen has to be sized at the same one or
+// it would not stay 2 m across in front of the player.
 void ApplyVrHudVirtualScreen() {
-    const float unitsPerMeter = RuntimeConfigFile::VrWorldUnitsPerMeter(500.0f);
+    const float unitsPerMeter = mkw::vr::MkwVRPolicyGetSnapshot().EffectiveUnitsPerMeter();
     aurora_set_stereo_hud_screen(g_vrHudVirtualScreen,
                                  RuntimeConfigFile::VrHudWidthMeters(2.4f) * unitsPerMeter,
                                  RuntimeConfigFile::VrHudDistanceMeters(2.0f) * unitsPerMeter);
@@ -851,6 +860,51 @@ void DrawGraphicsSettings() {
             "the whole view. Its size and distance are the [vr] hud_width_meters and "
             "hud_distance_meters read at launch.");
     }
+    ImGui::Separator();
+    ImGui::Text("VR camera");
+    if (ImGui::Checkbox("First-person camera", &g_vrFirstPerson)) {
+        RuntimeConfigFile::SetVrFirstPerson(g_vrFirstPerson);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Moves the camera to the Player 1 driver's head and keeps the horizon level, "
+            "instead of riding behind the kart. Applies during a single-screen race; menus "
+            "and split-screen are unaffected. The world scale below replaces "
+            "world_units_per_meter while it is engaged.");
+    }
+    // These are the tuning loop for the anchor: the right head height is a
+    // per-taste value that can only really be judged from inside the headset.
+    if (ImGui::SliderFloat("World units per metre (first person)", &g_vrFirstPersonUnitsPerMeter,
+                           1.0f, 200.0f, "%.1f")) {
+        RuntimeConfigFile::SetVrFirstPersonUnitsPerMeter(g_vrFirstPersonUnitsPerMeter);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+        // The virtual screen's metres are converted at this same scale.
+        ApplyVrHudVirtualScreen();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Mario Kart Wii is authored at about 10 units per metre, which is what makes the "
+            "race read life-size. Raising this shrinks the world around you.");
+    }
+    bool headOffsetsChanged = false;
+    headOffsetsChanged |=
+        ImGui::SliderFloat("Head height (m)", &g_vrFirstPersonHeadUp, -1.0f, 3.0f, "%.2f");
+    headOffsetsChanged |=
+        ImGui::SliderFloat("Head forward (m)", &g_vrFirstPersonHeadForward, -20.0f, 20.0f, "%.2f");
+    headOffsetsChanged |=
+        ImGui::SliderFloat("Head sideways (m)", &g_vrFirstPersonHeadRight, -3.0f, 3.0f, "%.2f");
+    if (headOffsetsChanged) {
+        RuntimeConfigFile::SetVrFirstPersonHeadUpMeters(g_vrFirstPersonHeadUp);
+        RuntimeConfigFile::SetVrFirstPersonHeadForwardMeters(g_vrFirstPersonHeadForward);
+        RuntimeConfigFile::SetVrFirstPersonHeadRightMeters(g_vrFirstPersonHeadRight);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled(
+        "Where the head sits in the kart's own frame. Nudge it forward if the driver's own "
+        "head intrudes on the view.");
+    ImGui::PopTextWrapPos();
 }
 
 void DrawFpsOverlay() {
@@ -1072,10 +1126,13 @@ void InitializeRuntimeSettings() noexcept {
     aurora_set_stereo_skip_copy_clears(g_vrSkipCopyClears);
     ApplyVrHudVirtualScreen();
     aurora_set_skip_unready_pipelines(g_skipUnreadyPipelines);
+    mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
     g_strapInputAccepted.store(false, std::memory_order_relaxed);
     g_startupDismissFrame.store(UINT64_MAX, std::memory_order_relaxed);
     PADBlockInput(false);
 }
+
+void RefreshVrHudVirtualScreen() noexcept { ApplyVrHudVirtualScreen(); }
 
 void HandleEvents(const AuroraEvent* events) noexcept {
     if (!events) {

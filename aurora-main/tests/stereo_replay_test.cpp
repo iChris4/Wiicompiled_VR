@@ -155,5 +155,101 @@ TEST(StereoReplayTest, HudScreenParksRasterDepthAtMidrangeUnderHeadMotion) {
   }
 }
 
+Mat3x4<float> identity3x4() {
+  Mat3x4<float> m{};
+  m.m0 = {1.0f, 0.0f, 0.0f, 0.0f};
+  m.m1 = {0.0f, 1.0f, 0.0f, 0.0f};
+  m.m2 = {0.0f, 0.0f, 1.0f, 0.0f};
+  return m;
+}
+
+Mat3x4<float> head_tracking_delta() {
+  const float angle = 0.21f;
+  const float c = std::cos(angle);
+  const float s = std::sin(angle);
+  Mat3x4<float> m{};
+  m.m0 = {c, 0.0f, s, 11.0f};
+  m.m1 = {0.0f, 1.0f, 0.0f, -3.0f};
+  m.m2 = {-s, 0.0f, c, 6.0f};
+  return m;
+}
+
+TEST(StereoReplayTest, IdentitySceneAnchorLeavesTheEyeDeltaUnchanged) {
+  const auto viewFromCenter = head_tracking_delta();
+
+  const auto viewFromScene = compose_affine(viewFromCenter, identity3x4());
+
+  EXPECT_EQ(viewFromScene, viewFromCenter);
+}
+
+TEST(StereoReplayTest, TranslatingSceneAnchorMovesTheWorldByTheAnchorOffset) {
+  // A first-person anchor with no levelling is translate(-a): the camera moves
+  // to a, so every world point must arrive a units closer to the eye origin.
+  const std::array<float, 3> a{40.0f, -12.0f, -260.0f};
+  auto anchor = identity3x4();
+  anchor.m0[3] = -a[0];
+  anchor.m1[3] = -a[1];
+  anchor.m2[3] = -a[2];
+  const auto viewFromCenter = head_tracking_delta();
+  const auto viewFromScene = compose_affine(viewFromCenter, anchor);
+
+  // An object matrix placing a vertex somewhere in the recorded view space.
+  Mat3x4<float> objectToCenter{};
+  objectToCenter.m0 = {1.0f, 0.0f, 0.0f, 130.0f};
+  objectToCenter.m1 = {0.0f, 1.0f, 0.0f, 55.0f};
+  objectToCenter.m2 = {0.0f, 0.0f, 1.0f, -900.0f};
+
+  const auto anchored = compose_affine(viewFromScene, objectToCenter);
+  const auto recorded = compose_affine(viewFromCenter, objectToCenter);
+
+  // Rotation is untouched, and the eye-space displacement is exactly the eye
+  // delta's rotation applied to -a.
+  for (size_t row = 0; row < 3; ++row) {
+    const auto& anchoredRow = *(&anchored.m0 + row);
+    const auto& recordedRow = *(&recorded.m0 + row);
+    const auto& viewRow = *(&viewFromCenter.m0 + row);
+    for (size_t column = 0; column < 3; ++column) {
+      EXPECT_FLOAT_EQ(anchoredRow[column], recordedRow[column]);
+    }
+    const float expected =
+        recordedRow[3] - (viewRow[0] * a[0] + viewRow[1] * a[1] + viewRow[2] * a[2]);
+    EXPECT_NEAR(anchoredRow[3], expected, 1e-3f);
+  }
+}
+
+TEST(StereoReplayTest, VirtualScreenStaysAheadOfTheAnchoredCamera) {
+  // The screen rectangle is authored in the anchored camera's space and so
+  // composes with viewFromCenter, while world geometry composes with
+  // viewFromScene. The two agree exactly when a world object placed `distance`
+  // ahead of the anchored camera lands on the screen's centre.
+  const std::array<float, 3> a{40.0f, -12.0f, -260.0f};
+  const float distance = 20.0f;
+  auto anchor = identity3x4();
+  anchor.m0[3] = -a[0];
+  anchor.m1[3] = -a[1];
+  anchor.m2[3] = -a[2];
+  const auto viewFromCenter = head_tracking_delta();
+  const auto viewFromScene = compose_affine(viewFromCenter, anchor);
+
+  // The screen's centre: (0, 0, -distance) in the anchored camera's space,
+  // carried into eye space by viewFromCenter alone.
+  const Vec4<float> screenCentre{0.0f, 0.0f, -distance, 1.0f};
+  const float centreX = dot4(viewFromCenter.m0, screenCentre);
+  const float centreY = dot4(viewFromCenter.m1, screenCentre);
+  const float centreZ = dot4(viewFromCenter.m2, screenCentre);
+
+  // A world object at the same place, expressed the way a GX draw carries it:
+  // in the *recorded* view space, hence offset by the anchor position.
+  Mat3x4<float> objectToCenter = identity3x4();
+  objectToCenter.m0[3] = a[0];
+  objectToCenter.m1[3] = a[1];
+  objectToCenter.m2[3] = a[2] - distance;
+  const auto placed = compose_affine(viewFromScene, objectToCenter);
+
+  EXPECT_NEAR(placed.m0[3], centreX, 1e-3f);
+  EXPECT_NEAR(placed.m1[3], centreY, 1e-3f);
+  EXPECT_NEAR(placed.m2[3], centreZ, 1e-3f);
+}
+
 } // namespace
 } // namespace aurora::gfx::stereo_replay

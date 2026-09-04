@@ -8,6 +8,7 @@
 
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "vr/mkw_vr_first_person.h"
 #include "vr/mkw_vr_policy.h"
 #include "vr/mkw_vr_instrumentation.h"
 
@@ -44,8 +45,10 @@ void ConfigurePolicy(bool enabled) noexcept {
     config.world_units_per_meter = RuntimeConfigFile::VrWorldUnitsPerMeter(500.0f);
     config.hud_distance_meters = RuntimeConfigFile::VrHudDistanceMeters(2.0f);
     config.hud_width_meters = RuntimeConfigFile::VrHudWidthMeters(2.4f);
+    config.first_person_units_per_meter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter(10.0f);
     MkwVRPolicyConfigure(config);
     MkwVRInstrumentationInitialize();
+    MkwVRFirstPersonApplyConfiguredSettings();
 }
 
 #if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
@@ -487,7 +490,11 @@ private:
 
             {
                 std::lock_guard lock(published_mutex_);
-                BuildPublishedFrame(frame, immersive, policy.config.world_units_per_meter,
+                // First person renders at life-size scale, third person at the
+                // configured diorama scale. Head translation and IPD are the
+                // only things this multiplies, so a one-frame disagreement with
+                // the camera's own switch is not observable.
+                BuildPublishedFrame(frame, immersive, policy.EffectiveUnitsPerMeter(),
                                     policy.content_tag);
                 published_.store(&published_frame_, std::memory_order_release);
             }

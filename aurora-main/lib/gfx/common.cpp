@@ -1366,19 +1366,22 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
             const size_t offset = layout.positionOffset + matrix * sizeof(Mat3x4<float>);
             Mat3x4<float> source;
             std::memcpy(&source, uniform.data() + offset, sizeof(source));
-            const auto transformed = stereo_replay::compose_affine(eye.viewFromCenter, source);
+            const auto transformed = stereo_replay::compose_affine(eye.viewFromScene, source);
             std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
           }
           for (uint32_t matrix = 0; matrix < layout.normalMatrixCount; ++matrix) {
             const size_t offset = layout.normalOffset + matrix * sizeof(Mat3x4<float>);
             Mat3x4<float> source;
             std::memcpy(&source, uniform.data() + offset, sizeof(source));
-            const auto transformed = stereo_replay::compose_normal(eye.viewFromCenter, source);
+            const auto transformed = stereo_replay::compose_normal(eye.viewFromScene, source);
             std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
           }
         } else {
           // 2D content reaches the eye entirely through its projection: the
           // draw's own position matrices lay the element out in screen space.
+          // The screen rectangle is built in the VR-neutral view space, so this
+          // path uses viewFromCenter, not viewFromScene: folding the anchor in
+          // would leave the screen behind at the camera the anchor replaced.
           // First lift viewport-local NDC into displayed-frame NDC; replay will
           // use a full-eye viewport so sub-pane elements are not transformed by
           // the recorded viewport a second time.

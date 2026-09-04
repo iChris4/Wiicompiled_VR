@@ -295,7 +295,15 @@ struct ReplayTarget {
 struct StereoReplayEye {
   ReplayTarget target;
   Mat4x4<float> projection;
+  // The headset's eye delta, from the VR-neutral view space into this eye's.
+  // The virtual screen is defined in that neutral space, so 2D reprojection
+  // uses this transform directly.
   Mat3x4<float> viewFromCenter;
+  // The same delta with the first-person scene anchor folded in, i.e. from the
+  // game's *recorded* view space into this eye's. World draws carry the game's
+  // camera in their position matrices and therefore need this one. It equals
+  // viewFromCenter whenever the anchor is identity.
+  Mat3x4<float> viewFromScene;
 };
 
 struct StereoReplayFrame {

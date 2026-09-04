@@ -78,6 +78,11 @@ struct MkwVRPolicyConfig {
     // immersive race HUD so 2D content keeps its place across the transition.
     float hud_width_meters = 2.4f;
     float hud_scale = 1.0f;
+    // World scale used while the first-person camera is engaged. Mario Kart
+    // Wii is authored at roughly this many units per metre, so it is what
+    // makes the race read life-size; the third-person default deliberately
+    // does not, presenting the race as a small diorama instead.
+    float first_person_units_per_meter = 10.0f;
 };
 
 struct MkwVRSceneObservation {
@@ -108,6 +113,10 @@ struct MkwVRPolicySnapshot {
     MkwVRCameraObservation camera{};
     uint32_t available_bindings = MkwVRBindingNone;
     bool session_active = false;
+    // A first-person camera is actually driving the view this frame. Set by the
+    // integration layer once the anchor it publishes to the renderer is valid,
+    // so the world scale can never disagree with where the camera is.
+    bool first_person_engaged = false;
     // Changes whenever the stable presentation-safety state changes. Ordinary
     // per-frame scene/camera publication does not advance it.
     uint64_t safety_generation = 1;
@@ -115,6 +124,13 @@ struct MkwVRPolicySnapshot {
     // the current presentation mode, so a transient scene/camera mismatch
     // cannot accept an immersive packet from an adjacent asynchronous frame.
     uint64_t content_tag = 0;
+
+    // The scale headset translation and IPD are converted at. Head offsets in
+    // metres must use the same value, or the camera and the world disagree.
+    float EffectiveUnitsPerMeter() const noexcept {
+        return first_person_engaged ? config.first_person_units_per_meter
+                                    : config.world_units_per_meter;
+    }
 };
 
 // All policy functions are thread-safe. Publishing functions are intended for
@@ -127,6 +143,14 @@ void MkwVRPolicySetAvailableBindings(uint32_t bindings) noexcept;
 void MkwVRPolicyPublishScene(const MkwVRSceneObservation& scene) noexcept;
 void MkwVRPolicyPublishRaceCamera(const MkwVRCameraObservation& camera) noexcept;
 void MkwVRPolicyInvalidateRaceCamera() noexcept;
+// Reported by the integration layer each time the first-person anchor engages
+// or disengages. It selects the world scale and nothing else: presentation
+// safety is unaffected, so this never advances the safety generation.
+void MkwVRPolicySetFirstPersonEngaged(bool engaged) noexcept;
+// Live world scale for the first-person camera. Separate from
+// MkwVRPolicyConfigure so the F10 slider can retune it during a race without
+// republishing (and revalidating) the whole configuration.
+void MkwVRPolicySetFirstPersonUnitsPerMeter(float units_per_meter) noexcept;
 MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept;
 
 // This classifier is deliberately structural rather than heuristic: future

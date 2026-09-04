@@ -55,6 +55,11 @@ struct RuntimeUserConfig {
     std::optional<bool> vrHudVirtualScreen;
     std::optional<bool> vrStopAtDisplayCopy;
     std::optional<bool> vrSkipCopyClears;
+    std::optional<bool> vrFirstPerson;
+    std::optional<float> vrFirstPersonUnitsPerMeter;
+    std::optional<float> vrFirstPersonHeadUpMeters;
+    std::optional<float> vrFirstPersonHeadForwardMeters;
+    std::optional<float> vrFirstPersonHeadRightMeters;
     std::optional<float> audioVolume;
     std::optional<float> audioMusicVolume;
     std::optional<float> audioSoundEffectsVolume;
@@ -339,7 +344,18 @@ inline void EnsureConfigFile() {
               "# reset a GX copy performs afterwards. Both keep that reset\n"
               "# from erasing the eye, and both are safe to turn off.\n"
               "stop_at_display_copy = true\n"
-              "skip_copy_clears = true\n\n"
+              "skip_copy_clears = true\n"
+              "# Put the camera at the Player 1 driver's head instead of behind\n"
+              "# the kart, with the horizon kept level. Changeable live from the\n"
+              "# F10 menu, and only during a single-screen race. The world scale\n"
+              "# below replaces world_units_per_meter while it is engaged: 10 is\n"
+              "# life-size, where the 500 above makes the race a small diorama.\n"
+              "first_person = false\n"
+              "first_person_units_per_meter = 10.0\n"
+              "# Where the head sits in the kart's own frame, in metres.\n"
+              "first_person_head_up_meters = 1.0\n"
+              "first_person_head_forward_meters = 12.0\n"
+              "first_person_head_right_meters = 0.0\n\n"
               "[audio]\n"
               "volume = 1.0\n"
               "music_volume = 1.0\n"
@@ -500,6 +516,23 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.vrHudVirtualScreen = FindConfigValue<bool>(document, "vr", "hud_virtual_screen");
     config.vrStopAtDisplayCopy = FindConfigValue<bool>(document, "vr", "stop_at_display_copy");
     config.vrSkipCopyClears = FindConfigValue<bool>(document, "vr", "skip_copy_clears");
+    config.vrFirstPerson = FindConfigValue<bool>(document, "vr", "first_person");
+    if (auto value = FindConfigFloat(document, "vr", "first_person_units_per_meter");
+        value && *value >= 1.0f && *value <= 10000.0f) {
+        config.vrFirstPersonUnitsPerMeter = *value;
+    }
+    if (auto value = FindConfigFloat(document, "vr", "first_person_head_up_meters");
+        value && *value >= -3.0f && *value <= 3.0f) {
+        config.vrFirstPersonHeadUpMeters = *value;
+    }
+    if (auto value = FindConfigFloat(document, "vr", "first_person_head_forward_meters");
+        value && *value >= -3.0f && *value <= 3.0f) {
+        config.vrFirstPersonHeadForwardMeters = *value;
+    }
+    if (auto value = FindConfigFloat(document, "vr", "first_person_head_right_meters");
+        value && *value >= -3.0f && *value <= 3.0f) {
+        config.vrFirstPersonHeadRightMeters = *value;
+    }
 
     auto readVolume = [&](std::string_view key) -> std::optional<float> {
         auto value = FindConfigFloat(document, "audio", key);
@@ -740,6 +773,43 @@ inline bool SetVrStopAtDisplayCopy(bool value) {
 inline bool SetVrSkipCopyClears(bool value) {
     Mutable().vrSkipCopyClears = value;
     return WriteSetting("vr", "skip_copy_clears", value ? "true" : "false");
+}
+
+inline bool SetVrFirstPerson(bool value) {
+    Mutable().vrFirstPerson = value;
+    return WriteSetting("vr", "first_person", value ? "true" : "false");
+}
+
+inline bool SetVrFirstPersonUnitsPerMeter(float value) {
+    value = std::clamp(value, 1.0f, 10000.0f);
+    Mutable().vrFirstPersonUnitsPerMeter = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", "first_person_units_per_meter", formatted.str());
+}
+
+inline bool SetVrFirstPersonHeadUpMeters(float value) {
+    value = std::clamp(value, -3.0f, 3.0f);
+    Mutable().vrFirstPersonHeadUpMeters = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", "first_person_head_up_meters", formatted.str());
+}
+
+inline bool SetVrFirstPersonHeadForwardMeters(float value) {
+    value = std::clamp(value, -3.0f, 3.0f);
+    Mutable().vrFirstPersonHeadForwardMeters = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", "first_person_head_forward_meters", formatted.str());
+}
+
+inline bool SetVrFirstPersonHeadRightMeters(float value) {
+    value = std::clamp(value, -3.0f, 3.0f);
+    Mutable().vrFirstPersonHeadRightMeters = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", "first_person_head_right_meters", formatted.str());
 }
 
 inline bool SetControllerButton(size_t index, std::string value) {
@@ -988,6 +1058,26 @@ inline bool VrStopAtDisplayCopy(bool fallback = true) {
 
 inline bool VrSkipCopyClears(bool fallback = true) {
     return Get().vrSkipCopyClears.value_or(fallback);
+}
+
+inline bool VrFirstPerson(bool fallback = false) {
+    return Get().vrFirstPerson.value_or(fallback);
+}
+
+inline float VrFirstPersonUnitsPerMeter(float fallback = 10.0f) {
+    return std::clamp(Get().vrFirstPersonUnitsPerMeter.value_or(fallback), 1.0f, 10000.0f);
+}
+
+inline float VrFirstPersonHeadUpMeters(float fallback = 1.0f) {
+    return std::clamp(Get().vrFirstPersonHeadUpMeters.value_or(fallback), -3.0f, 3.0f);
+}
+
+inline float VrFirstPersonHeadForwardMeters(float fallback = 0.0f) {
+    return std::clamp(Get().vrFirstPersonHeadForwardMeters.value_or(fallback), -20.0f, 20.0f);
+}
+
+inline float VrFirstPersonHeadRightMeters(float fallback = 0.0f) {
+    return std::clamp(Get().vrFirstPersonHeadRightMeters.value_or(fallback), -3.0f, 3.0f);
 }
 
 inline std::string GraphicsApi(std::string fallback = "auto") {

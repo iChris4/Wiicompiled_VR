@@ -29,6 +29,11 @@ hud_width_meters = 2.4
 hud_virtual_screen = true
 stop_at_display_copy = true
 skip_copy_clears = true
+first_person = false
+first_person_units_per_meter = 10.0
+first_person_head_up_meters = 1.0
+first_person_head_forward_meters = 0.0
+first_person_head_right_meters = 0.0
 ```
 
 Set `enabled = true`, close the game completely, and start it again. These settings are read only
@@ -48,6 +53,40 @@ it is live and can be flipped from the F10 settings bar.
 `stop_at_display_copy` ends eye replay at the final `GXCopyDisp`, matching the frame shown on the
 desktop. `skip_copy_clears` independently suppresses the EFB reset performed after a copy. Both
 default on and can be changed live from the F10 settings bar for diagnostics.
+`first_person` and the `first_person_*` values are the first-person camera described below. All
+four are live and are also exposed in the F10 settings bar.
+
+## The first-person camera
+
+By default the headset sits where Mario Kart's own chase camera sits, and `world_units_per_meter`
+of 500 presents the race as a small diorama on a table. Turning on `first_person` moves the camera
+to the Player 1 driver's head instead, and switches the world scale to
+`first_person_units_per_meter`, which defaults to the 10 units per metre Mario Kart Wii is
+authored at, so the race reads life-size.
+
+The game's own transforms are never modified. Each guest frame the runtime reads the race camera's
+view matrix and the player kart's physics pose and derives one affine transform from the recorded
+view space into the space to render from. That transform is published with the sealed frame, and
+the renderer composes it onto every perspective draw's model-view matrix, alongside the headset's
+own per-eye delta. The kart's *physics* pose is used deliberately, not the animated model: an
+animated frame would bob and lurch the camera.
+
+Only the camera's heading is taken from the game. Its pitch and roll are dropped, so the horizon
+stays level through a chase-camera tilt or a banked corner, and the headset owns pitch, roll, and
+free look outright. The head's place in the kart is `first_person_head_up_meters` and its two
+companions, measured in the kart's own frame; the F10 sliders exist because the comfortable value
+is a matter of taste and is best judged from inside the headset.
+
+The mode engages only in a single-screen race, the same content that already qualifies for
+immersive stereo. Menus, split-screen, and the virtual-screen fallback are unaffected, and so is
+the desktop mirror, which keeps showing the game's ordinary third-person view. If the kart or
+camera cannot be read the camera stays where the game put it rather than guessing.
+
+Two limitations are worth knowing. Mario Kart still culls the scene from its own chase camera, so
+a wide head turn in first person can reveal the edge of what the game decided to draw. And the
+driver's own head is still rendered; nudge `first_person_head_forward_meters` if it intrudes. As
+with the rest of the race instrumentation, the object offsets this reads are specific to the
+project's supported PAL `RMCP01` translation.
 
 ## Presentation policy
 

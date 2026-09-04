@@ -335,6 +335,13 @@ target_link_libraries(mkw_platform_paths_tests PRIVATE mkw_platform)
 target_compile_features(mkw_platform_paths_tests PRIVATE cxx_std_17)
 add_test(NAME mkw_platform_paths_tests COMMAND mkw_platform_paths_tests)
 
+# The first-person VR camera's transform is deliberately header-only and free of
+# guest access so it can be checked here, without a headset or a running game.
+add_executable(mkw_vr_first_person_tests "${CMAKE_CURRENT_LIST_DIR}/tests/vr_first_person_tests.cpp")
+target_include_directories(mkw_vr_first_person_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
+target_compile_features(mkw_vr_first_person_tests PRIVATE cxx_std_17)
+add_test(NAME mkw_vr_first_person_tests COMMAND mkw_vr_first_person_tests)
+
 # HostContext deliberately keeps the platform-specific context primitive out
 # of fiber_manager.cpp. Exercise the Linux libco handoff directly so future
 # refactors cannot silently remove its headers, implementation, or link edge.

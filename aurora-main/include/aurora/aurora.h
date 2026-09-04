@@ -87,10 +87,12 @@ enum { AURORA_STEREO_EYE_COUNT = 2 };
  * applies those four values to each perspective GX draw while preserving the
  * draw's own depth mapping and renderer depth-range adjustment.
  *
- * viewFromCenter is a row-major affine 3x4 transform from the game's
- * recorded center-eye view space into this eye's view space. Identity keeps
- * the recorded view and is useful when the game has already applied the eye
- * transform before issuing GX commands.
+ * viewFromCenter is a row-major affine 3x4 transform from the center-eye view
+ * space into this eye's view space. Identity keeps the recorded view and is
+ * useful when the game has already applied the eye transform before issuing GX
+ * commands. That center-eye space is the game's recorded view space unless
+ * aurora_set_stereo_scene_anchor() relocated the camera for the sealed frame,
+ * in which case the anchor is composed in for world draws only.
  *
  * Both transforms are ignored in AURORA_STEREO_FRAME_VIRTUAL_SCREEN mode.
  */
@@ -209,6 +211,24 @@ void aurora_end_frame();
 // Seal the current frame with an opaque application safety tag. Aurora rejects
 // an immersive provider packet unless its contentTag matches this exact frame.
 void aurora_end_frame_tagged(uint64_t contentTag);
+/**
+ * Relocates the immersive camera for the frame about to be sealed.
+ *
+ * anchorFromScene is a row-major affine 3x4 transform from the game's recorded
+ * view space into the view space the headset should render from, in world
+ * units. Identity keeps the recorded camera, which is the default and the
+ * behaviour of every frame that does not call this.
+ *
+ * Perspective draws carry the recorded camera in their own position matrices,
+ * so they are replayed through viewFromCenter * anchorFromScene. The 2D virtual
+ * screen is defined in the relocated camera's space and keeps viewFromCenter.
+ *
+ * This is latched by the next aurora_end_frame*(), then cleared: the anchor
+ * belongs to the guest frame that produced the GX content, so it must be
+ * published per frame from the producer thread rather than by the stereo
+ * provider, which cannot know which frame will consume its packet.
+ */
+void aurora_set_stereo_scene_anchor(const float anchorFromScene[12]);
 typedef void (*AuroraFrameWorkerWaitCallback)();
 // Called from the producer thread at bounded intervals while Aurora waits for
 // the asynchronous frame worker. The callback must not enter Aurora.

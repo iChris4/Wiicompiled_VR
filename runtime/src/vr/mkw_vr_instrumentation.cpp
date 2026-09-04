@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "ppc_runtime.h"
 #include "runtime_log.h"
+#include "vr/mkw_vr_first_person.h"
 #include "vr/mkw_vr_policy.h"
 
 #include <algorithm>
@@ -67,6 +68,15 @@ uint32_t CameraCount(uint64_t frame) noexcept {
     std::lock_guard lock(g_instrumentation_mutex);
     ResetCamerasForFrameLocked(frame);
     return g_instrumentation.camera_count;
+}
+
+// The first RaceCamera updated this frame. The game also updates cameras for
+// transitions and effects, so first-wins is what keeps the first-person anchor
+// deterministic: Mario Kart updates the racers' cameras before those.
+uint32_t FirstCamera(uint64_t frame) noexcept {
+    std::lock_guard lock(g_instrumentation_mutex);
+    ResetCamerasForFrameLocked(frame);
+    return g_instrumentation.camera_count != 0 ? g_instrumentation.cameras[0] : 0;
 }
 
 uint32_t RaceScreenCount() noexcept {
@@ -150,6 +160,7 @@ extern "C" void MkwVRObserveTranslatedFunctionEntry(uint32_t address,
         }
         PublishRaceScene(frame, 0);
         MkwVRPolicyInvalidateRaceCamera();
+        MkwVRFirstPersonReset();
         RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] entered RaceScene at frame " << frame
                                << std::endl;
         break;
@@ -169,6 +180,10 @@ extern "C" void MkwVRObserveTranslatedFunctionEntry(uint32_t address,
         const uint32_t screen_count = RaceScreenCount();
         LogRaceEvidenceIfChanged(frame, screen_count, camera_count);
         PublishRaceScene(frame, screen_count);
+        // Every kart and camera has been updated for this frame and none of
+        // the frame's draws have been issued yet, so the values behind these
+        // pointers are exactly the ones those draws will use.
+        MkwVRFirstPersonUpdate(frame, FirstCamera(frame));
         break;
     }
     case kRaceSceneOnExit: {
@@ -177,6 +192,7 @@ extern "C" void MkwVRObserveTranslatedFunctionEntry(uint32_t address,
         scene.guest_frame_index = frame;
         MkwVRPolicyPublishScene(scene);
         MkwVRPolicyInvalidateRaceCamera();
+        MkwVRFirstPersonReset();
         RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] exited RaceScene at frame " << frame
                                << std::endl;
         break;

@@ -3,6 +3,7 @@
 #ifdef AURORA_ENABLE_GX
 #include "gfx/common.hpp"
 #include "gfx/efb_ram_copy.hpp"
+#include "gfx/stereo_replay.hpp"
 #include "gx/fifo.hpp"
 #include "gx/shader_info.hpp"
 #include "imgui.hpp"
@@ -86,6 +87,22 @@ std::atomic_bool g_stereoProviderActive{false};
 #ifdef AURORA_ENABLE_GX
 StereoSinkRegistration g_stereoSink;
 #endif
+
+// First-person camera relocation for one sealed frame: a row-major affine 3x4
+// from the game's recorded view space into the space to render from. `active`
+// false means the identity transform, i.e. render from the recorded camera.
+struct StereoSceneAnchor {
+  std::array<float, 12> anchorFromScene{
+      1.f, 0.f, 0.f, 0.f, //
+      0.f, 1.f, 0.f, 0.f, //
+      0.f, 0.f, 1.f, 0.f,
+  };
+  bool active = false;
+};
+// Producer thread only, between aurora_set_stereo_scene_anchor() and the seal
+// that consumes it. Cleared at every seal so a producer that stops publishing
+// falls back to the recorded camera instead of freezing on a stale anchor.
+StereoSceneAnchor g_pendingSceneAnchor;
 
 using PresentClock = std::chrono::steady_clock;
 
@@ -237,7 +254,7 @@ enum class ImGuiFramePolicy {
 bool begin_frame_impl(bool pumpEvents, ImGuiFramePolicy imguiPolicy = ImGuiFramePolicy::Immediate,
                       bool* imguiNewFrameOwed = nullptr) noexcept;
 bool begin_frame_render_state_impl(ImGuiFramePolicy imguiPolicy, bool* imguiNewFrameOwed) noexcept;
-void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag) noexcept;
+void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag, const StereoSceneAnchor& sceneAnchor) noexcept;
 
 // The two publication points of a frame-worker cycle, cleared together under `mutex`. Sealed:
 // producer-shared renderer state is free again. Done: slots encoded, presented, ImGui restarted.
@@ -254,9 +271,10 @@ struct FrameWorkerState {
   bool started = false;
   bool stop = false;
   bool jobPending = false;
-  // Written with jobPending and copied by the worker under this mutex. It
-  // belongs to that exact queued frame, not to the producer's next frame.
+  // Written with jobPending and copied by the worker under this mutex. They
+  // belong to that exact queued frame, not to the producer's next frame.
   uint64_t contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
+  StereoSceneAnchor sceneAnchor{};
   // Readiness is polled thousands of times per frame, so these flags double as a publication
   // barrier. `sealed` is released before `ready`, and both are cleared under `mutex`.
   std::atomic_bool sealed{true};
@@ -305,7 +323,8 @@ bool frame_worker_requested() noexcept {
 
 #ifdef AURORA_ENABLE_GX
 // Returns false when a stop request was observed mid-cycle.
-bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag) noexcept;
+bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag,
+                            const StereoSceneAnchor& sceneAnchor) noexcept;
 #endif
 
 void frame_worker_main() noexcept {
@@ -322,6 +341,7 @@ void frame_worker_main() noexcept {
 
   for (;;) {
     uint64_t contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
+    StereoSceneAnchor sceneAnchor{};
     {
       std::unique_lock lock(g_frameWorker.mutex);
       g_frameWorker.cv.wait(lock, [] { return g_frameWorker.stop || g_frameWorker.jobPending; });
@@ -330,17 +350,20 @@ void frame_worker_main() noexcept {
       }
       contentTag = g_frameWorker.contentTag;
       g_frameWorker.contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
+      sceneAnchor = g_frameWorker.sceneAnchor;
+      g_frameWorker.sceneAnchor = {};
       g_frameWorker.jobPending = false;
     }
 
     // The CPU already decoded the sealed frame at its GX boundary; the worker only owns
     // encode/submit/present, so it never touches the producer's next FIFO buffer.
 #ifdef AURORA_ENABLE_GX
-    if (!run_frame_worker_cycle(sealedFrame, contentTag)) {
+    if (!run_frame_worker_cycle(sealedFrame, contentTag, sceneAnchor)) {
       break;
     }
 #else
     (void)contentTag;
+    (void)sceneAnchor;
 #endif
   }
 
@@ -365,6 +388,7 @@ void ensure_frame_worker_started() noexcept {
   g_frameWorker.stop = false;
   g_frameWorker.jobPending = false;
   g_frameWorker.contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
+  g_frameWorker.sceneAnchor = {};
   g_frameWorker.sealed.store(true, std::memory_order_release);
   g_frameWorker.ready.store(true, std::memory_order_release);
   g_frameWorker.prepareAllowed = false;
@@ -433,6 +457,7 @@ void stop_frame_worker() noexcept {
   g_frameWorker.framePrepared = false;
   g_frameWorker.jobPending = false;
   g_frameWorker.contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
+  g_frameWorker.sceneAnchor = {};
 }
 
 uint32_t align_to(uint32_t value, uint32_t alignment) noexcept { return (value + alignment - 1) & ~(alignment - 1); }
@@ -608,7 +633,9 @@ std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame, uin
   return frame;
 }
 
-gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input) {
+gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, const StereoSceneAnchor& sceneAnchor) {
+  Mat3x4<float> anchorFromScene;
+  std::memcpy(&anchorFromScene, sceneAnchor.anchorFromScene.data(), sizeof(anchorFromScene));
   gfx::StereoReplayFrame replay{};
   for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
     ensure_stereo_eye_target(eye, input.eyes[eye].width, input.eyes[eye].height);
@@ -627,6 +654,12 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input) 
     };
     std::memcpy(&view.projection, input.eyes[eye].projection, sizeof(view.projection));
     std::memcpy(&view.viewFromCenter, input.eyes[eye].viewFromCenter, sizeof(view.viewFromCenter));
+    // World draws already carry the recorded camera, so they need the anchor
+    // folded in; the virtual screen is authored in the anchored camera's space
+    // and keeps viewFromCenter.
+    view.viewFromScene = sceneAnchor.active
+                             ? gfx::stereo_replay::compose_affine(view.viewFromCenter, anchorFromScene)
+                             : view.viewFromCenter;
   }
   return replay;
 }
@@ -1556,7 +1589,8 @@ struct SealedFrameContext {
 
 // Phase 1: everything that touches producer-shared renderer state. Needs g_rendererGpuMutex and
 // a FIFO already drained into the recorded pass list.
-void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx, uint64_t contentTag) {
+void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx, uint64_t contentTag,
+                       const StereoSceneAnchor& sceneAnchor) {
   ZoneScopedN("Seal frame");
   const auto encoderDescriptor = wgpu::CommandEncoderDescriptor{
       .label = "Redraw encoder",
@@ -1571,7 +1605,7 @@ void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx, u
   if (const auto stereoInput = request_stereo_frame(ctx.logicalFrame, contentTag)) {
     ctx.stereoFrameToken = stereoInput->frameToken;
     ctx.stereoFrameMode = stereoInput->mode;
-    ctx.stereoReplay = make_stereo_replay_frame(*stereoInput);
+    ctx.stereoReplay = make_stereo_replay_frame(*stereoInput, sceneAnchor);
   }
   if (ctx.stereoReplay && ctx.stereoFrameMode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY) {
     // Keep the accepted frame alive even if the additional eye-uniform copies
@@ -1852,7 +1886,8 @@ void record_frame_telemetry() {
 
 // One complete frame-worker cycle. The scene encode only leaves the renderer mutex when
 // interpolation actually inserts slots; otherwise both phases publish together.
-bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag) noexcept {
+bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag,
+                            const StereoSceneAnchor& sceneAnchor) noexcept {
   ZoneScopedN("Frame worker cycle");
   webgpu::fail_if_device_lost();
   SealedFrameContext ctx;
@@ -1860,7 +1895,7 @@ bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag) 
   bool overlapEncode = false;
   {
     std::lock_guard gpuLock(g_rendererGpuMutex);
-    seal_frame_locked(sealedFrame, ctx, contentTag);
+    seal_frame_locked(sealedFrame, ctx, contentTag, sceneAnchor);
     overlapEncode = ctx.interpolationActive;
     if (!overlapEncode) {
       presentationJobs = encode_sealed_frame(sealedFrame, ctx);
@@ -1919,7 +1954,8 @@ bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag) 
 
 // Synchronous frame submission: seal, encode and present inline on the calling thread. Used when
 // the frame worker is disabled (RenderDoc captures) and on the boot path.
-void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag) noexcept {
+void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag,
+                    const StereoSceneAnchor& sceneAnchor) noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
   webgpu::fail_if_device_lost();
@@ -1934,7 +1970,7 @@ void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag) noexce
     if (drainFifo) {
       gx::fifo::drain();
     }
-    seal_frame_locked(sealedFrame, ctx, contentTag);
+    seal_frame_locked(sealedFrame, ctx, contentTag, sceneAnchor);
     presentationJobs = encode_sealed_frame(sealedFrame, ctx);
   }
   publish_presentations(std::move(presentationJobs), ctx.interpolationActive);
@@ -1943,6 +1979,7 @@ void end_frame_impl(bool pumpEvents, bool drainFifo, uint64_t contentTag) noexce
   (void)pumpEvents;
   (void)drainFifo;
   (void)contentTag;
+  (void)sceneAnchor;
 #endif
 }
 
@@ -2013,8 +2050,12 @@ void end_frame(uint64_t contentTag) noexcept {
 #ifdef AURORA_ENABLE_GX
   webgpu::fail_if_device_lost();
 #endif
+  // Claim the anchor published for this frame. Clearing it here is what makes a
+  // producer that stops publishing fall back to the recorded camera.
+  const StereoSceneAnchor sceneAnchor = g_pendingSceneAnchor;
+  g_pendingSceneAnchor = {};
   if (!frame_worker_requested()) {
-    end_frame_impl(true, true, contentTag);
+    end_frame_impl(true, true, contentTag, sceneAnchor);
     return;
   }
 
@@ -2035,6 +2076,7 @@ void end_frame(uint64_t contentTag) noexcept {
     g_frameWorker.sealed.store(false, std::memory_order_release);
     g_frameWorker.ready.store(false, std::memory_order_release);
     g_frameWorker.contentTag = contentTag;
+    g_frameWorker.sceneAnchor = sceneAnchor;
     g_frameWorker.jobPending = true;
     g_frameWorker.prepareAllowed = false;
   }
@@ -2085,6 +2127,32 @@ void set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdat
   g_stereoProviderActive.store(provider != nullptr, std::memory_order_release);
 }
 
+void set_stereo_scene_anchor(const float anchorFromScene[12]) noexcept {
+  if (anchorFromScene == nullptr) {
+    g_pendingSceneAnchor = {};
+    return;
+  }
+  // aurora_core is built with -ffast-math, so std::isfinite may be folded to
+  // true. Inspect the IEEE-754 exponent, matching request_stereo_frame().
+  for (size_t i = 0; i < 12; ++i) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &anchorFromScene[i], sizeof(bits));
+    if ((bits & 0x7f800000u) == 0x7f800000u) {
+      static bool rejectionLogged = false;
+      if (!rejectionLogged) {
+        rejectionLogged = true;
+        Log.warn("Rejected a non-finite stereo scene anchor; keeping the recorded camera");
+      }
+      g_pendingSceneAnchor = {};
+      return;
+    }
+  }
+  StereoSceneAnchor anchor{};
+  std::memcpy(anchor.anchorFromScene.data(), anchorFromScene, sizeof(anchor.anchorFromScene));
+  anchor.active = true;
+  g_pendingSceneAnchor = anchor;
+}
+
 #ifdef AURORA_ENABLE_GX
 namespace stereo {
 void set_sink(SinkCallback callback, SubmitCallback submitted, void* userdata) noexcept {
@@ -2108,6 +2176,9 @@ const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(AURORA_STEREO_CONTENT_TAG_UNKNOWN); }
 void aurora_end_frame_tagged(uint64_t contentTag) { aurora::end_frame(contentTag); }
+void aurora_set_stereo_scene_anchor(const float anchorFromScene[12]) {
+  aurora::set_stereo_scene_anchor(anchorFromScene);
+}
 void aurora_set_frame_worker_wait_callback(AuroraFrameWorkerWaitCallback callback) {
   aurora::g_frameWorkerWaitCallback.store(callback, std::memory_order_release);
 }
