@@ -50,6 +50,9 @@ MkwVRPolicyConfig SanitizeConfig(const MkwVRPolicyConfig& config) noexcept {
     if (!IsFinitePositive(&sanitized.hud_distance_meters)) {
         sanitized.hud_distance_meters = kDefaultConfig.hud_distance_meters;
     }
+    if (!IsFinitePositive(&sanitized.hud_width_meters)) {
+        sanitized.hud_width_meters = kDefaultConfig.hud_width_meters;
+    }
     if (!IsFinitePositive(&sanitized.hud_scale)) {
         sanitized.hud_scale = kDefaultConfig.hud_scale;
     }

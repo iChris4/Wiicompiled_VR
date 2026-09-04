@@ -108,13 +108,13 @@ static constexpr u8 CP_PRIMITIVE_END = 0xBF;
 
 // Read helpers for big/little endian
 #if _MSC_VER
-template<typename T>
+template <typename T>
 __forceinline // Yes, this was necessary.
-inline T unaligned_load(const T* ptr) {
+    inline T unaligned_load(const T* ptr) {
   return *static_cast<const __unaligned T*>(ptr);
 }
 #else
-template<typename T>
+template <typename T>
 inline T unaligned_load(const T* ptr) {
   T copy;
   memcpy(&copy, ptr, sizeof(T));
@@ -138,9 +138,7 @@ static inline u32 read_u32(const u8* ptr, bool bigEndian) {
   return val;
 }
 
-static bool is_draw_cmd(u8 cmd) {
-  return cmd >= CP_PRIMITIVE_START && cmd <= CP_PRIMITIVE_END;
-}
+static bool is_draw_cmd(u8 cmd) { return cmd >= CP_PRIMITIVE_START && cmd <= CP_PRIMITIVE_END; }
 
 static GXPrimitive primitive_from_draw_cmd(u8 cmd) {
   switch (cmd & CP_OPCODE_MASK) {
@@ -163,9 +161,6 @@ static GXPrimitive primitive_from_draw_cmd(u8 cmd) {
     UNLIKELY FATAL("unsupported primitive command 0x{:02X}", cmd);
   }
 }
-
-
-
 
 static u32 bp_get(u32 reg, u32 size, u32 shift);
 static inline f32 read_f32(const u8* ptr, bool bigEndian);
@@ -278,11 +273,12 @@ static inline void mark_pipeline_state_dirty() noexcept {
 // Rejects a malformed XF write in release builds.
 #define XF_REQUIRE(cond, msg, ...)                                                                                     \
   do {                                                                                                                 \
-    if (!(cond)) UNLIKELY {                                                                                            \
-      CHECK(cond, msg, ##__VA_ARGS__);                                                                                  \
-      Log.warn(msg, ##__VA_ARGS__);                                                                                     \
-      return true;                                                                                                     \
-    }                                                                                                                  \
+    if (!(cond))                                                                                                       \
+      UNLIKELY {                                                                                                       \
+        CHECK(cond, msg, ##__VA_ARGS__);                                                                               \
+        Log.warn(msg, ##__VA_ARGS__);                                                                                  \
+        return true;                                                                                                   \
+      }                                                                                                                \
   } while (0)
 
 static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
@@ -468,7 +464,8 @@ static bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian);
 
 void process(const u8* data, u32 size, bool bigEndian) {
   ZoneScoped;
-  // Everything decoded here mutates renderer state (GX state, the recorded command lists and the mapped staging buffers), so take the renderer GPU mutex once for the whole drain rather than once per draw command.
+  // Everything decoded here mutates renderer state (GX state, the recorded command lists and the mapped staging
+  // buffers), so take the renderer GPU mutex once for the whole drain rather than once per draw command.
   std::lock_guard gpuLock(aurora::renderer_gpu_mutex());
   u32 pos = 0;
 
@@ -522,9 +519,10 @@ void process(const u8* data, u32 size, bool bigEndian) {
       if (array.data == nullptr || array.stride == 0 || byteOffset + byteCount > array.size) {
         static u32 invalidIndexedXfLogCount = 0;
         if (invalidIndexedXfLogCount < 16) {
-          Log.warn("Skipping indexed XF load with invalid source array: array={} idx={} stride={} offset={} bytes={} "
-                   "size={} dst=0x{:04X}",
-                   arrayType, srcArrayIdx, array.stride, byteOffset, byteCount, array.size, dstAddr);
+          Log.warn(
+              "Skipping indexed XF load with invalid source array: array={} idx={} stride={} offset={} bytes={} "
+              "size={} dst=0x{:04X}",
+              arrayType, srcArrayIdx, array.stride, byteOffset, byteCount, array.size, dstAddr);
           ++invalidIndexedXfLogCount;
         }
         break;
@@ -635,12 +633,12 @@ static void handle_bp(u32 value, bool bigEndian) {
   } else {
     const u32 ssMask = g_gxState.bpRegCache[0xFE];
     // A preceding 0xFE write is rare; the common path only has to prove the mask is already wide open.
-    if (ssMask != 0x00FFFFFF) UNLIKELY {
-      g_gxState.bpRegCache[0xFE] = 0x00FFFFFF;
-    }
+    if (ssMask != 0x00FFFFFF)
+      UNLIKELY { g_gxState.bpRegCache[0xFE] = 0x00FFFFFF; }
     const u32 merged = (g_gxState.bpRegCache[regId] & ~ssMask) | (value & ssMask);
     value = (regId << 24) | (merged & 0x00FFFFFF);
-    if (g_gxState.bpRegCache[regId] == value) return;
+    if (g_gxState.bpRegCache[regId] == value)
+      return;
     g_gxState.bpRegCache[regId] = value;
   }
   // TEV color combiner stages (0xC0, 0xC2, 0xC4, ... 0xDE)
@@ -704,7 +702,8 @@ static void handle_bp(u32 value, bool bigEndian) {
   case 0x00: {
     g_gxState.numTexGens = bp_get(value, 4, 0);
     g_gxState.numChans = bp_get(value, 3, 4);
-    // genMode owns the same numTexGens/numChans that XF 0x3F/0x09 decode, so the XF cache can no longer vouch for those two slots.
+    // genMode owns the same numTexGens/numChans that XF 0x3F/0x09 decode, so the XF cache can no longer vouch for those
+    // two slots.
     g_gxState.invalidateXfReg(0x3F);
     g_gxState.invalidateXfReg(0x09);
     g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
@@ -1387,7 +1386,8 @@ void reset_cp_register_cache() {
 }
 
 static bool cp_register_write_unchanged(u8 addr, u32 value) {
-  if (!cacheable_cp_register(addr)) return false;
+  if (!cacheable_cp_register(addr))
+    return false;
 
   if (s_cpRegisterCacheValid[addr] && s_cpRegisterCache[addr] == value) {
     return true;
@@ -1399,7 +1399,8 @@ static bool cp_register_write_unchanged(u8 addr, u32 value) {
 
 // CP register handler - decodes CP register writes and updates g_gxState
 static void handle_cp(u8 addr, u32 value, bool bigEndian) {
-  if (cp_register_write_unchanged(addr, value)) return;
+  if (cp_register_write_unchanged(addr, value))
+    return;
 
   switch (addr) {
   // VCD low (0x50)
@@ -1559,8 +1560,10 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
 
 // XF register handler - decodes XF (transform unit) register writes and updates g_gxState
 static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
-  // These bounds must hold in release too: CHECK() is a no-op under NDEBUG, so relying on it alone let a truncated guest display list read past `data`.
-  if (pos > size || size - pos < 4) UNLIKELY {
+  // These bounds must hold in release too: CHECK() is a no-op under NDEBUG, so relying on it alone let a truncated
+  // guest display list read past `data`.
+  if (pos > size || size - pos < 4)
+    UNLIKELY {
       CHECK(false, "XF header read overrun");
       pos = size;
       return;
@@ -1572,7 +1575,8 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
   u32 addr = header & 0xFFFF;
   u32 dataBytes = count * 4;
   // Log.warn("  xf: addr {:04x} count {} dataBytes {} pos {} -> {}", addr, count, dataBytes, pos, pos + dataBytes);
-  if (size - pos < dataBytes) UNLIKELY {
+  if (size - pos < dataBytes)
+    UNLIKELY {
       CHECK(false, "XF data read overrun: need {} bytes at pos {}", dataBytes, pos);
       pos = size;
       return;
@@ -1594,9 +1598,12 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
       // Skip register writes that decode to state we already hold.
       const bool cacheable = reg < g_gxState.xfRegCache.size();
       const bool unchanged = cacheable && g_gxState.xfRegMatches(reg, val);
-      if (cacheable) g_gxState.storeXfReg(reg, val);
-      // Viewport (0x1A-0x1F) and projection (0x20-0x26) keep their unconditional apply below; only the banks that already had skip semantics and the TexGen bank drop out here.
-      if (unchanged && (reg <= 0x19 || reg >= 0x3F)) continue;
+      if (cacheable)
+        g_gxState.storeXfReg(reg, val);
+      // Viewport (0x1A-0x1F) and projection (0x20-0x26) keep their unconditional apply below; only the banks that
+      // already had skip semantics and the TexGen bank drop out here.
+      if (unchanged && (reg <= 0x19 || reg >= 0x3F))
+        continue;
 
       switch (reg) {
       case 0x00:
@@ -1806,20 +1813,20 @@ static void handle_draw_overrun(u8 cmd, u16 vtxCount, u32 vtxSize, u32 totalVtxB
   Log.warn("  hex dump around truncated draw cmd (pos {}-{}):{}", dumpStart, dumpEnd - 1, hex);
   const auto fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
   const auto& vtxFmt = g_gxState.vtxFmts[fmt];
-  Log.warn("  truncated draw cmd=0x{:02X} fmt={} vtxCount={} vtxSize={} desc pn={} pos={} nrm={} clr0={} clr1={} "
-            "tex0={} tex1={} tex2={} tex3={} tex4={} tex5={} tex6={} tex7={}",
-            cmd, static_cast<u32>(fmt), vtxCount, vtxSize, g_gxState.vtxDesc[GX_VA_PNMTXIDX],
-            g_gxState.vtxDesc[GX_VA_POS], g_gxState.vtxDesc[GX_VA_NRM], g_gxState.vtxDesc[GX_VA_CLR0],
-            g_gxState.vtxDesc[GX_VA_CLR1], g_gxState.vtxDesc[GX_VA_TEX0], g_gxState.vtxDesc[GX_VA_TEX1],
-            g_gxState.vtxDesc[GX_VA_TEX2], g_gxState.vtxDesc[GX_VA_TEX3], g_gxState.vtxDesc[GX_VA_TEX4],
-            g_gxState.vtxDesc[GX_VA_TEX5], g_gxState.vtxDesc[GX_VA_TEX6], g_gxState.vtxDesc[GX_VA_TEX7]);
-  Log.warn("  fmt {} attrs pos({},{}) nrm({},{}) clr0({},{}) tex0({},{}) tex1({},{})",
-            static_cast<u32>(fmt), static_cast<u32>(vtxFmt.attrs[GX_VA_POS].cnt),
-            static_cast<u32>(vtxFmt.attrs[GX_VA_POS].type), static_cast<u32>(vtxFmt.attrs[GX_VA_NRM].cnt),
-            static_cast<u32>(vtxFmt.attrs[GX_VA_NRM].type), static_cast<u32>(vtxFmt.attrs[GX_VA_CLR0].cnt),
-            static_cast<u32>(vtxFmt.attrs[GX_VA_CLR0].type), static_cast<u32>(vtxFmt.attrs[GX_VA_TEX0].cnt),
-            static_cast<u32>(vtxFmt.attrs[GX_VA_TEX0].type), static_cast<u32>(vtxFmt.attrs[GX_VA_TEX1].cnt),
-            static_cast<u32>(vtxFmt.attrs[GX_VA_TEX1].type));
+  Log.warn(
+      "  truncated draw cmd=0x{:02X} fmt={} vtxCount={} vtxSize={} desc pn={} pos={} nrm={} clr0={} clr1={} "
+      "tex0={} tex1={} tex2={} tex3={} tex4={} tex5={} tex6={} tex7={}",
+      cmd, static_cast<u32>(fmt), vtxCount, vtxSize, g_gxState.vtxDesc[GX_VA_PNMTXIDX], g_gxState.vtxDesc[GX_VA_POS],
+      g_gxState.vtxDesc[GX_VA_NRM], g_gxState.vtxDesc[GX_VA_CLR0], g_gxState.vtxDesc[GX_VA_CLR1],
+      g_gxState.vtxDesc[GX_VA_TEX0], g_gxState.vtxDesc[GX_VA_TEX1], g_gxState.vtxDesc[GX_VA_TEX2],
+      g_gxState.vtxDesc[GX_VA_TEX3], g_gxState.vtxDesc[GX_VA_TEX4], g_gxState.vtxDesc[GX_VA_TEX5],
+      g_gxState.vtxDesc[GX_VA_TEX6], g_gxState.vtxDesc[GX_VA_TEX7]);
+  Log.warn("  fmt {} attrs pos({},{}) nrm({},{}) clr0({},{}) tex0({},{}) tex1({},{})", static_cast<u32>(fmt),
+           static_cast<u32>(vtxFmt.attrs[GX_VA_POS].cnt), static_cast<u32>(vtxFmt.attrs[GX_VA_POS].type),
+           static_cast<u32>(vtxFmt.attrs[GX_VA_NRM].cnt), static_cast<u32>(vtxFmt.attrs[GX_VA_NRM].type),
+           static_cast<u32>(vtxFmt.attrs[GX_VA_CLR0].cnt), static_cast<u32>(vtxFmt.attrs[GX_VA_CLR0].type),
+           static_cast<u32>(vtxFmt.attrs[GX_VA_TEX0].cnt), static_cast<u32>(vtxFmt.attrs[GX_VA_TEX0].type),
+           static_cast<u32>(vtxFmt.attrs[GX_VA_TEX1].cnt), static_cast<u32>(vtxFmt.attrs[GX_VA_TEX1].type));
   Log.warn("stopping FIFO decode at truncated draw: need {} bytes at pos {}, have {}", totalVtxBytes, pos, size);
 }
 
@@ -1852,12 +1859,12 @@ static u32 calculate_last_vtx_size(GXVtxFmt fmt) {
   return vtxSize;
 }
 
-static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
-                                 gfx::Range vertRange, uint16_t usedPnMtxMask,
-                                 HashType matrixTopologySignature,
-                                 HashType geometrySignature, bool interpolationIdentityActive);
+static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange,
+                                 uint16_t usedPnMtxMask, HashType matrixTopologySignature, HashType geometrySignature,
+                                 bool interpolationIdentityActive);
 
-// The per-draw geometry signature, matrix-usage mask and draw-identity hashes exist purely to feed frame interpolation (build_uniform consumes them only after its `frame_interpolation_fps() == 0` early-out).
+// The per-draw geometry signature, matrix-usage mask and draw-identity hashes exist purely to feed frame interpolation
+// (build_uniform consumes them only after its `frame_interpolation_fps() == 0` early-out).
 static inline bool frame_interpolation_identity_needed() noexcept {
   return frame_interpolation_active() && g_gxState.projType == GX_PERSPECTIVE;
 }
@@ -1871,8 +1878,7 @@ static uint32_t matrix_index_prefix_size(GXVtxFmt fmt) noexcept {
     case GX_NONE:
       break;
     case GX_DIRECT:
-      size += comp_type_size(attr, vtxFmt.attrs[i].type) *
-              comp_cnt_count(attr, vtxFmt.attrs[i].cnt);
+      size += comp_type_size(attr, vtxFmt.attrs[i].type) * comp_cnt_count(attr, vtxFmt.attrs[i].cnt);
       break;
     case GX_INDEX8:
       ++size;
@@ -1885,21 +1891,21 @@ static uint32_t matrix_index_prefix_size(GXVtxFmt fmt) noexcept {
   return size;
 }
 
-static HashType draw_geometry_signature(GXVtxFmt fmt, const uint8_t* vertices,
-                                        uint16_t vtxCount, uint32_t vtxStride) noexcept {
+static HashType draw_geometry_signature(GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount,
+                                        uint32_t vtxStride) noexcept {
   Hasher hasher;
   hasher.update(vtxCount);
   hasher.update(vtxStride);
 
-  // Matrix-index bytes select an instance's current XF palette slots, so they are deliberately excluded from mesh identity.
+  // Matrix-index bytes select an instance's current XF palette slots, so they are deliberately excluded from mesh
+  // identity.
   const uint32_t matrixPrefix = std::min(matrix_index_prefix_size(fmt), vtxStride);
   if (matrixPrefix == 0) {
     // Most draws have no direct matrix-index prefix.
     hasher.update(vertices, static_cast<size_t>(vtxCount) * vtxStride);
   } else {
     for (uint16_t vertex = 0; vertex < vtxCount; ++vertex) {
-      hasher.update(vertices + static_cast<size_t>(vertex) * vtxStride + matrixPrefix,
-                    vtxStride - matrixPrefix);
+      hasher.update(vertices + static_cast<size_t>(vertex) * vtxStride + matrixPrefix, vtxStride - matrixPrefix);
     }
   }
 
@@ -1924,8 +1930,7 @@ struct PnMtxUsage {
 };
 
 // Slot mask only.
-static uint16_t pn_mtx_mask(const uint8_t* vertices, uint16_t vtxCount,
-                            uint32_t vtxStride) noexcept {
+static uint16_t pn_mtx_mask(const uint8_t* vertices, uint16_t vtxCount, uint32_t vtxStride) noexcept {
   if (g_gxState.vtxDesc[GX_VA_PNMTXIDX] != GX_DIRECT) {
     return static_cast<uint16_t>(1u << std::min<uint32_t>(g_gxState.currentPnMtx, MaxPnMtx - 1));
   }
@@ -1939,8 +1944,7 @@ static uint16_t pn_mtx_mask(const uint8_t* vertices, uint16_t vtxCount,
   return mask;
 }
 
-static PnMtxUsage pn_mtx_usage(const uint8_t* vertices, uint16_t vtxCount,
-                               uint32_t vtxStride) noexcept {
+static PnMtxUsage pn_mtx_usage(const uint8_t* vertices, uint16_t vtxCount, uint32_t vtxStride) noexcept {
   if (g_gxState.vtxDesc[GX_VA_PNMTXIDX] != GX_DIRECT) {
     const uint32_t matrixIndex = std::min<uint32_t>(g_gxState.currentPnMtx, MaxPnMtx - 1);
     return {
@@ -1968,7 +1972,8 @@ static PnMtxUsage pn_mtx_usage(const uint8_t* vertices, uint16_t vtxCount,
   };
 }
 
-// Whether the most recent unmerged draw recorded an interpolation snapshot, so a draw merged into it knows there is a snapshot to extend.
+// Whether the most recent unmerged draw recorded an interpolation snapshot, so a draw merged into it knows there is a
+// snapshot to extend.
 static bool s_lastDrawRecordedInterpolation = false;
 
 struct CachedIndexTemplate {
@@ -1985,9 +1990,8 @@ static const CachedIndexTemplate& cached_index_template(GXPrimitive prim, u16 vt
   static std::array<CachedIndexTemplate, CacheSize> cache{};
   const u32 key = (static_cast<u32>(underlying(prim)) << 16) | vtxCount;
   auto& entry = cache[(key ^ (key >> 9)) & (CacheSize - 1)];
-  if (entry.valid && entry.prim == prim && entry.vtxCount == vtxCount) LIKELY {
-    return entry;
-  }
+  if (entry.valid && entry.prim == prim && entry.vtxCount == vtxCount)
+    LIKELY { return entry; }
 
   entry.valid = true;
   entry.prim = prim;
@@ -1998,9 +2002,9 @@ static const CachedIndexTemplate& cached_index_template(GXPrimitive prim, u16 vt
 
 static IndexBuffer handle_draw_idx_buf;
 
-static ArrayRef<u16> offset_index_template(const CachedIndexTemplate& indexTemplate,
-                                           u16 vtxStart) {
-  // Grow-only: resizing down and back up made every merge zero-fill the buffer before the transform immediately overwrote it.
+static ArrayRef<u16> offset_index_template(const CachedIndexTemplate& indexTemplate, u16 vtxStart) {
+  // Grow-only: resizing down and back up made every merge zero-fill the buffer before the transform immediately
+  // overwrote it.
   const size_t count = indexTemplate.indices.size();
   if (handle_draw_idx_buf.size() < count) {
     handle_draw_idx_buf.resize(count);
@@ -2016,7 +2020,8 @@ static ArrayRef<u16> offset_index_template(const CachedIndexTemplate& indexTempl
 struct CachedPipelineState {
   gfx::PipelineRef ref = 0;
   HashType configHash = 0;
-  // Carried here so the draw can be recorded without keeping the PipelineConfig that produced it alive; it is the only field of the config the draw itself still needs.
+  // Carried here so the draw can be recorded without keeping the PipelineConfig that produced it alive; it is the only
+  // field of the config the draw itself still needs.
   u32 dstAlpha = UINT32_MAX;
   ShaderInfo shaderInfo{};
 };
@@ -2032,10 +2037,8 @@ static const CachedPipelineState& cached_pipeline_state(const PipelineConfig& co
 
   const HashType hash = xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX));
   auto& entry = cache[hash & (CacheSize - 1)];
-  if (entry.valid && entry.state.configHash == hash &&
-      std::memcmp(&entry.config, &config, sizeof(config)) == 0) LIKELY {
-    return entry.state;
-  }
+  if (entry.valid && entry.state.configHash == hash && std::memcmp(&entry.config, &config, sizeof(config)) == 0)
+    LIKELY { return entry.state; }
 
   entry.valid = true;
   entry.config = config;
@@ -2048,7 +2051,9 @@ static const CachedPipelineState& cached_pipeline_state(const PipelineConfig& co
   return entry.state;
 }
 
-// Resolving a pipeline the long way costs a ~2.7KB zero-init, a full populate_pipeline_config, an XXH3 over the whole config and a memcmp against the hash-indexed slot -- roughly 11KB of memory traffic for a result that is almost always identical to the previous draw's.
+// Resolving a pipeline the long way costs a ~2.7KB zero-init, a full populate_pipeline_config, an XXH3 over the whole
+// config and a memcmp against the hash-indexed slot -- roughly 11KB of memory traffic for a result that is almost
+// always identical to the previous draw's.
 static const CachedPipelineState& resolve_pipeline_state(GXPrimitive prim, GXVtxFmt fmt) {
   struct Memo {
     const CachedPipelineState* state = nullptr;
@@ -2061,14 +2066,15 @@ static const CachedPipelineState& resolve_pipeline_state(GXPrimitive prim, GXVtx
 
   const u32 sampleCount = gfx::get_sample_count();
   const u32 generation = g_gxState.pipelineStateGeneration;
-  if (memo.state != nullptr && memo.generation == generation && memo.sampleCount == sampleCount &&
-      memo.prim == prim && memo.fmt == fmt) LIKELY {
-    return *memo.state;
-  }
+  if (memo.state != nullptr && memo.generation == generation && memo.sampleCount == sampleCount && memo.prim == prim &&
+      memo.fmt == fmt)
+    LIKELY { return *memo.state; }
 
   PipelineConfig config{};
   populate_pipeline_config(config, prim, fmt);
-  // cached_pipeline_state hands back a reference into a fixed direct-mapped table, so the address stays valid; the entry it points at can only be rewritten by another call to that function, and every such call goes through this miss path and replaces the memo in the same breath.
+  // cached_pipeline_state hands back a reference into a fixed direct-mapped table, so the address stays valid; the
+  // entry it points at can only be rewritten by another call to that function, and every such call goes through this
+  // miss path and replaces the memo in the same breath.
   const CachedPipelineState& state = cached_pipeline_state(config);
   memo = Memo{
       .state = &state,
@@ -2080,34 +2086,64 @@ static const CachedPipelineState& resolve_pipeline_state(GXPrimitive prim, GXVtx
   return state;
 }
 
-bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount,
-                     uint32_t vertexBytes) {
+// Exact Screen Depth changes shader outputs but no GX pipeline state. Resolve a
+// sibling pipeline only for orthographic draws that can actually reach the VR
+// screen, and memoize it with the same state epoch as the ordinary pipeline.
+static gfx::PipelineRef resolve_exact_screen_depth_pipeline(GXPrimitive prim, GXVtxFmt fmt) {
+  struct Memo {
+    gfx::PipelineRef ref = 0;
+    u32 generation = 0;
+    u32 sampleCount = 0;
+    GXPrimitive prim = static_cast<GXPrimitive>(0);
+    GXVtxFmt fmt = static_cast<GXVtxFmt>(0);
+  };
+  static Memo memo{};
+
+  const u32 sampleCount = gfx::get_sample_count();
+  const u32 generation = g_gxState.pipelineStateGeneration;
+  if (memo.ref != 0 && memo.generation == generation && memo.sampleCount == sampleCount && memo.prim == prim &&
+      memo.fmt == fmt)
+    LIKELY { return memo.ref; }
+
+  PipelineConfig config{};
+  populate_pipeline_config(config, prim, fmt);
+  config.shaderConfig.exactScreenDepth = 1;
+  const gfx::PipelineRef ref = gfx::pipeline_ref(config);
+  memo = Memo{
+      .ref = ref,
+      .generation = generation,
+      .sampleCount = sampleCount,
+      .prim = prim,
+      .fmt = fmt,
+  };
+  return ref;
+}
+
+bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount, uint32_t vertexBytes) {
   ZoneScoped;
   if (vertices == nullptr || vtxCount == 0 || vertexBytes == 0) {
     return false;
   }
 
-  if (__gx->dirtyState != 0) UNLIKELY {
-    __GXSetDirtyState();
-  }
+  if (__gx->dirtyState != 0)
+    UNLIKELY { __GXSetDirtyState(); }
 
   // Raw bridge draws consume live decoded GX state that is also maintained by the HLE producer.
   drain();
 
   u32 vtxSize;
-  if (g_gxState.lastVtxFmt == fmt) LIKELY {
-    vtxSize = g_gxState.lastVtxSize;
-  } else UNLIKELY {
-    vtxSize = calculate_last_vtx_size(fmt);
-  }
+  if (g_gxState.lastVtxFmt == fmt)
+    LIKELY { vtxSize = g_gxState.lastVtxSize; }
+  else
+    UNLIKELY { vtxSize = calculate_last_vtx_size(fmt); }
 
   const u32 expectedVertexBytes = static_cast<u32>(vtxCount) * vtxSize;
   if (expectedVertexBytes == 0 || expectedVertexBytes != vertexBytes) {
     static uint32_t rawVertexSizeMismatchCount = 0;
     if (rawVertexSizeMismatchCount++ < 64) {
       Log.warn("raw draw vertex-size mismatch prim={} fmt={} count={} cached_stride={} expected={} supplied={}",
-               static_cast<uint32_t>(prim), static_cast<uint32_t>(fmt), vtxCount, vtxSize,
-               expectedVertexBytes, vertexBytes);
+               static_cast<uint32_t>(prim), static_cast<uint32_t>(fmt), vtxCount, vtxSize, expectedVertexBytes,
+               vertexBytes);
     }
     return false;
   }
@@ -2116,11 +2152,8 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
   std::lock_guard gpuLock(aurora::renderer_gpu_mutex());
   const gfx::Range vertRange = gfx::push_verts(vertices, vertexBytes);
   const bool interpolationIdentityActive = frame_interpolation_identity_needed();
-  const PnMtxUsage matrixUsage = interpolationIdentityActive
-                                     ? pn_mtx_usage(vertices, vtxCount, vtxSize)
-                                     : PnMtxUsage{};
-  handle_draw_unmerged(prim, fmt, vtxCount, vertRange,
-                       matrixUsage.mask, matrixUsage.topologySignature,
+  const PnMtxUsage matrixUsage = interpolationIdentityActive ? pn_mtx_usage(vertices, vtxCount, vtxSize) : PnMtxUsage{};
+  handle_draw_unmerged(prim, fmt, vtxCount, vertRange, matrixUsage.mask, matrixUsage.topologySignature,
                        interpolationIdentityActive ? draw_geometry_signature(fmt, vertices, vtxCount, vtxSize) : 0,
                        interpolationIdentityActive);
   return true;
@@ -2138,18 +2171,17 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   pos += 2;
 
   u32 vtxSize;
-  if (g_gxState.lastVtxFmt == fmt) LIKELY {
-    vtxSize = g_gxState.lastVtxSize;
-  } else UNLIKELY {
-    vtxSize = calculate_last_vtx_size(fmt);
-  }
+  if (g_gxState.lastVtxFmt == fmt)
+    LIKELY { vtxSize = g_gxState.lastVtxSize; }
+  else
+    UNLIKELY { vtxSize = calculate_last_vtx_size(fmt); }
 
   u32 totalVtxBytes = vtxCount * vtxSize;
-  if (pos + totalVtxBytes > size) UNLIKELY {
-    handle_draw_overrun(cmd, vtxCount, vtxSize, totalVtxBytes, data, pos, size);
-    return false;
-  }
-
+  if (pos + totalVtxBytes > size)
+    UNLIKELY {
+      handle_draw_overrun(cmd, vtxCount, vtxSize, totalVtxBytes, data, pos, size);
+      return false;
+    }
 
   // Push raw vertex data to buffer
   const uint8_t* vertices = data + pos;
@@ -2157,61 +2189,61 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   pos += totalVtxBytes;
 
   // Try to merge with previous draw call
-  if (!g_gxState.stateDirty) LIKELY {
-    auto* lastDraw = gfx::get_last_draw_command<DrawData>();
-    // Only if the previous draw call was a single instance draw (no lines/points handling)
-    if (lastDraw != nullptr && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS &&
-        lastDraw->instanceCount == 1) LIKELY {
-      const auto& indexTemplate = cached_index_template(prim, vtxCount);
-      const auto indices = offset_index_template(indexTemplate, lastDraw->vtxCount);
-      const u32 numIndices = indexTemplate.indexCount;
-      const gfx::Range idxRange = gfx::push_indices(indices);
-      CHECK(lastDraw->vertRange.offset + lastDraw->vertRange.size == vertRange.offset,
-            "Non-consecutive vertex ranges ({} < {})", lastDraw->vertRange.offset + lastDraw->vertRange.size,
-            vertRange.offset);
-      CHECK(lastDraw->idxRange.offset + lastDraw->idxRange.size == idxRange.offset,
-            "Non-consecutive index ranges ({} < {})", lastDraw->idxRange.offset + lastDraw->idxRange.size,
-            idxRange.offset);
-      lastDraw->vertRange.size += vertRange.size;
-      lastDraw->idxRange.size += idxRange.size;
-      lastDraw->vtxCount += vtxCount;
-      lastDraw->indexCount += numIndices;
-      ++gfx::g_mergedDrawCallCount;
-      // This primitive now renders through the draw we merged into, so its palette slots belong to that draw's interpolation snapshot as well.
-      if (s_lastDrawRecordedInterpolation) UNLIKELY {
-        extend_interpolation_draw(pn_mtx_mask(vertices, vtxCount, vtxSize));
-      }
-      return true;
+  if (!g_gxState.stateDirty)
+    LIKELY {
+      auto* lastDraw = gfx::get_last_draw_command<DrawData>();
+      // Only if the previous draw call was a single instance draw (no lines/points handling)
+      if (lastDraw != nullptr && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS &&
+          lastDraw->instanceCount == 1)
+        LIKELY {
+          const auto& indexTemplate = cached_index_template(prim, vtxCount);
+          const auto indices = offset_index_template(indexTemplate, lastDraw->vtxCount);
+          const u32 numIndices = indexTemplate.indexCount;
+          const gfx::Range idxRange = gfx::push_indices(indices);
+          CHECK(lastDraw->vertRange.offset + lastDraw->vertRange.size == vertRange.offset,
+                "Non-consecutive vertex ranges ({} < {})", lastDraw->vertRange.offset + lastDraw->vertRange.size,
+                vertRange.offset);
+          CHECK(lastDraw->idxRange.offset + lastDraw->idxRange.size == idxRange.offset,
+                "Non-consecutive index ranges ({} < {})", lastDraw->idxRange.offset + lastDraw->idxRange.size,
+                idxRange.offset);
+          lastDraw->vertRange.size += vertRange.size;
+          lastDraw->idxRange.size += idxRange.size;
+          lastDraw->vtxCount += vtxCount;
+          lastDraw->indexCount += numIndices;
+          ++gfx::g_mergedDrawCallCount;
+          // This primitive now renders through the draw we merged into, so its palette slots belong to that draw's
+          // interpolation snapshot as well.
+          if (s_lastDrawRecordedInterpolation)
+            UNLIKELY { extend_interpolation_draw(pn_mtx_mask(vertices, vtxCount, vtxSize)); }
+          return true;
+        }
     }
-  }
 
   const bool interpolationIdentityActive = frame_interpolation_identity_needed();
-  const PnMtxUsage matrixUsage = interpolationIdentityActive
-                                     ? pn_mtx_usage(vertices, vtxCount, vtxSize)
-                                     : PnMtxUsage{};
-  handle_draw_unmerged(prim, fmt, vtxCount, vertRange,
-                       matrixUsage.mask, matrixUsage.topologySignature,
+  const PnMtxUsage matrixUsage = interpolationIdentityActive ? pn_mtx_usage(vertices, vtxCount, vtxSize) : PnMtxUsage{};
+  handle_draw_unmerged(prim, fmt, vtxCount, vertRange, matrixUsage.mask, matrixUsage.topologySignature,
                        interpolationIdentityActive ? draw_geometry_signature(fmt, vertices, vtxCount, vtxSize) : 0,
                        interpolationIdentityActive);
   return true;
 }
 
-static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
-                                 gfx::Range vertRange, uint16_t usedPnMtxMask,
-                                 HashType matrixTopologySignature,
-                                 HashType geometrySignature, bool interpolationIdentityActive) {
+static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange,
+                                 uint16_t usedPnMtxMask, HashType matrixTopologySignature, HashType geometrySignature,
+                                 bool interpolationIdentityActive) {
   ZoneScoped;
   // GX_CULL_ALL rasterizes nothing on hardware - no color, no depth.
   if (g_gxState.cullMode == GX_CULL_ALL && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS)
-      UNLIKELY {
-    // Leave stateDirty alone: the next draw re-resolving its pipeline is the safe direction, and nothing about this draw reached the GPU.
-    return;
-  }
-  // Callers hold the renderer GPU mutex for the whole drain (process() and submit_raw_draw); taking it again per draw only cost a recursive re-entry.
+    UNLIKELY {
+      // Leave stateDirty alone: the next draw re-resolving its pipeline is the safe direction, and nothing about this
+      // draw reached the GPU.
+      return;
+    }
+  // Callers hold the renderer GPU mutex for the whole drain (process() and submit_raw_draw); taking it again per draw
+  // only cost a recursive re-entry.
   const auto& indexTemplate = cached_index_template(prim, vtxCount);
   const u32 numIndices = indexTemplate.indexCount;
-  const gfx::Range idxRange = gfx::push_indices(ArrayRef<u16>{
-      indexTemplate.indices.data(), indexTemplate.indices.size()});
+  const gfx::Range idxRange =
+      gfx::push_indices(ArrayRef<u16>{indexTemplate.indices.data(), indexTemplate.indices.size()});
 
   // Build pipeline, bind groups, and push draw command
   BindGroupRanges ranges{};
@@ -2238,27 +2270,31 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
 
   const auto pipeline = pipelineState.ref;
 
-  // Draw-identity hashing only feeds frame interpolation, and only for perspective draws: build_uniform reads the identity exclusively past its `!perspective || frame_interpolation_fps() == 0` early-out.
+  // Draw-identity hashing only feeds frame interpolation, and only for perspective draws: build_uniform reads the
+  // identity exclusively past its `!perspective || frame_interpolation_fps() == 0` early-out.
   FrameInterpolationDrawIdentity drawIdentity{};
-  if (interpolationIdentityActive) UNLIKELY {
-    const HashType drawShape = static_cast<HashType>(vtxCount) |
-                               (static_cast<HashType>(underlying(prim)) << 16) |
-                               (static_cast<HashType>(underlying(fmt)) << 24);
-    const HashType pipelineDrawSignature = xxh3_hash(pipelineState.configHash, drawShape);
-    const HashType textureSignature = xxh3_hash(bindGroups.textureBindGroup);
-    const HashType materialAndTopology =
-        xxh3_hash(matrixTopologySignature,
-                  xxh3_hash(bindGroups.textureBindGroup, pipelineDrawSignature));
-    drawIdentity = FrameInterpolationDrawIdentity{
-        .combined = xxh3_hash(geometrySignature, materialAndTopology),
-        .pipeline = pipelineDrawSignature,
-        .texture = textureSignature,
-        .matrixTopology = matrixTopologySignature,
-    };
-  }
+  if (interpolationIdentityActive)
+    UNLIKELY {
+      const HashType drawShape = static_cast<HashType>(vtxCount) | (static_cast<HashType>(underlying(prim)) << 16) |
+                                 (static_cast<HashType>(underlying(fmt)) << 24);
+      const HashType pipelineDrawSignature = xxh3_hash(pipelineState.configHash, drawShape);
+      const HashType textureSignature = xxh3_hash(bindGroups.textureBindGroup);
+      const HashType materialAndTopology =
+          xxh3_hash(matrixTopologySignature, xxh3_hash(bindGroups.textureBindGroup, pipelineDrawSignature));
+      drawIdentity = FrameInterpolationDrawIdentity{
+          .combined = xxh3_hash(geometrySignature, materialAndTopology),
+          .pipeline = pipelineDrawSignature,
+          .texture = textureSignature,
+          .matrixTopology = matrixTopologySignature,
+      };
+    }
   const bool perspective = g_gxState.projType == GX_PERSPECTIVE;
-  const auto uniformRanges =
-      build_uniform(info, vertRange.offset, ranges, drawIdentity, perspective, usedPnMtxMask);
+  const auto uniformRanges = build_uniform(info, vertRange.offset, ranges, drawIdentity, perspective, usedPnMtxMask);
+  const auto& replayLayout = uniformRanges.replayLayout;
+  const gfx::PipelineRef exactScreenDepthPipeline =
+      aurora::stereo_frame_provider_active() && !replayLayout.perspective && !replayLayout.nativeEfbEffect
+          ? resolve_exact_screen_depth_pipeline(prim, fmt)
+          : 0;
   s_lastDrawRecordedInterpolation = interpolationIdentityActive;
 
   uint32_t instanceCount = 1;
@@ -2271,6 +2307,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
   }
   gfx::push_draw_command(DrawData{
       .pipeline = pipeline,
+      .exactScreenDepthPipeline = exactScreenDepthPipeline,
       .vertRange = vertRange,
       .idxRange = idxRange,
       .uniformRange = uniformRanges.current,

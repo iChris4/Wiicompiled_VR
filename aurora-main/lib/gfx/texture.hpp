@@ -46,6 +46,15 @@ struct TextureRef {
   u32 gxFormat;
   bool hasArbitraryMips = false;
   bool isReplacement = false;
+  // GXCopyTex provenance used by immersive replay. A recently produced copy can
+  // be a native framebuffer effect; an older one is persistent game content
+  // (Mario Kart Wii bakes its minimap this way) and belongs on the 2D screen.
+  bool isEfbCopy = false;
+  uint32_t lastEfbCopyFrame = UINT32_MAX;
+
+  [[nodiscard]] bool is_recent_efb_copy(uint32_t frame) const noexcept {
+    return isEfbCopy && lastEfbCopyFrame != UINT32_MAX && frame - lastEfbCopyFrame <= 1;
+  }
 
   TextureRef(wgpu::Texture texture, wgpu::TextureView sampleTextureView, wgpu::TextureView attachmentTextureView,
              wgpu::Extent3D size, wgpu::TextureFormat format, uint32_t mipCount, u32 gxFormat)

@@ -374,6 +374,12 @@ bool get_stereo_stop_at_display_copy() noexcept;
 void set_stereo_skip_copy_clears(bool value) noexcept;
 bool get_stereo_skip_copy_clears() noexcept;
 
+// Places orthographic draws on a fixed virtual screen during immersive replay.
+// `width` and `distance` are in game world units; the screen's height follows
+// the game's presented aspect ratio. Also live.
+void set_stereo_hud_screen(bool enabled, float width, float distance) noexcept;
+bool get_stereo_hud_screen_enabled() noexcept;
+
 void begin_offscreen(uint32_t width, uint32_t height);
 void end_offscreen();
 bool is_offscreen() noexcept;

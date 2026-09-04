@@ -22,7 +22,6 @@ using namespace std::string_view_literals;
 
 static Module Log("aurora::gfx::gx");
 
-
 static inline std::string_view chan_comp(GXTevColorChan chan) noexcept {
   switch (chan) {
   case GX_CH_RED:
@@ -356,17 +355,15 @@ static std::string tev_scale_index(GXTevScale scale) {
   }
 }
 
-static std::string tev_regular_op(GXTevOp op, GXTevBias bias, GXTevScale scale, std::string_view a,
-                                  std::string_view b, std::string_view c, std::string_view d,
-                                  std::string_view suffix) {
+static std::string tev_regular_op(GXTevOp op, GXTevBias bias, GXTevScale scale, std::string_view a, std::string_view b,
+                                  std::string_view c, std::string_view d, std::string_view suffix) {
   CHECK(op == GX_TEV_ADD || op == GX_TEV_SUB, "invalid regular tev op {}", underlying(op));
-  return fmt::format("tev_regular_{4}({0}, {1}, {2}, {3}, {5}, {6}, {7})", a, b, c, d, suffix,
-                     tev_bias_i32(bias), tev_scale_index(scale), op == GX_TEV_SUB ? "true" : "false");
+  return fmt::format("tev_regular_{4}({0}, {1}, {2}, {3}, {5}, {6}, {7})", a, b, c, d, suffix, tev_bias_i32(bias),
+                     tev_scale_index(scale), op == GX_TEV_SUB ? "true" : "false");
 }
 
 static std::string tev_op(GXTevOp op, GXTevBias bias, GXTevScale scale, std::string_view a, std::string_view b,
-                          std::string_view c, std::string_view d, std::string_view zero,
-                          std::string_view suffix) {
+                          std::string_view c, std::string_view d, std::string_view zero, std::string_view suffix) {
   switch (op) {
     DEFAULT_FATAL("unimplemented tev op {}", underlying(op));
   case GX_TEV_ADD:
@@ -403,8 +400,8 @@ static std::string tev_op(GXTevOp op, GXTevBias bias, GXTevScale scale, std::str
   }
 }
 
-static std::string tev_color_op(GXTevOp op, GXTevBias bias, GXTevScale scale, bool clamp,
-                                std::string_view a, std::string_view b, std::string_view c, std::string_view d) {
+static std::string tev_color_op(GXTevOp op, GXTevBias bias, GXTevScale scale, bool clamp, std::string_view a,
+                                std::string_view b, std::string_view c, std::string_view d) {
   const auto overflow = [](std::string_view reg) { return fmt::format("tev_overflow_vec3f({})", reg); };
   std::string expr = tev_op(op, bias, scale, overflow(a), overflow(b), overflow(c), d, "vec3(0)"sv, "vec3f"sv);
   return clamp ? fmt::format("clamp({}, vec3f(0.0), vec3f(1.0))", expr)
@@ -425,21 +422,24 @@ static bool alpha_compare_uses_color_inputs(GXTevOp op) noexcept {
   }
 }
 
-static std::string tev_alpha_op(GXTevOp op, GXTevBias bias, GXTevScale scale, bool clamp,
-                                std::string_view a, std::string_view b, std::string_view c, std::string_view d,
-                                std::string_view colorA, std::string_view colorB) {
+static std::string tev_alpha_op(GXTevOp op, GXTevBias bias, GXTevScale scale, bool clamp, std::string_view a,
+                                std::string_view b, std::string_view c, std::string_view d, std::string_view colorA,
+                                std::string_view colorB) {
   const auto scalarOverflow = [](std::string_view reg) { return fmt::format("tev_overflow_f32({})", reg); };
   std::string expr;
   if (alpha_compare_uses_color_inputs(op)) {
     const auto colorOverflow = [](std::string_view reg) { return fmt::format("tev_overflow_vec3f({})", reg); };
-    // GX alpha compares R8/GR16/BGR24 using the color combiner's A/B inputs, while C and D remain the scalar alpha-combiner inputs.
-    expr = tev_op(op, bias, scale, colorOverflow(colorA), colorOverflow(colorB), scalarOverflow(c), d, "0.0"sv,
-                  "f32"sv);
+    // GX alpha compares R8/GR16/BGR24 using the color combiner's A/B inputs, while C and D remain the scalar
+    // alpha-combiner inputs.
+    expr =
+        tev_op(op, bias, scale, colorOverflow(colorA), colorOverflow(colorB), scalarOverflow(c), d, "0.0"sv, "f32"sv);
   } else {
-    // The numeric RGB8 op aliases are the alpha combiner's A8 compares and therefore continue to compare scalar alpha A/B inputs here.
+    // The numeric RGB8 op aliases are the alpha combiner's A8 compares and therefore continue to compare scalar alpha
+    // A/B inputs here.
     expr = tev_op(op, bias, scale, scalarOverflow(a), scalarOverflow(b), scalarOverflow(c), d, "0.0"sv, "f32"sv);
   }
-  return clamp ? fmt::format("clamp({}, 0.0, 1.0)", expr) : fmt::format("clamp({}, -1024.0 / 255.0, 1023.0 / 255.0)", expr);
+  return clamp ? fmt::format("clamp({}, 0.0, 1.0)", expr)
+               : fmt::format("clamp({}, -1024.0 / 255.0, 1023.0 / 255.0)", expr);
 }
 
 struct AlphaCompareExpr {
@@ -611,7 +611,8 @@ constexpr std::array<std::string_view, GX_CA_ZERO + 1> TevAlphaArgNames{
     "APREV"sv, "A0"sv, "A1"sv, "A2"sv, "TEXA"sv, "RASA"sv, "KONST"sv, "ZERO"sv,
 };
 
-auto fetch_attr(const AttrConfig& mapping, std::string_view buf, std::string_view offs, bool le, u8 cntOverride = 0) -> std::string {
+auto fetch_attr(const AttrConfig& mapping, std::string_view buf, std::string_view offs, bool le, u8 cntOverride = 0)
+    -> std::string {
   const u8 cnt = cntOverride != 0 ? cntOverride : mapping.cnt;
   switch (mapping.compType) {
   case GX_U8:
@@ -695,8 +696,8 @@ auto normal_group_load(const ShaderConfig& config, u8 group, std::string_view vi
     le = mapping.le;
   } else if (mapping.attrType == GX_INDEX16) {
     const std::string indexOffs = offset_plus(offs, mapping.nrmIndexCount == 3 ? group * 2u : 0);
-    offs = fmt::format("ubuf.array_start[{}] + raw_fetch_u16_1(&{}, {}, {}) * {}u + {}u", GX_VA_NRM - GX_VA_POS,
-                       buf, indexOffs, le, mapping.stride, groupOffset);
+    offs = fmt::format("ubuf.array_start[{}] + raw_fetch_u16_1(&{}, {}, {}) * {}u + {}u", GX_VA_NRM - GX_VA_POS, buf,
+                       indexOffs, le, mapping.stride, groupOffset);
     buf = "abuf"sv;
     le = mapping.le;
   } else {
@@ -809,8 +810,7 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
     if (alpha) {
       return fmt::format("\n    {0}.a = f32(i32(round({1}.a * 255.0))) / 255.0;", outVar, matSrc);
     }
-    return fmt::format("\n    {0} = vec4f(vec3f(vec3i(round({1}.rgb * 255.0))) / 255.0, 1.0);", outVar,
-                       matSrc);
+    return fmt::format("\n    {0} = vec4f(vec3f(vec3i(round({1}.rgb * 255.0))) / 255.0, 1.0);", outVar, matSrc);
   }
   GXDiffuseFn diffFn = cc.diffFn;
   std::string lightAttnFn;
@@ -824,9 +824,8 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
           attn = max(0.0, cos_attn / dist_attn);)""");
   } else if (cc.attnFn == GX_AF_SPEC) {
     std::string_view normal = UsePerPixelLighting ? "in.mv_nrm"sv : "mv_nrm"sv;
-    std::string dist_attn = diffFn != GX_DF_NONE
-                                ? "dot(normalize(light.dist_att), vec3f(1.0, attn, attn * attn))"
-                                : "dot(light.dist_att, vec3f(1.0, attn, attn * attn))";
+    std::string dist_attn = diffFn != GX_DF_NONE ? "dot(normalize(light.dist_att), vec3f(1.0, attn, attn * attn))"
+                                                 : "dot(light.dist_att, vec3f(1.0, attn, attn * attn))";
     lightAttnFn = fmt::format(R"""(
           attn = select(0.0, max(0.0, dot({0}, light.dir)), dot({0}, ldir) >= 0.0);
           var cos_attn = dot(light.cos_att, vec3f(1.0, attn, attn * attn));
@@ -842,14 +841,14 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
           var dist2 = dot(ldir, ldir);
           var dist = sqrt(dist2);
           ldir = select({1}, ldir / max(dist, 1e-20), dist > 0.0);)""",
-                           posVar, normal);
+                                posVar, normal);
   } else {
     lightDirSetup = fmt::format(R"""(
           var ldir = light.pos - {0};
           var dist2 = dot(ldir, ldir);
           var dist = sqrt(dist2);
           ldir = ldir / dist;)""",
-                           posVar);
+                                posVar);
   }
   std::string_view lightDiffFn;
   if (diffFn == GX_DF_NONE) {
@@ -869,10 +868,8 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
   }
   const auto outputTarget = alpha ? fmt::format("{}.a", outVar) : outVar;
   const auto outputValue =
-      alpha
-          ? fmt::format("f32((material * (lacc + (lacc >> {}))) >> {}) / 255.0", shift7, shift8)
-          : fmt::format("vec4f(vec3f((material * (lacc + (lacc >> {}))) >> {}) / 255.0, 1.0)", shift7,
-                        shift8);
+      alpha ? fmt::format("f32((material * (lacc + (lacc >> {}))) >> {}) / 255.0", shift7, shift8)
+            : fmt::format("vec4f(vec3f((material * (lacc + (lacc >> {}))) >> {}) / 255.0, 1.0)", shift7, shift8);
   return fmt::format(R"""(
     {{
       var lighting = {11}(round({5}{8} * 255.0));
@@ -993,6 +990,15 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
         "\n    let clip_base = select(clip_a, clip_b, use_b);"
         "\n    out.pos = vec4f(clip_base.xy + offset_ndc * clip_base.w, clip_base.zw);";
   }
+  if (config.exactScreenDepth) {
+    vtxOutAttrs += fmt::format("\n    @location({}) @interpolate(flat) exact_screen_depth: f32,", vtxOutIdx++);
+    // Virtual-screen composition stores the original backend-convention NDC
+    // depth in the otherwise replaceable projection Z row. Capture it before
+    // parking raster depth at midrange; this avoids growing every GX uniform.
+    vtxXfrAttrsPre +=
+        "\n    out.exact_screen_depth = clamp(out.pos.z, 0.0, 1.0);"
+        "\n    out.pos.z = -0.5 * out.pos.w;";
+  }
   if constexpr (UseReversedZ) {
     vtxXfrAttrsPre += "\n    out.pos.z = -out.pos.z;";
   } else {
@@ -1019,8 +1025,8 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   std::array<bool, MaxTexCoord> emittedFixedTexCoord{};
   const auto fixed_texcoord_name = [&](u32 texCoordId) {
     if (!emittedFixedTexCoord[texCoordId]) {
-      fragmentFnPre += fmt::format(
-          "\n    let tex{0}_fixed_uv = vec2i(tex{0}_uv * ubuf.texcoord{0}_scale.xy * 128.0);", texCoordId);
+      fragmentFnPre +=
+          fmt::format("\n    let tex{0}_fixed_uv = vec2i(tex{0}_uv * ubuf.texcoord{0}_scale.xy * 128.0);", texCoordId);
       emittedFixedTexCoord[texCoordId] = true;
     }
     return fmt::format("tex{}_fixed_uv", texCoordId);
@@ -1042,18 +1048,18 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
     }
     {
       std::string_view outReg = regName[stage.colorOp.outReg];
-      std::string op = tev_color_op(
-          stage.colorOp.op, stage.colorOp.bias, stage.colorOp.scale, stage.colorOp.clamp, colorA, colorB,
-          color_arg_reg(stage.colorPass.c, idx, config, stage), color_arg_reg(stage.colorPass.d, idx, config, stage));
+      std::string op = tev_color_op(stage.colorOp.op, stage.colorOp.bias, stage.colorOp.scale, stage.colorOp.clamp,
+                                    colorA, colorB, color_arg_reg(stage.colorPass.c, idx, config, stage),
+                                    color_arg_reg(stage.colorPass.d, idx, config, stage));
       fragmentFn += fmt::format("\n    {0} = vec4f({1}, {0}.a);", outReg, op);
     }
     {
       std::string_view outReg = regName[stage.alphaOp.outReg];
-      std::string op = tev_alpha_op(
-          stage.alphaOp.op, stage.alphaOp.bias, stage.alphaOp.scale, stage.alphaOp.clamp,
-          alpha_arg_reg(stage.alphaPass.a, idx, config, stage), alpha_arg_reg(stage.alphaPass.b, idx, config, stage),
-          alpha_arg_reg(stage.alphaPass.c, idx, config, stage), alpha_arg_reg(stage.alphaPass.d, idx, config, stage),
-          colorA, colorB);
+      std::string op = tev_alpha_op(stage.alphaOp.op, stage.alphaOp.bias, stage.alphaOp.scale, stage.alphaOp.clamp,
+                                    alpha_arg_reg(stage.alphaPass.a, idx, config, stage),
+                                    alpha_arg_reg(stage.alphaPass.b, idx, config, stage),
+                                    alpha_arg_reg(stage.alphaPass.c, idx, config, stage),
+                                    alpha_arg_reg(stage.alphaPass.d, idx, config, stage), colorA, colorB);
       fragmentFn += fmt::format("\n    {0}.a = {1};", outReg, op);
     }
   }
@@ -1170,8 +1176,7 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0, 1.0);", i,
                                  vtx_attr(config, GXAttr(GX_VA_TEX0 + (tcg.src - GX_TG_TEX0))));
     } else if (tcg.src == GX_MAX_TEXGENSRC) {
-      vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0, 1.0);", i,
-                                 vtx_attr(config, GXAttr(GX_VA_TEX0 + i)));
+      vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0, 1.0);", i, vtx_attr(config, GXAttr(GX_VA_TEX0 + i)));
     } else if (tcg.src == GX_TG_POS) {
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, vtx_attr(config, GX_VA_POS));
     } else if (tcg.src == GX_TG_NRM) {
@@ -1198,10 +1203,9 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0}.xyz;", i);
       } else {
         const u32 texMtxSlot = (tcg.mtx) / 3;
-        const u32 texMtxIdx = texMtxSlot < MaxPostexMtx ? info.matrixLayout.postexRemap[texMtxSlot]
-                                                        : texMtxSlot;
-        CHECK(texMtxIdx != UniformMatrixLayout::kAbsent,
-              "texgen {} matrix slot {} missing from the uniform layout", i, texMtxSlot);
+        const u32 texMtxIdx = texMtxSlot < MaxPostexMtx ? info.matrixLayout.postexRemap[texMtxSlot] : texMtxSlot;
+        CHECK(texMtxIdx != UniformMatrixLayout::kAbsent, "texgen {} matrix slot {} missing from the uniform layout", i,
+              texMtxSlot);
         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[{1}];", i, texMtxIdx);
       }
       if (tcg.type == GX_TG_MTX2x4) {
@@ -1395,16 +1399,16 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
           u32 mtxIdx = stage.indTexMtxId - GX_ITM_S0;
           u32 regTexCoord = static_cast<u32>(textureDependency.texCoordId);
           const auto fixedUv = fixed_texcoord_name(regTexCoord);
-          fragmentFnPre += fmt::format(
-              "\n    var ind{0}_offset_fixed = ({1} * vec2i(ind{0}_coord.x)) >> vec2u(8u);", i, fixedUv);
+          fragmentFnPre +=
+              fmt::format("\n    var ind{0}_offset_fixed = ({1} * vec2i(ind{0}_coord.x)) >> vec2u(8u);", i, fixedUv);
           appendScaleShift(mtxIdx);
         } else if (stage.indTexMtxId >= GX_ITM_T0 && stage.indTexMtxId <= GX_ITM_T2 && hasBaseCoord) {
           // Dynamic T: (fixed UV * indirect T) >> 8, then exponent shift.
           u32 mtxIdx = stage.indTexMtxId - GX_ITM_T0;
           u32 regTexCoord = static_cast<u32>(textureDependency.texCoordId);
           const auto fixedUv = fixed_texcoord_name(regTexCoord);
-          fragmentFnPre += fmt::format(
-              "\n    var ind{0}_offset_fixed = ({1} * vec2i(ind{0}_coord.y)) >> vec2u(8u);", i, fixedUv);
+          fragmentFnPre +=
+              fmt::format("\n    var ind{0}_offset_fixed = ({1} * vec2i(ind{0}_coord.y)) >> vec2u(8u);", i, fixedUv);
           appendScaleShift(mtxIdx);
         }
       }
@@ -1445,8 +1449,8 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
         // ShaderInfo only emits texN_size_bias and texture bindings for a texture that can actually be sampled.
         if (willSampleTexture) {
           u32 texMapId = static_cast<u32>(textureDependency.texMapId);
-          fragmentFnPre += fmt::format(
-              "\n    var ind{0}_uv = vec2f(t_TexCoord) / (ubuf.tex{1}_size_bias.xy * 128.0);", i, texMapId);
+          fragmentFnPre +=
+              fmt::format("\n    var ind{0}_uv = vec2f(t_TexCoord) / (ubuf.tex{1}_size_bias.xy * 128.0);", i, texMapId);
           uvIn = fmt::format("ind{0}_uv", i);
         }
       }
@@ -1466,8 +1470,7 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   }
 
   std::string fogDepthExpr = UseReversedZ ? "in.pos.z" : "(1.0 - in.pos.z)";
-  std::string fogZCoordExpr =
-      fmt::format("u32(round(clamp({}, 0.0, 1.0) * 16777216.0))", fogDepthExpr);
+  std::string fogZCoordExpr = fmt::format("u32(round(clamp({}, 0.0, 1.0) * 16777216.0))", fogDepthExpr);
   if (usesZTextureDepth) {
     const u32 zTexBias = config.zTexture & 0x00FFFFFFu;
     const u32 zTexFmt = (config.zTexture >> 24) & 0x3u;
@@ -1623,15 +1626,16 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
     if (discard.constant == 1) {
       fragmentFn += "\n    // Alpha compare\n    discard;";
     } else if (discard.constant != 0) {
-      fragmentFn += "\n    // Alpha compare"
-                    "\n    let alphaCompare = u32(round(clamp(prev.a, 0.0, 1.0) * 255.0));";
+      fragmentFn +=
+          "\n    // Alpha compare"
+          "\n    let alphaCompare = u32(round(clamp(prev.a, 0.0, 1.0) * 255.0));";
       fragmentFn += fmt::format("\n    if ({}) {{ discard; }}", discard.expr);
     }
   }
 
   std::string fragmentReturnType = "@location(0) vec4f";
   std::string fragmentReturn = "    return prev;";
-  if (usesZTextureDepth) {
+  if (usesZTextureDepth || config.exactScreenDepth) {
     uniformPre +=
         "\n"
         "struct FragmentOutput {\n"
@@ -1639,7 +1643,15 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
         "    @builtin(frag_depth) depth: f32,\n"
         "};";
 
-    fragmentFn += fmt::format("\n    let fragDepth = {}ztexDepth;", UseReversedZ ? "" : "1.0 - ");
+    if (config.exactScreenDepth) {
+      // Fragment depth is already in window coordinates. Reapply the recorded
+      // viewport's clamped depth window exactly as the fixed pipeline did.
+      fragmentFn +=
+          "\n    let fragDepth = ubuf.exact_screen_depth_range.x + "
+          "in.exact_screen_depth * ubuf.exact_screen_depth_range.y;";
+    } else {
+      fragmentFn += fmt::format("\n    let fragDepth = {}ztexDepth;", UseReversedZ ? "" : "1.0 - ");
+    }
     fragmentReturnType = "FragmentOutput";
     fragmentReturn =
         "    var out: FragmentOutput;\n"
@@ -2022,7 +2034,7 @@ struct Uniform {{
     current_pnmtx: u32,
     render_viewport_size: vec2f,
     logical_viewport_size: vec2f,
-    pad: vec2u,
+    exact_screen_depth_range: vec2f,
     array_start: array<u32, 12>,{0}
 }};
 @group(0) @binding(0)
@@ -2050,8 +2062,7 @@ fn fs_main(in: VertexOutput) -> {9} {{{6}{5}
 }}
 )""",
                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
-                                        fragmentFnPre, vtxXfrAttrsPre, uniformPre, fragmentReturnType,
-                                        fragmentReturn);
+                                        fragmentFnPre, vtxXfrAttrsPre, uniformPre, fragmentReturnType, fragmentReturn);
   wgpu::ShaderSourceWGSL wgslDescriptor{};
   wgslDescriptor.code = shaderSource.c_str();
   const auto label = fmt::format("GX Shader {:x}", hash);

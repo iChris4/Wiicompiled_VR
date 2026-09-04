@@ -80,8 +80,7 @@ CopySourceRect map_texture_copy_source(const aurora::gfx::ClipRect& source, bool
     const int64_t remainder = numerator % denominator;
     const int64_t remainderMagnitude = remainder < 0 ? -remainder : remainder;
     const int64_t roundingThreshold = (denominator + 1) / 2;
-    const int64_t nearestValue =
-        quotient + (remainderMagnitude >= roundingThreshold ? (numerator < 0 ? -1 : 1) : 0);
+    const int64_t nearestValue = quotient + (remainderMagnitude >= roundingThreshold ? (numerator < 0 ? -1 : 1) : 0);
     return MappedEdge{
         .sample = static_cast<float>(static_cast<double>(numerator) / static_cast<double>(denominator)),
         .nearest = static_cast<int32_t>(nearestValue),
@@ -103,10 +102,6 @@ CopySourceRect map_texture_copy_source(const aurora::gfx::ClipRect& source, bool
   };
 }
 
-
-
-
-
 u32 pack_copy_filter_samples(u8 reg, const std::array<std::array<u8, 2>, 12>& samplePattern, size_t first) {
   u32 value = static_cast<u32>(reg) << 24;
   for (size_t i = 0; i < 6; ++i) {
@@ -118,14 +113,13 @@ u32 pack_copy_filter_samples(u8 reg, const std::array<std::array<u8, 2>, 12>& sa
 }
 
 u32 pack_copy_filter0(const std::array<u8, 7>& vfilter) {
-  return 0x53000000u | (static_cast<u32>(vfilter[0] & 0x3fu) << 0) |
-         (static_cast<u32>(vfilter[1] & 0x3fu) << 6) | (static_cast<u32>(vfilter[2] & 0x3fu) << 12) |
-         (static_cast<u32>(vfilter[3] & 0x3fu) << 18);
+  return 0x53000000u | (static_cast<u32>(vfilter[0] & 0x3fu) << 0) | (static_cast<u32>(vfilter[1] & 0x3fu) << 6) |
+         (static_cast<u32>(vfilter[2] & 0x3fu) << 12) | (static_cast<u32>(vfilter[3] & 0x3fu) << 18);
 }
 
 u32 pack_copy_filter1(const std::array<u8, 7>& vfilter) {
-  return 0x54000000u | (static_cast<u32>(vfilter[4] & 0x3fu) << 0) |
-         (static_cast<u32>(vfilter[5] & 0x3fu) << 6) | (static_cast<u32>(vfilter[6] & 0x3fu) << 12);
+  return 0x54000000u | (static_cast<u32>(vfilter[4] & 0x3fu) << 0) | (static_cast<u32>(vfilter[5] & 0x3fu) << 6) |
+         (static_cast<u32>(vfilter[6] & 0x3fu) << 12);
 }
 
 std::array<u32, 3> combined_copy_filter_coefficients(const std::array<u8, 7>& vfilter) {
@@ -167,7 +161,7 @@ aurora::gfx::TextureHandle create_copy_texture(u32 width, u32 height, GXTexFmt t
   return aurora::gfx::new_render_texture(width, height, fmt, "Resolved Texture");
 }
 
-  // Reuse retired copy targets to avoid unbounded GPU texture allocation.
+// Reuse retired copy targets to avoid unbounded GPU texture allocation.
 struct CopyTexturePoolEntry {
   aurora::gx::GXState::CopyTextureKey key;
   u32 scaledWidth = 0;
@@ -175,7 +169,7 @@ struct CopyTexturePoolEntry {
   aurora::gfx::TextureHandle handle;
 };
 std::vector<CopyTexturePoolEntry> g_copyTexturePool;
-  // Keep only a few reusable copy targets per destination.
+// Keep only a few reusable copy targets per destination.
 constexpr size_t kCopyTexturePoolPerKey = 3;
 
 aurora::gfx::TextureHandle acquire_copy_texture(const aurora::gx::GXState::CopyTextureKey& key, u32 width, u32 height,
@@ -337,13 +331,9 @@ void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap) {
   g_gxState.texCopyHalfScale = mipmap != GX_FALSE;
 }
 
-void GXSetDispCopyFrame2Field(u32 mode) {
-  g_gxState.dispCopyFrame2Field = mode & 3;
-}
+void GXSetDispCopyFrame2Field(u32 mode) { g_gxState.dispCopyFrame2Field = mode & 3; }
 
-void GXSetCopyClamp(GXFBClamp clamp) {
-  g_gxState.copyClamp = static_cast<GXFBClamp>(static_cast<u32>(clamp) & 3);
-}
+void GXSetCopyClamp(GXFBClamp clamp) { g_gxState.copyClamp = static_cast<GXFBClamp>(static_cast<u32>(clamp) & 3); }
 
 u32 GXSetDispCopyYScale(f32 vscale) {
   const u32 iScale = y_scale_to_integer(vscale);
@@ -411,8 +401,8 @@ void GXSetCopyFilter(GXBool aa, u8 sample_pattern[12][2], GXBool vf, u8 vfilter[
 
 void GXSetDispCopyGamma(GXGamma gamma) {
   g_gxState.dispCopyGamma = static_cast<GXGamma>(static_cast<u32>(gamma) & 3u);
-  g_gxState.bpRegCache[0x52] = (g_gxState.bpRegCache[0x52] & ~(3u << 7)) |
-                               ((static_cast<u32>(g_gxState.dispCopyGamma) & 3u) << 7);
+  g_gxState.bpRegCache[0x52] =
+      (g_gxState.bpRegCache[0x52] & ~(3u << 7)) | ((static_cast<u32>(g_gxState.dispCopyGamma) & 3u) << 7);
 }
 
 void GXCopyDisp(void* dest, GXBool clear) {
@@ -422,10 +412,11 @@ void GXCopyDisp(void* dest, GXBool clear) {
     aurora::gx::fifo::drain();
   }
   const auto rect = aurora::gx::map_logical_scissor(g_gxState.dispCopySrc);
-  const auto logicalDstWidth =
-      std::max<u32>(g_gxState.dispCopyDstWidth != 0 ? g_gxState.dispCopyDstWidth : static_cast<u32>(g_gxState.dispCopySrc.width), 1);
-  const auto logicalDstHeight =
-      std::max<u32>(g_gxState.dispCopyDstHeight != 0 ? g_gxState.dispCopyDstHeight : static_cast<u32>(g_gxState.dispCopySrc.height), 1);
+  const auto logicalDstWidth = std::max<u32>(
+      g_gxState.dispCopyDstWidth != 0 ? g_gxState.dispCopyDstWidth : static_cast<u32>(g_gxState.dispCopySrc.width), 1);
+  const auto logicalDstHeight = std::max<u32>(
+      g_gxState.dispCopyDstHeight != 0 ? g_gxState.dispCopyDstHeight : static_cast<u32>(g_gxState.dispCopySrc.height),
+      1);
   const auto [dstWidth, dstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
 
   if (!g_gxState.displayCopyTexture || g_gxState.displayCopyWidth != dstWidth ||
@@ -444,8 +435,7 @@ void GXCopyDisp(void* dest, GXBool clear) {
                             clearState.clearDepth, clearState.clearColorValue, aurora::gx::clear_depth_value(),
                             GX_TF_RGBA8, nullptr, false, &copyFilter, false,
                             static_cast<float>(rect.height) / std::max<float>(g_gxState.dispCopySrc.height, 1.0f),
-                            (g_gxState.copyClamp & GX_CLAMP_TOP) != 0,
-                            (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0);
+                            (g_gxState.copyClamp & GX_CLAMP_TOP) != 0, (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0);
   aurora::gfx::mark_last_resolve_as_display_copy();
   aurora::gx::set_display_copy_present_source();
 }
@@ -483,13 +473,14 @@ void GXCopyTex(void* dest, GXBool clear) {
   auto it = g_gxState.copyTextureCache.find(key);
   if (it == g_gxState.copyTextureCache.end()) {
     auto handle = acquire_copy_texture(key, scaledDstWidth, scaledDstHeight, texCopyFmt);
-    it = g_gxState.copyTextureCache.emplace(key, aurora::gx::GXState::CopyTextureRef{.handle = handle, .revision = 0}).first;
+    it = g_gxState.copyTextureCache.emplace(key, aurora::gx::GXState::CopyTextureRef{.handle = handle, .revision = 0})
+             .first;
   }
   auto& handle = it->second;
   const u32 currentFrame = aurora::gfx::current_frame();
   const bool sampledThisFrame = handle.sampledThisFrame && handle.lastSampledFrame == currentFrame;
-  const bool scaledSizeChanged = !handle.handle || handle.handle->size.width != scaledDstWidth ||
-                                 handle.handle->size.height != scaledDstHeight;
+  const bool scaledSizeChanged =
+      !handle.handle || handle.handle->size.width != scaledDstWidth || handle.handle->size.height != scaledDstHeight;
   auto clearState = get_copy_clear_state(clear);
   if (sampledThisFrame || scaledSizeChanged) {
     const u32 revision = handle.revision;
@@ -524,18 +515,26 @@ void GXCopyTex(void* dest, GXBool clear) {
   // Skip only recurring color copies so one-shot copies are never lost.
   const bool producedConsecutively = handle.revision != 0 && currentFrame - handle.lastProducedFrame <= 1;
   const bool persistentCopy = !aurora::gx::is_depth_format(texCopyFmt) && !producedConsecutively;
+  if (handle.handle) {
+    // Preserve both provenance and production time. Native post-processing
+    // samples a copy immediately, whereas one-shot bakes such as MKW's minimap
+    // are ordinary 2D game content once retained across frames.
+    handle.handle->isEfbCopy = true;
+    handle.handle->lastEfbCopyFrame = currentFrame;
+  }
   aurora::gfx::resolve_pass(handle.handle, rect, clearState.clearColor, clearState.clearAlpha, clearState.clearDepth,
                             clearState.clearColorValue, aurora::gx::clear_depth_value(), resolveFmt,
                             &sourceRect.sampleRect, g_gxState.texCopyHalfScale, &copyFilter, forceOpaqueAlpha,
                             sourceRect.sampleRect.w() / std::max<float>(g_gxState.texCopySrc.height, 1.0f),
-                            (g_gxState.copyClamp & GX_CLAMP_TOP) != 0,
-                            (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0, persistentCopy);
+                            (g_gxState.copyClamp & GX_CLAMP_TOP) != 0, (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0,
+                            persistentCopy);
   ++handle.revision;
   handle.lastProducedFrame = currentFrame;
   handle.width = logicalDstWidth;
   handle.height = logicalDstHeight;
   handle.format = texCopyFmt;
-  handle.dataSize = GXGetTexBufferSize(static_cast<u16>(logicalDstWidth), static_cast<u16>(logicalDstHeight), texCopyFmt, GX_FALSE, 0);
+  handle.dataSize = GXGetTexBufferSize(static_cast<u16>(logicalDstWidth), static_cast<u16>(logicalDstHeight),
+                                       texCopyFmt, GX_FALSE, 0);
   aurora::gx::notify_copy_texture_created();
   g_gxState.copyTextures[dest] = handle;
   // Keep the GPU copy and download it only if guest code reads the destination.
@@ -592,5 +591,4 @@ f32 GXGetYScaleFactor(u16 efbHeight, u16 xfbHeight) {
 
   return resultScale;
 }
-
 }

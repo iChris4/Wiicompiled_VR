@@ -95,6 +95,17 @@ bool aurora_get_stereo_stop_at_display_copy();
 void aurora_set_stereo_skip_copy_clears(bool enabled);
 bool aurora_get_stereo_skip_copy_clears();
 
+// Places orthographic GX draws (menus, HUD, 2D overlays) on a fixed virtual
+// screen during immersive replay instead of stretching them across the whole
+// eye viewport. The screen hangs `distance` world units straight ahead of the
+// game camera and is `width` world units across, its height following the
+// aspect ratio the game is presenting at. It stays put in the camera's frame,
+// so looking around moves the view across it rather than dragging it along.
+// Also live; a cleared flag or a non-positive size leaves 2D content on its
+// recorded GX transforms.
+void aurora_set_stereo_hud_screen(bool enabled, float width, float distance);
+bool aurora_get_stereo_hud_screen_enabled();
+
 // Guest-RAM write tracking. `generation` changes whenever guest RAM covering a host range was
 // written (or returns AURORA_GUEST_WRITE_UNTRACKED); `notify` reports writes aurora made itself.
 #define AURORA_GUEST_WRITE_UNTRACKED UINT64_MAX

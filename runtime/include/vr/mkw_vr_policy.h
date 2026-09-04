@@ -74,6 +74,9 @@ struct MkwVRPolicyConfig {
     bool immersive_races = true;
     float world_units_per_meter = 500.0f;
     float hud_distance_meters = 2.0f;
+    // Width of the virtual screen, shared by the menu quad layer and the
+    // immersive race HUD so 2D content keeps its place across the transition.
+    float hud_width_meters = 2.4f;
     float hud_scale = 1.0f;
 };
 

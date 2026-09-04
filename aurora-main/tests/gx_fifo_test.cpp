@@ -4,6 +4,7 @@
 #include "gx_test_common.hpp"
 #include "gfx/efb_ram_encoder.hpp"
 #include "gfx/tex_copy_format_contract.hpp"
+#include "gfx/texture.hpp"
 #include "gx/shader_info.hpp"
 #include "gx/pipeline.hpp"
 #include "__gx.h"
@@ -24,19 +25,16 @@ TEST(GXPipelineConfig, RejectsInvalidDeserializedEnums) {
 }
 
 TEST(GXPipelineConfig, FoggedLateZLogicOrPreservesEggDofMask) {
-  EXPECT_EQ(aurora::gx::effective_pipeline_fog_type(GX_FOG_PERSP_LIN, GX_ZT_REPLACE,
-                                                    false, GX_BM_LOGIC, GX_LO_OR),
+  EXPECT_EQ(aurora::gx::effective_pipeline_fog_type(GX_FOG_PERSP_LIN, GX_ZT_REPLACE, false, GX_BM_LOGIC, GX_LO_OR),
             GX_FOG_PERSP_LIN);
 
   // Keep the existing defensive suppression for late-Z mask passes whose
   // integer logic operation still has only an inexact WebGPU fallback.
-  EXPECT_EQ(aurora::gx::effective_pipeline_fog_type(GX_FOG_PERSP_LIN, GX_ZT_REPLACE,
-                                                    false, GX_BM_LOGIC, GX_LO_COPY),
+  EXPECT_EQ(aurora::gx::effective_pipeline_fog_type(GX_FOG_PERSP_LIN, GX_ZT_REPLACE, false, GX_BM_LOGIC, GX_LO_COPY),
             GX_FOG_NONE);
 
   // Logic fallbacks do not require this workaround when Z-texturing is early.
-  EXPECT_EQ(aurora::gx::effective_pipeline_fog_type(GX_FOG_PERSP_LIN, GX_ZT_REPLACE,
-                                                    true, GX_BM_LOGIC, GX_LO_COPY),
+  EXPECT_EQ(aurora::gx::effective_pipeline_fog_type(GX_FOG_PERSP_LIN, GX_ZT_REPLACE, true, GX_BM_LOGIC, GX_LO_COPY),
             GX_FOG_PERSP_LIN);
 }
 
@@ -64,6 +62,31 @@ TEST(GXShaderInfo, ShaderLightSanitizesNonFiniteDirectionForUniforms) {
   EXPECT_FLOAT_EQ(zero.dir[0], 0.0f);
   EXPECT_FLOAT_EQ(zero.dir[1], 0.0f);
   EXPECT_FLOAT_EQ(zero.dir[2], 0.0f);
+}
+
+TEST_F(GXFifoTest, UniformRetainsViewportWindowForVrReplay) {
+  gxState().proj = {};
+  gxState().proj.m0 = {1.0f, 0.0f, 0.0f, 0.0f};
+  gxState().proj.m1 = {0.0f, 1.0f, 0.0f, 0.0f};
+  gxState().proj.m2 = {0.0f, 0.0f, -0.001f, -0.5f};
+  gxState().proj.m3 = {0.0f, 0.0f, 0.0f, 1.0f};
+  gxState().renderViewport.znear = 0.2f;
+  gxState().renderViewport.zfar = 0.8f;
+
+  aurora::gfx::testing::reset_uniform_allocations();
+  const auto info = aurora::gx::build_shader_info({});
+  const auto ranges = aurora::gx::build_uniform(info, 0, aurora::gx::BindGroupRanges{},
+                                                aurora::gx::FrameInterpolationDrawIdentity{}, false);
+  const auto& bytes = aurora::gfx::testing::uniform_allocation(ranges.current.offset);
+
+  const auto read_float = [&](size_t offset) {
+    float value = 0.0f;
+    std::memcpy(&value, bytes.data() + offset, sizeof(value));
+    return value;
+  };
+  EXPECT_FLOAT_EQ(read_float(24), 0.2f);
+  EXPECT_FLOAT_EQ(read_float(28), 0.6f);
+  EXPECT_EQ(ranges.replayLayout.projectionOffset, 80u);
 }
 
 TEST(GXLighting, SpotCoefficientsAndPositionGetterMatchRevolutionSdk) {
@@ -104,9 +127,8 @@ TEST(EfbRamEncoderContract, Z24X8WritesNativeFourByFourArGbPlanes) {
   }
 
   std::array<u8, 64> encoded{};
-  ASSERT_TRUE(aurora::gfx::efb_ram::encode(
-      encoded.data(), encoded.size(), GX_TF_Z24X8, 4, 4, rgba.data(), 4, 4, 16,
-      aurora::gfx::efb_ram::HostPixelOrder::RGBA));
+  ASSERT_TRUE(aurora::gfx::efb_ram::encode(encoded.data(), encoded.size(), GX_TF_Z24X8, 4, 4, rgba.data(), 4, 4, 16,
+                                           aurora::gfx::efb_ram::HostPixelOrder::RGBA));
   EXPECT_EQ(aurora::gfx::efb_ram::encoded_size(GX_TF_Z24X8, 4, 4), encoded.size());
 
   for (u32 i = 0; i < 16; ++i) {
@@ -115,8 +137,7 @@ TEST(EfbRamEncoderContract, Z24X8WritesNativeFourByFourArGbPlanes) {
     EXPECT_EQ(encoded[32 + i * 2 + 0], 0x40 + i) << "GB plane texel " << i;
     EXPECT_EQ(encoded[32 + i * 2 + 1], 0x80 + i) << "GB plane texel " << i;
 
-    const u32 depth = (static_cast<u32>(encoded[i * 2 + 1]) << 16) |
-                      (static_cast<u32>(encoded[32 + i * 2 + 0]) << 8) |
+    const u32 depth = (static_cast<u32>(encoded[i * 2 + 1]) << 16) | (static_cast<u32>(encoded[32 + i * 2 + 0]) << 8) |
                       encoded[32 + i * 2 + 1];
     EXPECT_EQ(depth, ((0x10u + i) << 16) | ((0x40u + i) << 8) | (0x80u + i));
   }
@@ -146,8 +167,12 @@ static std::vector<u8> bp_cmd(u8 reg, u32 value) {
 }
 
 static std::vector<u8> cp_cmd(u8 reg, u32 value) {
-  return {0x08, reg, static_cast<u8>((value >> 24) & 0xFF), static_cast<u8>((value >> 16) & 0xFF),
-          static_cast<u8>((value >> 8) & 0xFF), static_cast<u8>(value & 0xFF)};
+  return {0x08,
+          reg,
+          static_cast<u8>((value >> 24) & 0xFF),
+          static_cast<u8>((value >> 16) & 0xFF),
+          static_cast<u8>((value >> 8) & 0xFF),
+          static_cast<u8>(value & 0xFF)};
 }
 
 static std::vector<u8> xf_cmd(u16 addr, std::initializer_list<u32> values) {
@@ -180,8 +205,8 @@ TEST(FrameInterpolationContract, RequiresStablePerspectiveDrawSequence) {
     aurora::gx::set_frame_interpolation_fps(0);
     aurora::gx::begin_frame_interpolation();
   };
-  const auto buildFrame = [](const aurora::gx::ShaderInfo& info, aurora::HashType signatureBase,
-                             bool perspective, bool reverse = false) {
+  const auto buildFrame = [](const aurora::gx::ShaderInfo& info, aurora::HashType signatureBase, bool perspective,
+                             bool reverse = false) {
     aurora::gx::begin_frame_interpolation();
     aurora::gx::BindGroupRanges ranges{};
     uint32_t interpolatedUniforms = 0;
@@ -193,9 +218,9 @@ TEST(FrameInterpolationContract, RequiresStablePerspectiveDrawSequence) {
           .texture = 1,
       };
       const auto uniforms = aurora::gx::build_uniform(info, 0, ranges, identity, perspective);
-      interpolatedUniforms += static_cast<uint32_t>(std::count_if(
-          uniforms.interpolated.begin(), uniforms.interpolated.end(),
-          [](const aurora::gfx::Range& range) { return range.size != 0; }));
+      interpolatedUniforms +=
+          static_cast<uint32_t>(std::count_if(uniforms.interpolated.begin(), uniforms.interpolated.end(),
+                                              [](const aurora::gfx::Range& range) { return range.size != 0; }));
     }
     aurora::gx::finalize_frame_interpolation();
     return interpolatedUniforms;
@@ -258,9 +283,9 @@ TEST(FrameInterpolationContract, RequiresStablePerspectiveDrawSequence) {
           .texture = 7,
       };
       const auto uniforms = aurora::gx::build_uniform(info, 0, ranges, identity, true);
-      interpolatedUniforms += static_cast<uint32_t>(std::count_if(
-          uniforms.interpolated.begin(), uniforms.interpolated.end(),
-          [](const aurora::gfx::Range& range) { return range.size != 0; }));
+      interpolatedUniforms +=
+          static_cast<uint32_t>(std::count_if(uniforms.interpolated.begin(), uniforms.interpolated.end(),
+                                              [](const aurora::gfx::Range& range) { return range.size != 0; }));
     }
     aurora::gx::finalize_frame_interpolation();
     return interpolatedUniforms;
@@ -332,20 +357,15 @@ TEST(FrameInterpolationContract, IndexedPaletteInterpolationPreservesSharedSeams
 
   aurora::Mat3x4<float> rotatedMidpoint{};
   aurora::Mat3x4<float> translatedMidpoint{};
-  ASSERT_TRUE(aurora::gx::interpolate_indexed_transform(
-      identity, quarterTurn, 0.5f, rotatedMidpoint));
-  ASSERT_TRUE(aurora::gx::interpolate_indexed_transform(
-      translatedPrevious, translatedCurrent, 0.5f, translatedMidpoint));
+  ASSERT_TRUE(aurora::gx::interpolate_indexed_transform(identity, quarterTurn, 0.5f, rotatedMidpoint));
+  ASSERT_TRUE(
+      aurora::gx::interpolate_indexed_transform(translatedPrevious, translatedCurrent, 0.5f, translatedMidpoint));
 
-  const auto transformPoint = [](const aurora::Mat3x4<float>& matrix,
-                                 const std::array<float, 3>& point) {
+  const auto transformPoint = [](const aurora::Mat3x4<float>& matrix, const std::array<float, 3>& point) {
     return std::array<float, 3>{
-        matrix.m0.x() * point[0] + matrix.m0.y() * point[1] +
-            matrix.m0.z() * point[2] + matrix.m0.w(),
-        matrix.m1.x() * point[0] + matrix.m1.y() * point[1] +
-            matrix.m1.z() * point[2] + matrix.m1.w(),
-        matrix.m2.x() * point[0] + matrix.m2.y() * point[1] +
-            matrix.m2.z() * point[2] + matrix.m2.w(),
+        matrix.m0.x() * point[0] + matrix.m0.y() * point[1] + matrix.m0.z() * point[2] + matrix.m0.w(),
+        matrix.m1.x() * point[0] + matrix.m1.y() * point[1] + matrix.m1.z() * point[2] + matrix.m1.w(),
+        matrix.m2.x() * point[0] + matrix.m2.y() * point[1] + matrix.m2.z() * point[2] + matrix.m2.w(),
     };
   };
 
@@ -367,8 +387,7 @@ TEST(FrameInterpolationContract, IndexedPaletteInterpolationPreservesSharedSeams
       {0.0f, 0.0f, 1.0f, 0.0f},
   };
   aurora::Mat3x4<float> shearedMidpoint{};
-  ASSERT_TRUE(aurora::gx::interpolate_indexed_transform(
-      identity, sheared, 0.5f, shearedMidpoint));
+  ASSERT_TRUE(aurora::gx::interpolate_indexed_transform(identity, sheared, 0.5f, shearedMidpoint));
   EXPECT_FLOAT_EQ(shearedMidpoint.m0.y(), 0.25f);
   EXPECT_FLOAT_EQ(shearedMidpoint.m0.w(), 2.0f);
 }
@@ -377,10 +396,8 @@ TEST(FrameInterpolationContract, IndexedPaletteHistoryKeepsAbsoluteVertexSlots) 
   constexpr uint16_t usedMask = (1u << 0) | (1u << 1);
   constexpr size_t projectionOffset = 0;
   constexpr size_t positionOffset = sizeof(aurora::Mat4x4<float>);
-  constexpr size_t normalOffset =
-      positionOffset + aurora::gx::MaxPnMtx * sizeof(aurora::Mat3x4<float>);
-  constexpr size_t uniformSize =
-      normalOffset + aurora::gx::MaxPnMtx * sizeof(aurora::Mat3x4<float>);
+  constexpr size_t normalOffset = positionOffset + aurora::gx::MaxPnMtx * sizeof(aurora::Mat3x4<float>);
+  constexpr size_t uniformSize = normalOffset + aurora::gx::MaxPnMtx * sizeof(aurora::Mat3x4<float>);
   const aurora::gx::FrameInterpolationDrawIdentity identity{
       .combined = 0x1234,
       .pipeline = 0x5678,
@@ -395,32 +412,28 @@ TEST(FrameInterpolationContract, IndexedPaletteHistoryKeepsAbsoluteVertexSlots) 
         {0.0f, 0.0f, 1.0f, 0.0f},
     };
   };
-  const auto recordFrame = [&](const aurora::gx::FrameInterpolationDrawIdentity& drawIdentity,
-                               float slot0X, float slot1X,
-                               std::array<uint8_t, uniformSize>& source) {
+  const auto recordFrame = [&](const aurora::gx::FrameInterpolationDrawIdentity& drawIdentity, float slot0X,
+                               float slot1X, std::array<uint8_t, uniformSize>& source) {
     g_gxState.pnMtx[0].pos = matrixAt(slot0X);
     g_gxState.pnMtx[1].pos = matrixAt(slot1X);
     g_gxState.pnMtx[0].nrm = matrixAt(0.0f);
     g_gxState.pnMtx[1].nrm = matrixAt(0.0f);
-    std::memcpy(source.data() + positionOffset, &g_gxState.pnMtx[0].pos,
+    std::memcpy(source.data() + positionOffset, &g_gxState.pnMtx[0].pos, sizeof(aurora::Mat3x4<float>));
+    std::memcpy(source.data() + positionOffset + sizeof(aurora::Mat3x4<float>), &g_gxState.pnMtx[1].pos,
                 sizeof(aurora::Mat3x4<float>));
-    std::memcpy(source.data() + positionOffset + sizeof(aurora::Mat3x4<float>),
-                &g_gxState.pnMtx[1].pos, sizeof(aurora::Mat3x4<float>));
-    std::memcpy(source.data() + normalOffset, &g_gxState.pnMtx[0].nrm,
+    std::memcpy(source.data() + normalOffset, &g_gxState.pnMtx[0].nrm, sizeof(aurora::Mat3x4<float>));
+    std::memcpy(source.data() + normalOffset + sizeof(aurora::Mat3x4<float>), &g_gxState.pnMtx[1].nrm,
                 sizeof(aurora::Mat3x4<float>));
-    std::memcpy(source.data() + normalOffset + sizeof(aurora::Mat3x4<float>),
-                &g_gxState.pnMtx[1].nrm, sizeof(aurora::Mat3x4<float>));
-    return aurora::gx::record_interpolation_draw(
-        drawIdentity, projection, usedMask,
-        aurora::gx::InterpolatedUniformLayout{
-            .sourceUniformData = source.data(),
-            .uniformSize = source.size(),
-            .projectionOffset = projectionOffset,
-            .positionOffset = positionOffset,
-            .normalOffset = normalOffset,
-            .currentMatrix = 0,
-            .indexedMatrices = true,
-        });
+    return aurora::gx::record_interpolation_draw(drawIdentity, projection, usedMask,
+                                                 aurora::gx::InterpolatedUniformLayout{
+                                                     .sourceUniformData = source.data(),
+                                                     .uniformSize = source.size(),
+                                                     .projectionOffset = projectionOffset,
+                                                     .positionOffset = positionOffset,
+                                                     .normalOffset = normalOffset,
+                                                     .currentMatrix = 0,
+                                                     .indexedMatrices = true,
+                                                 });
   };
 
   aurora::gx::set_frame_interpolation_fps(0);
@@ -445,10 +458,8 @@ TEST(FrameInterpolationContract, IndexedPaletteHistoryKeepsAbsoluteVertexSlots) 
   ASSERT_EQ(interpolated.size(), uniformSize);
   aurora::Mat3x4<float> slot0Midpoint{};
   aurora::Mat3x4<float> slot1Midpoint{};
-  std::memcpy(static_cast<void*>(&slot0Midpoint), interpolated.data() + positionOffset,
-              sizeof(slot0Midpoint));
-  std::memcpy(static_cast<void*>(&slot1Midpoint),
-              interpolated.data() + positionOffset + sizeof(slot0Midpoint),
+  std::memcpy(static_cast<void*>(&slot0Midpoint), interpolated.data() + positionOffset, sizeof(slot0Midpoint));
+  std::memcpy(static_cast<void*>(&slot1Midpoint), interpolated.data() + positionOffset + sizeof(slot0Midpoint),
               sizeof(slot1Midpoint));
   EXPECT_FLOAT_EQ(slot0Midpoint.m0.w(), 45.0f);
   EXPECT_FLOAT_EQ(slot1Midpoint.m0.w(), 55.0f);
@@ -584,8 +595,7 @@ TEST(TevTexcoordStateContract, DirectStageFeedsFollowingAddPrevInFixedPoint) {
   // WGSL must likewise avoid producing a regular-texture UV expression for
   // stage 1: tex1_size_bias is intentionally absent from this uniform layout.
   const auto zeroTexgenDependency = aurora::gx::tev_stage_texture_dependency(config, 1);
-  EXPECT_FALSE(aurora::gx::tev_texture_sample_enabled(zeroTexgenDependency,
-                                                      zeroTexgenDependency.combinerUsesTexture));
+  EXPECT_FALSE(aurora::gx::tev_texture_sample_enabled(zeroTexgenDependency, zeroTexgenDependency.combinerUsesTexture));
 
   // A standalone direct stage still uses the normalized fast path.
   config.numTexGens = 2;
@@ -608,7 +618,6 @@ TEST(TevTexcoordStateContract, DirectStageFeedsFollowingAddPrevInFixedPoint) {
   config.zTexture = static_cast<u32>(GX_ZT_REPLACE) << 26;
   EXPECT_TRUE(aurora::gx::tev_z_texture_enabled(config));
   EXPECT_EQ(aurora::gx::tev_z_texture_stage(config), -1);
-
 }
 
 TEST(TevRegisterLivenessContract, RgbWriteDoesNotHideSameStageOldAlphaRead) {
@@ -2157,8 +2166,8 @@ TEST_F(GXFifoTest, RawDrawPreservesHorizontalXzQuadVertices) {
   append_vertex(53.659431f, 0.27f, -53.659435f, 1, 1);
   const auto expected = vertices;
 
-  ASSERT_TRUE(aurora::gx::fifo::submit_raw_draw(
-      GX_QUADS, GX_VTXFMT0, vertices.data(), 4, static_cast<uint32_t>(vertices.size())));
+  ASSERT_TRUE(aurora::gx::fifo::submit_raw_draw(GX_QUADS, GX_VTXFMT0, vertices.data(), 4,
+                                                static_cast<uint32_t>(vertices.size())));
   EXPECT_EQ(aurora::gfx::testing::last_pushed_vertices(), expected);
 }
 
@@ -2183,25 +2192,19 @@ TEST_F(GXFifoTest, DrawTopologyTemplatesPreserveExactGxIndexOrder) {
     return aurora::gfx::testing::last_pushed_indices();
   };
 
-  EXPECT_EQ(decodeAndReadIndices(GX_QUADS, 8),
-            (std::vector<u16>{0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4}));
+  EXPECT_EQ(decodeAndReadIndices(GX_QUADS, 8), (std::vector<u16>{0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4}));
   g_gxState.stateDirty = true;
-  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLES, 6),
-            (std::vector<u16>{0, 1, 2, 3, 4, 5}));
+  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLES, 6), (std::vector<u16>{0, 1, 2, 3, 4, 5}));
   g_gxState.stateDirty = true;
-  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLEFAN, 5),
-            (std::vector<u16>{0, 1, 2, 0, 2, 3, 0, 3, 4}));
+  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLEFAN, 5), (std::vector<u16>{0, 1, 2, 0, 2, 3, 0, 3, 4}));
   g_gxState.stateDirty = true;
-  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLEFAN, 2),
-            (std::vector<u16>{0, 1}));
+  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLEFAN, 2), (std::vector<u16>{0, 1}));
   g_gxState.stateDirty = true;
-  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLESTRIP, 6),
-            (std::vector<u16>{0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5}));
+  EXPECT_EQ(decodeAndReadIndices(GX_TRIANGLESTRIP, 6), (std::vector<u16>{0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5}));
   g_gxState.stateDirty = true;
   EXPECT_TRUE(decodeAndReadIndices(GX_TRIANGLESTRIP, 0).empty());
   g_gxState.stateDirty = true;
-  EXPECT_EQ(decodeAndReadIndices(GX_LINES, 2),
-            (std::vector<u16>{0, 1, 3, 3, 2, 0}));
+  EXPECT_EQ(decodeAndReadIndices(GX_LINES, 2), (std::vector<u16>{0, 1, 3, 3, 2, 0}));
 }
 
 TEST_F(GXFifoTest, MergedDrawOffsetsCachedTopologyWithoutJoiningPrimitives) {
@@ -2216,8 +2219,7 @@ TEST_F(GXFifoTest, MergedDrawOffsetsCachedTopologyWithoutJoiningPrimitives) {
   decode_fifo(fifo);
 
   EXPECT_EQ(aurora::gfx::g_mergedDrawCallCount, 1u);
-  EXPECT_EQ(aurora::gfx::testing::last_pushed_indices(),
-            (std::vector<u16>{3, 4, 5}));
+  EXPECT_EQ(aurora::gfx::testing::last_pushed_indices(), (std::vector<u16>{3, 4, 5}));
 }
 
 TEST_F(GXFifoTest, TexBufferSize_UsesExactLinearPcFormatSizes) {
@@ -2637,9 +2639,18 @@ TEST_F(GXFifoTest, LoadNrmMtxImm_Identity) {
 
 TEST_F(GXFifoTest, LoadNrmMtxImm_ArbitraryValues) {
   aurora::Mat3x4<float> mtx{};
-  mtx.m0[0] = 0.5f;  mtx.m0[1] = -0.5f; mtx.m0[2] = 0.7f;  mtx.m0[3] = 999.0f;
-  mtx.m1[0] = 0.3f;  mtx.m1[1] = 0.8f;  mtx.m1[2] = -0.1f; mtx.m1[3] = 888.0f;
-  mtx.m2[0] = -0.6f; mtx.m2[1] = 0.2f;  mtx.m2[2] = 0.9f;  mtx.m2[3] = 777.0f;
+  mtx.m0[0] = 0.5f;
+  mtx.m0[1] = -0.5f;
+  mtx.m0[2] = 0.7f;
+  mtx.m0[3] = 999.0f;
+  mtx.m1[0] = 0.3f;
+  mtx.m1[1] = 0.8f;
+  mtx.m1[2] = -0.1f;
+  mtx.m1[3] = 888.0f;
+  mtx.m2[0] = -0.6f;
+  mtx.m2[1] = 0.2f;
+  mtx.m2[2] = 0.9f;
+  mtx.m2[3] = 777.0f;
 
   GXLoadNrmMtxImm(&mtx, GX_PNMTX0);
   auto bytes = capture_fifo();
@@ -2770,9 +2781,18 @@ TEST_F(GXFifoTest, LoadTexMtx3x4_Identity) {
 
 TEST_F(GXFifoTest, LoadTexMtx3x4_ArbitraryValues) {
   aurora::Mat3x4<float> mtx{};
-  mtx.m0[0] = 2.0f;  mtx.m0[1] = 0.5f;  mtx.m0[2] = 0.0f;  mtx.m0[3] = 10.0f;
-  mtx.m1[0] = -0.5f; mtx.m1[1] = 3.0f;  mtx.m1[2] = 0.0f;  mtx.m1[3] = 20.0f;
-  mtx.m2[0] = 0.0f;  mtx.m2[1] = 0.0f;  mtx.m2[2] = 1.5f;  mtx.m2[3] = -5.0f;
+  mtx.m0[0] = 2.0f;
+  mtx.m0[1] = 0.5f;
+  mtx.m0[2] = 0.0f;
+  mtx.m0[3] = 10.0f;
+  mtx.m1[0] = -0.5f;
+  mtx.m1[1] = 3.0f;
+  mtx.m1[2] = 0.0f;
+  mtx.m1[3] = 20.0f;
+  mtx.m2[0] = 0.0f;
+  mtx.m2[1] = 0.0f;
+  mtx.m2[2] = 1.5f;
+  mtx.m2[3] = -5.0f;
 
   GXLoadTexMtxImm(&mtx, GX_TEXMTX0, GX_MTX3x4);
   auto bytes = capture_fifo();
@@ -2888,8 +2908,14 @@ TEST_F(GXFifoTest, LoadTexMtx2x4_Identity) {
 
 TEST_F(GXFifoTest, LoadTexMtx2x4_ArbitraryValues) {
   aurora::Mat3x4<float> mtx{};
-  mtx.m0[0] = 0.5f;  mtx.m0[1] = -1.0f; mtx.m0[2] = 0.25f; mtx.m0[3] = 100.0f;
-  mtx.m1[0] = 3.0f;  mtx.m1[1] = 0.0f;  mtx.m1[2] = -2.5f; mtx.m1[3] = -50.0f;
+  mtx.m0[0] = 0.5f;
+  mtx.m0[1] = -1.0f;
+  mtx.m0[2] = 0.25f;
+  mtx.m0[3] = 100.0f;
+  mtx.m1[0] = 3.0f;
+  mtx.m1[1] = 0.0f;
+  mtx.m1[2] = -2.5f;
+  mtx.m1[3] = -50.0f;
   // Row 2 values should be ignored by the encoder
   mtx.m2[0] = 999.0f;
 
@@ -3497,8 +3523,8 @@ TEST_F(GXFifoTest, TexCoordGen_Identity) {
 }
 
 TEST_F(GXFifoTest, MatrixIndexA_DecodesTexMatricesFromCpPacket) {
-  const u32 value = (GX_PNMTX3 << 0) | (GX_TEXMTX3 << 6) | (GX_TEXMTX4 << 12) | (GX_IDENTITY << 18) |
-                    (GX_TEXMTX7 << 24);
+  const u32 value =
+      (GX_PNMTX3 << 0) | (GX_TEXMTX3 << 6) | (GX_TEXMTX4 << 12) | (GX_IDENTITY << 18) | (GX_TEXMTX7 << 24);
   auto bytes = cp_cmd(0x30, value);
 
   reset_gx_state();
@@ -4179,11 +4205,44 @@ TEST_F(GXFifoTest, CopyTexColorFormatMarksResolvePersistent) {
 
   GXSetTexCopySrc(336, 300, 152, 114);
   GXSetTexCopyDst(152, 114, GX_TF_RGBA8, GX_FALSE);
+  aurora::gfx::testing::set_current_frame(42);
   GXCopyTex(image.data(), GX_FALSE);
 
   const auto& records = aurora::gfx::testing::resolve_pass_records();
   ASSERT_EQ(records.size(), 1u);
   EXPECT_TRUE(records.front().persistentCopy);
+  ASSERT_TRUE(records.front().texture);
+  EXPECT_TRUE(records.front().texture->isEfbCopy);
+  EXPECT_EQ(records.front().texture->lastEfbCopyFrame, 42u);
+  EXPECT_TRUE(records.front().texture->is_recent_efb_copy(42));
+  EXPECT_TRUE(records.front().texture->is_recent_efb_copy(43));
+  EXPECT_FALSE(records.front().texture->is_recent_efb_copy(44));
+
+  GXTexObj_ texObj{};
+  texObj.mWidth = 152;
+  texObj.mHeight = 114;
+  texObj.mFormat = GX_TF_RGBA8;
+  gxState().textures[GX_TEXMAP0] = aurora::gfx::TextureBind{texObj, records.front().texture};
+  aurora::gx::ShaderConfig shader{};
+  shader.numTexGens = 1;
+  shader.tevStageCount = 1;
+  shader.tevStages[0].texCoordId = GX_TEXCOORD0;
+  shader.tevStages[0].texMapId = GX_TEXMAP0;
+  shader.tevStages[0].colorPass.d = GX_CC_TEXC;
+  shader.tevStages[0].alphaPass.d = GX_CA_TEXA;
+  const auto info = aurora::gx::build_shader_info(shader);
+
+  aurora::gfx::testing::reset_uniform_allocations();
+  const auto freshLayout = aurora::gx::build_uniform(info, 0, aurora::gx::BindGroupRanges{},
+                                                     aurora::gx::FrameInterpolationDrawIdentity{}, false);
+  EXPECT_TRUE(freshLayout.replayLayout.nativeEfbEffect);
+
+  // Once retained instead of regenerated, the same reduced alpha texture is a
+  // one-shot 2D bake (the path used by MKW's minimap), not live post-processing.
+  aurora::gfx::testing::set_current_frame(44);
+  const auto retainedLayout = aurora::gx::build_uniform(info, 0, aurora::gx::BindGroupRanges{},
+                                                        aurora::gx::FrameInterpolationDrawIdentity{}, false);
+  EXPECT_FALSE(retainedLayout.replayLayout.nativeEfbEffect);
 }
 
 TEST_F(GXFifoTest, RecurringColorCopyKeepsLaterResolveSkippable) {
@@ -4826,9 +4885,18 @@ TEST_F(GXFifoTest, LoadPTTexMtx_Identity) {
 
 TEST_F(GXFifoTest, LoadPTTexMtx_ArbitraryValues) {
   aurora::Mat3x4<float> mtx{};
-  mtx.m0[0] = 2.0f;  mtx.m0[1] = 0.5f;  mtx.m0[2] = 0.0f;  mtx.m0[3] = 10.0f;
-  mtx.m1[0] = -0.5f; mtx.m1[1] = 3.0f;  mtx.m1[2] = 0.0f;  mtx.m1[3] = 20.0f;
-  mtx.m2[0] = 0.0f;  mtx.m2[1] = 0.0f;  mtx.m2[2] = 1.5f;  mtx.m2[3] = -5.0f;
+  mtx.m0[0] = 2.0f;
+  mtx.m0[1] = 0.5f;
+  mtx.m0[2] = 0.0f;
+  mtx.m0[3] = 10.0f;
+  mtx.m1[0] = -0.5f;
+  mtx.m1[1] = 3.0f;
+  mtx.m1[2] = 0.0f;
+  mtx.m1[3] = 20.0f;
+  mtx.m2[0] = 0.0f;
+  mtx.m2[1] = 0.0f;
+  mtx.m2[2] = 1.5f;
+  mtx.m2[3] = -5.0f;
 
   GXLoadTexMtxImm(&mtx, GX_PTTEXMTX0, GX_MTX3x4);
   auto bytes = capture_fifo();

@@ -46,6 +46,7 @@ std::recursive_mutex& renderer_gpu_mutex() noexcept {
   static std::recursive_mutex mutex;
   return mutex;
 }
+bool stereo_frame_provider_active() noexcept { return true; }
 } // namespace aurora
 
 extern "C" bool aurora_wait_for_frame_worker_for(uint32_t) { return true; }
@@ -293,12 +294,9 @@ std::pair<ByteBuffer, Range> map_uniform(size_t length) {
   s_uniformAllocations.emplace_back(length, 0);
   auto& uniformBytes = s_uniformAllocations.back();
   return {ByteBuffer{uniformBytes.data(), uniformBytes.size()},
-          Range{static_cast<uint32_t>(s_uniformAllocations.size() - 1),
-                static_cast<uint32_t>(length)}};
+          Range{static_cast<uint32_t>(s_uniformAllocations.size() - 1), static_cast<uint32_t>(length)}};
 }
-std::pair<ByteBuffer, Range> copy_uniform(Range source) {
-  return map_uniform(source.size);
-}
+std::pair<ByteBuffer, Range> copy_uniform(Range source) { return map_uniform(source.size); }
 uint32_t align_uniform(uint32_t value) { return (value + 255u) & ~255u; }
 
 Vec2<uint32_t> get_render_target_size() noexcept { return s_renderTargetSize; }
@@ -321,15 +319,9 @@ void reset_vertex_push_record() noexcept {
   s_trackDrawCommands = false;
   g_mergedDrawCallCount = 0;
 }
-const std::vector<uint8_t>& last_pushed_vertices() noexcept {
-  return s_lastPushedVertices;
-}
-const std::vector<uint16_t>& last_pushed_indices() noexcept {
-  return s_lastPushedIndices;
-}
-void reset_uniform_allocations() noexcept {
-  s_uniformAllocations.clear();
-}
+const std::vector<uint8_t>& last_pushed_vertices() noexcept { return s_lastPushedVertices; }
+const std::vector<uint16_t>& last_pushed_indices() noexcept { return s_lastPushedIndices; }
+void reset_uniform_allocations() noexcept { s_uniformAllocations.clear(); }
 const std::vector<uint8_t>& uniform_allocation(size_t index) noexcept {
   CHECK(index < s_uniformAllocations.size(), "uniform test allocation {} out of range {}", index,
         s_uniformAllocations.size());
@@ -339,9 +331,7 @@ void use_draw_command_tracking(bool enabled) noexcept {
   s_trackDrawCommands = enabled;
   s_lastGxDraw.reset();
 }
-void use_real_vertex_format_helpers(bool enabled) noexcept {
-  s_useRealVertexFormatHelpers = enabled;
-}
+void use_real_vertex_format_helpers(bool enabled) noexcept { s_useRealVertexFormatHelpers = enabled; }
 } // namespace aurora::gfx::testing
 
 // --- Pipeline/draw command stubs ---
@@ -405,8 +395,8 @@ void reset_resolve_pass_records() noexcept { s_resolvePassRecords.clear(); }
 
 const std::vector<ResolvePassRecord>& resolve_pass_records() noexcept { return s_resolvePassRecords; }
 
-void set_framebuffer_sizes(uint32_t logicalWidth, uint32_t logicalHeight,
-                           uint32_t targetWidth, uint32_t targetHeight) noexcept {
+void set_framebuffer_sizes(uint32_t logicalWidth, uint32_t logicalHeight, uint32_t targetWidth,
+                           uint32_t targetHeight) noexcept {
   s_logicalFbSize = {logicalWidth, logicalHeight};
   s_renderTargetSize = {targetWidth, targetHeight};
 }
@@ -431,9 +421,9 @@ TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, co
 void write_texture(const TextureRef& ref, ArrayRef<uint8_t> data) noexcept {}
 void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                   Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                  const Vec4<float>* sourceRectPixels, bool halfScale,
-                  const std::array<u32, 3>* copyFilterCoefficients, bool forceOpaqueAlpha,
-                  float copyFilterRowStride, bool clampTop, bool clampBottom, bool persistentCopy) {
+                  const Vec4<float>* sourceRectPixels, bool halfScale, const std::array<u32, 3>* copyFilterCoefficients,
+                  bool forceOpaqueAlpha, float copyFilterRowStride, bool clampTop, bool clampBottom,
+                  bool persistentCopy) {
   testing::ResolvePassRecord record;
   record.texture = std::move(texture);
   record.rect = rect;

@@ -51,6 +51,8 @@ struct RuntimeUserConfig {
     std::optional<float> vrRenderScale;
     std::optional<float> vrWorldUnitsPerMeter;
     std::optional<float> vrHudDistanceMeters;
+    std::optional<float> vrHudWidthMeters;
+    std::optional<bool> vrHudVirtualScreen;
     std::optional<bool> vrStopAtDisplayCopy;
     std::optional<bool> vrSkipCopyClears;
     std::optional<float> audioVolume;
@@ -324,6 +326,13 @@ inline void EnsureConfigFile() {
               "render_scale = 1.0\n"
               "world_units_per_meter = 500.0\n"
               "hud_distance_meters = 2.0\n"
+              "hud_width_meters = 2.4\n"
+              "# During a race, put the game's 2D layer (minimap, position,\n"
+              "# item roulette, lap times) on a virtual screen fixed in front of\n"
+              "# the kart camera instead of stretching it across the whole view.\n"
+              "# Changeable live from the F10 menu; the two sizes above place\n"
+              "# that screen and the menu screen alike and are read at launch.\n"
+              "hud_virtual_screen = true\n"
               "# EFB replay controls for the per-eye views, changeable live\n"
               "# from the F10 menu. stop_at_display_copy ends each eye at the\n"
               "# frame's final GXCopyDisp; skip_copy_clears drops the EFB\n"
@@ -484,6 +493,11 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         value && *value >= 0.25f && *value <= 10.0f) {
         config.vrHudDistanceMeters = *value;
     }
+    if (auto value = FindConfigFloat(document, "vr", "hud_width_meters");
+        value && *value >= 0.25f && *value <= 20.0f) {
+        config.vrHudWidthMeters = *value;
+    }
+    config.vrHudVirtualScreen = FindConfigValue<bool>(document, "vr", "hud_virtual_screen");
     config.vrStopAtDisplayCopy = FindConfigValue<bool>(document, "vr", "stop_at_display_copy");
     config.vrSkipCopyClears = FindConfigValue<bool>(document, "vr", "skip_copy_clears");
 
@@ -711,6 +725,11 @@ inline bool SetDisabledPostProcessingPaths(uint32_t value) {
 inline bool SetVrEnabled(bool value) {
     Mutable().vrEnabled = value;
     return WriteSetting("vr", "enabled", value ? "true" : "false");
+}
+
+inline bool SetVrHudVirtualScreen(bool value) {
+    Mutable().vrHudVirtualScreen = value;
+    return WriteSetting("vr", "hud_virtual_screen", value ? "true" : "false");
 }
 
 inline bool SetVrStopAtDisplayCopy(bool value) {
@@ -953,6 +972,14 @@ inline float VrWorldUnitsPerMeter(float fallback = 500.0f) {
 
 inline float VrHudDistanceMeters(float fallback = 2.0f) {
     return std::clamp(Get().vrHudDistanceMeters.value_or(fallback), 0.25f, 10.0f);
+}
+
+inline float VrHudWidthMeters(float fallback = 2.4f) {
+    return std::clamp(Get().vrHudWidthMeters.value_or(fallback), 0.25f, 20.0f);
+}
+
+inline bool VrHudVirtualScreen(bool fallback = true) {
+    return Get().vrHudVirtualScreen.value_or(fallback);
 }
 
 inline bool VrStopAtDisplayCopy(bool fallback = true) {

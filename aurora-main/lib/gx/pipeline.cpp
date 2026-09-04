@@ -66,12 +66,14 @@ void clear_shader_module_cache() {
 }
 
 void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, DrawEncodeState& state,
-            bool requireReadyPipeline, const gfx::Range* uniformRangeOverride) {
-  if (!gfx::bind_pipeline(data.pipeline, pass, state.currentPipeline, requireReadyPipeline)) {
+            bool requireReadyPipeline, const gfx::Range* uniformRangeOverride, gfx::PipelineRef pipelineOverride) {
+  const gfx::PipelineRef pipeline = pipelineOverride != 0 ? pipelineOverride : data.pipeline;
+  if (!gfx::bind_pipeline(pipeline, pass, state.currentPipeline, requireReadyPipeline)) {
     return;
   }
 
-  // An interpolated presentation slot re-encodes the identical draw with only this range replaced; overriding here avoids copying the whole DrawData per draw per slot.
+  // An interpolated presentation slot re-encodes the identical draw with only this range replaced; overriding here
+  // avoids copying the whole DrawData per draw per slot.
   const gfx::Range& uniformRange = uniformRangeOverride != nullptr ? *uniformRangeOverride : data.uniformRange;
   const std::array offsets{uniformRange.offset};
   pass.SetBindGroup(1, gfx::g_uniformBindGroup, offsets.size(), offsets.data());
@@ -90,7 +92,6 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, DrawEncod
     pass.SetIndexBuffer(gfx::g_indexBuffer, wgpu::IndexFormat::Uint16, 0, wgpu::kWholeSize);
     state.indexBufferBound = true;
   }
-  pass.DrawIndexed(data.indexCount, data.instanceCount,
-                   static_cast<uint32_t>(data.idxRange.offset / sizeof(uint16_t)));
+  pass.DrawIndexed(data.indexCount, data.instanceCount, static_cast<uint32_t>(data.idxRange.offset / sizeof(uint16_t)));
 }
 } // namespace aurora::gx

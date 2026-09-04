@@ -43,6 +43,7 @@ void ConfigurePolicy(bool enabled) noexcept {
     config.immersive_races = true;
     config.world_units_per_meter = RuntimeConfigFile::VrWorldUnitsPerMeter(500.0f);
     config.hud_distance_meters = RuntimeConfigFile::VrHudDistanceMeters(2.0f);
+    config.hud_width_meters = RuntimeConfigFile::VrHudWidthMeters(2.4f);
     MkwVRPolicyConfigure(config);
     MkwVRInstrumentationInitialize();
 }
@@ -458,6 +459,7 @@ private:
             presentation.mode = immersive ? OpenXRD3D12FrameMode::ImmersiveProjection
                                            : OpenXRD3D12FrameMode::VirtualScreen;
             presentation.quad_distance_meters = policy.config.hud_distance_meters;
+            presentation.quad_width_meters = policy.config.hud_width_meters;
 
             OpenXRD3D12Frame frame{};
             const OpenXRD3D12BeginStatus begin = backend_->BeginFrame(presentation, frame);

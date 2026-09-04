@@ -61,8 +61,7 @@ Fog fog_uniform() {
     rangeWidth = 1.0f;
   }
   const int rangeCenter = static_cast<int>(rangeBase & 0x3ffu) - 342;
-  const float screenSpaceCenter = rangeEnabled ? ((static_cast<float>(rangeCenter) / rangeWidth) * 2.0f) - 1.0f
-                                               : 0.0f;
+  const float screenSpaceCenter = rangeEnabled ? ((static_cast<float>(rangeCenter) / rangeWidth) * 2.0f) - 1.0f : 0.0f;
   fog.rangeBase = {screenSpaceCenter, rangeEnabled ? rangeWidth : 1.0f, 0.0f, 0.0f};
 
   std::array<float, 12> rangeK{};
@@ -129,8 +128,8 @@ Vec4<float> texture_size_bias(const gfx::TextureBind& tex) {
 }
 
 Vec4<float> texcoord_scale(const TexCoordScale& scale) {
-  return {static_cast<float>(scale.scaleS) + 1.0f, static_cast<float>(scale.scaleT) + 1.0f,
-          scale.biasS ? 1.0f : 0.0f, scale.biasT ? 1.0f : 0.0f};
+  return {static_cast<float>(scale.scaleS) + 1.0f, static_cast<float>(scale.scaleT) + 1.0f, scale.biasS ? 1.0f : 0.0f,
+          scale.biasT ? 1.0f : 0.0f};
 }
 
 void mark_texture_sample(const TevStageTextureDependency& dependency, ShaderInfo& info) {
@@ -149,8 +148,8 @@ void mark_tev_reg_read(GXTevRegID reg, bool alpha, ShaderInfo& info) {
   }
 }
 
-void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage,
-                        const TevStageTextureDependency& textureDependency, ShaderInfo& info) {
+void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage, const TevStageTextureDependency& textureDependency,
+                        ShaderInfo& info) {
   switch (arg) {
   case GX_CC_CPREV:
     mark_tev_reg_read(GX_TEVPREV, false, info);
@@ -229,8 +228,8 @@ void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage,
   }
 }
 
-void alpha_arg_reg_info(GXTevAlphaArg arg, const TevStage& stage,
-                        const TevStageTextureDependency& textureDependency, ShaderInfo& info) {
+void alpha_arg_reg_info(GXTevAlphaArg arg, const TevStage& stage, const TevStageTextureDependency& textureDependency,
+                        ShaderInfo& info) {
   switch (arg) {
   case GX_CA_APREV:
     mark_tev_reg_read(GX_TEVPREV, true, info);
@@ -296,7 +295,8 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
   ZoneScoped;
 
   ShaderInfo info{
-      // vtx_start, current_pnmtx, render/logical viewport size, array_start, pad, proj
+      // vtx_start, current_pnmtx, render/logical viewport size, depth range,
+      // array_start, proj
       .uniformSize = 4 + 4 + 8 + 8 + 8 + 48 + 64,
   };
 
@@ -435,7 +435,8 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
         continue;
       }
       if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
-        // A per-vertex texture matrix index addresses raw matrix memory and can name any row, including the position rows.
+        // A per-vertex texture matrix index addresses raw matrix memory and can name any row, including the position
+        // rows.
         dynamicTexMtx = true;
         continue;
       }
@@ -444,14 +445,16 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
       }
       const u32 slot = static_cast<u32>(tcg.mtx) / 3;
       if (slot >= MaxPostexMtx) {
-        // Out of range for the shader array; preserve the uncompacted layout rather than inventing a different (still invalid) index.
+        // Out of range for the shader array; preserve the uncompacted layout rather than inventing a different (still
+        // invalid) index.
         dynamicTexMtx = true;
         continue;
       }
       literalSlots.set(slot);
     }
 
-    // At most MaxPostexMtx entries can ever be pushed: the absolute layout pushes the ten position slots plus at most ten texture slots, and the compacted layout pushes the current matrix plus at most one literal slot per texgen.
+    // At most MaxPostexMtx entries can ever be pushed: the absolute layout pushes the ten position slots plus at most
+    // ten texture slots, and the compacted layout pushes the current matrix plus at most one literal slot per texgen.
     const auto pushPostex = [&](u8 slot) {
       CHECK(layout.postexCount < layout.postexSlots.size(), "postex matrix layout overflow");
       layout.postexSlots[layout.postexCount++] = slot;
@@ -463,7 +466,8 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
 
     layout.absolutePosRegion = dynamicPnMtx || dynamicTexMtx;
     if (!layout.absolutePosRegion) {
-      // Compact slot 0 always holds the matrix selected by the current matrix index; build_uniform writes 0 into `current_pnmtx` to match.
+      // Compact slot 0 always holds the matrix selected by the current matrix index; build_uniform writes 0 into
+      // `current_pnmtx` to match.
       pushPostex(UniformMatrixLayout::kCurrentPnMtx);
       pushNrm(UniformMatrixLayout::kCurrentPnMtx);
     }
@@ -474,7 +478,8 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
       layout.postexRemap[slot] = layout.postexCount;
       pushPostex(static_cast<u8>(slot));
       if (layout.absolutePosRegion) {
-        // The normal array is indexed by the same expression as the position array, so its compact indices have to line up with the position slots.
+        // The normal array is indexed by the same expression as the position array, so its compact indices have to line
+        // up with the position slots.
         pushNrm(static_cast<u8>(slot));
       }
     }
@@ -485,7 +490,8 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
       layout.postexRemap[slot] = layout.postexCount;
       pushPostex(static_cast<u8>(slot));
     }
-    // `postex_mtx[in_pnmtxidx]` and `nrm_mtx[in_pnmtxidx]` are emitted unconditionally, so neither array can ever be empty.
+    // `postex_mtx[in_pnmtxidx]` and `nrm_mtx[in_pnmtxidx]` are emitted unconditionally, so neither array can ever be
+    // empty.
     info.uniformSize += sizeof(Mat3x4<float>) * (layout.postexCount + layout.nrmCount);
   }
   if (config.fogType != GX_FOG_NONE) {
@@ -543,9 +549,14 @@ static u32 line_texcoord_mask() noexcept {
 }
 
 namespace {
-// Largest possible staged prefix: scalar head (80) + line/point block (16) + projection matrix + every matrix the uncompacted layout can hold.
-constexpr size_t kStagedUniformBytes =
-    96 + sizeof(Mat4x4<float>) + sizeof(Mat3x4<float>) * (MaxPostexMtx + MaxPnMtx);
+// GX's fixed EFB workspace, the reference the effect-buffer test below reduces
+// against.
+constexpr u16 kEfbWidth = 640;
+constexpr u16 kEfbHeight = 528;
+
+// Largest possible staged prefix: scalar head (80) + line/point block (16) + projection matrix + every matrix the
+// uncompacted layout can hold.
+constexpr size_t kStagedUniformBytes = 96 + sizeof(Mat4x4<float>) + sizeof(Mat3x4<float>) * (MaxPostexMtx + MaxPnMtx);
 
 // The host viewport always receives the normalized GX depth window (render_pass_impl clamps to minDepth <= maxDepth).
 static Mat4x4<float> effective_projection() noexcept {
@@ -569,7 +580,8 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
   auto [buf, range] = gfx::map_uniform(info.uniformSize);
 
   const auto& layout = info.matrixLayout;
-  // `postex_mtx[current_pnmtx]` indexes raw matrix memory, so a current-matrix index of 10 or more selects a texture matrix; the normal array only covers the position rows and clamps.
+  // `postex_mtx[current_pnmtx]` indexes raw matrix memory, so a current-matrix index of 10 or more selects a texture
+  // matrix; the normal array only covers the position rows and clamps.
   const u32 currentPostexSlot = std::min<u32>(g_gxState.currentPnMtx, MaxPostexMtx - 1);
   const u32 currentNrmSlot = std::min<u32>(g_gxState.currentPnMtx, MaxPnMtx - 1);
 
@@ -583,15 +595,23 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
   const auto stage_u32 = [&](u32 value) noexcept { stage(&value, sizeof(value)); };
   const auto stage_f32 = [&](f32 value) noexcept { stage(&value, sizeof(value)); };
 
+  const Mat4x4<float> effectiveProj = effective_projection();
+  const auto& viewport = g_gxState.renderViewport;
+  const float depthNear = std::clamp(std::min(viewport.znear, viewport.zfar), 0.0f, 1.0f);
+  const float depthFar = std::clamp(std::max(viewport.znear, viewport.zfar), 0.0f, 1.0f);
+
   stage_u32(vtxStart);
-  // With a compacted position region the live matrix is uploaded to slot 0, so every `postex_mtx[in_pnmtxidx]` / `nrm_mtx[in_pnmtxidx]` read has to resolve to 0 as well.
+  // With a compacted position region the live matrix is uploaded to slot 0, so every `postex_mtx[in_pnmtxidx]` /
+  // `nrm_mtx[in_pnmtxidx]` read has to resolve to 0 as well.
   stage_u32(layout.absolutePosRegion ? g_gxState.currentPnMtx : 0u);
   stage_f32(g_gxState.renderViewport.width);
   stage_f32(g_gxState.renderViewport.height);
   stage_f32(g_gxState.logicalViewport.width);
   stage_f32(g_gxState.logicalViewport.height);
-  std::memset(staged.data() + stagedSize, 0, 8); // pad
-  stagedSize += 8;
+  // Fragment-depth output bypasses the fixed viewport transform, so exact
+  // screen depth applies that same clamped window explicitly.
+  stage_f32(depthNear);
+  stage_f32(depthFar - depthNear);
   for (const auto& vaRange : ranges.vaRanges) {
     stage_u32(vaRange.offset);
   }
@@ -609,26 +629,22 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
     }
   }
   const size_t projectionOffset = stagedSize;
-  const Mat4x4<float> effectiveProj = effective_projection();
   stage(&effectiveProj, sizeof(effectiveProj));
 
   const size_t positionOffset = stagedSize;
   uint32_t positionMatrixMask = 0;
   for (u32 i = 0; i < layout.postexCount; ++i) {
     const u32 slot =
-        layout.postexSlots[i] == UniformMatrixLayout::kCurrentPnMtx ? currentPostexSlot
-                                                                    : layout.postexSlots[i];
+        layout.postexSlots[i] == UniformMatrixLayout::kCurrentPnMtx ? currentPostexSlot : layout.postexSlots[i];
     if (slot < MaxPnMtx) {
       positionMatrixMask |= 1u << i;
     }
-    stage(slot < MaxPnMtx ? &g_gxState.pnMtx[slot].pos : &g_gxState.texMtxs[slot - MaxPnMtx],
-          sizeof(Mat3x4<float>));
+    stage(slot < MaxPnMtx ? &g_gxState.pnMtx[slot].pos : &g_gxState.texMtxs[slot - MaxPnMtx], sizeof(Mat3x4<float>));
   }
 
   const size_t normalOffset = stagedSize;
   for (u32 i = 0; i < layout.nrmCount; ++i) {
-    const u32 slot = layout.nrmSlots[i] == UniformMatrixLayout::kCurrentPnMtx ? currentNrmSlot
-                                                                             : layout.nrmSlots[i];
+    const u32 slot = layout.nrmSlots[i] == UniformMatrixLayout::kCurrentPnMtx ? currentNrmSlot : layout.nrmSlots[i];
     stage(&g_gxState.pnMtx[slot].nrm, sizeof(Mat3x4<float>));
   }
   buf.append(staged.data(), stagedSize);
@@ -640,7 +656,8 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
     }
   }
   if (info.lightingEnabled) {
-    // Sanitizing and normalizing light directions is substantially more expensive than copying the uniform data, while lights normally remain unchanged across many draws.
+    // Sanitizing and normalizing light directions is substantially more expensive than copying the uniform data, while
+    // lights normally remain unchanged across many draws.
     static_assert(sizeof(g_gxState.lights) == 80 * GX::MaxLights);
     if (g_gxState.preparedLightsDirty) {
       for (size_t i = 0; i < g_gxState.preparedLights.size(); ++i) {
@@ -702,14 +719,28 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
       buf.append(texcoord_scale(g_gxState.texCoordScales[i]));
     }
   }
+  // A freshly produced, downscaled EFB copy is an effect buffer by construction
+  // (Mario Kart Wii's bloom chain reduces to 128x128 and 64x64), and a fresh
+  // full-resolution one blended back in is a blur or haze pass. Older one-shot
+  // copies are persistent game art (notably MKW's baked minimap), so they stay
+  // eligible for the virtual screen even when small and alpha blended.
+  bool samplesRecentEfbCopy = false;
+  bool samplesReducedEfbCopy = false;
+  const u32 currentFrame = gfx::current_frame();
   for (int i = 0; i < info.sampledTextures.size(); ++i) {
     if (!info.sampledTextures.test(i)) {
       continue;
     }
     const auto& tex = get_texture(static_cast<GXTexMapID>(i));
     // CHECK(tex, "unbound texture {}", i);
+    if (tex.ref && tex.ref->is_recent_efb_copy(currentFrame)) {
+      samplesRecentEfbCopy = true;
+      samplesReducedEfbCopy =
+          samplesReducedEfbCopy || tex.texObj.width() * 2 <= kEfbWidth || tex.texObj.height() * 2 <= kEfbHeight;
+    }
     buf.append(texture_size_bias(tex));
   }
+  const bool blends = g_gxState.blendMode == GX_BM_BLEND || g_gxState.blendMode == GX_BM_SUBTRACT;
 
   const UniformReplayLayout replayLayout{
       .projectionOffset = static_cast<uint32_t>(projectionOffset),
@@ -719,6 +750,7 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
       .positionMatrixCount = layout.postexCount,
       .normalMatrixCount = layout.nrmCount,
       .perspective = perspective,
+      .nativeEfbEffect = !perspective && samplesRecentEfbCopy && (samplesReducedEfbCopy || blends),
   };
 
   if (!perspective || frame_interpolation_fps() == 0) {
@@ -739,9 +771,7 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
           .positionOffset = positionOffset,
           .normalOffset = normalOffset,
           // A compacted position region holds the current matrix at slot 0.
-          .currentMatrix = layout.absolutePosRegion
-                               ? std::min<size_t>(g_gxState.currentPnMtx, MaxPnMtx - 1)
-                               : 0,
+          .currentMatrix = layout.absolutePosRegion ? std::min<size_t>(g_gxState.currentPnMtx, MaxPnMtx - 1) : 0,
           .indexedMatrices = info.indexAttr.test(GX_VA_PNMTXIDX),
       });
   g_gxState.stateDirty = false;

@@ -102,6 +102,7 @@ bool g_showFps = RuntimeConfigFile::ShowFps(true);
 bool g_vrEnabled = RuntimeConfigFile::VrEnabled(false);
 bool g_vrStopAtDisplayCopy = RuntimeConfigFile::VrStopAtDisplayCopy(true);
 bool g_vrSkipCopyClears = RuntimeConfigFile::VrSkipCopyClears(true);
+bool g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -705,6 +706,16 @@ void DrawAudioSettings() {
     }
 }
 
+// The virtual screen's placement comes from the launch-time [vr] geometry, the
+// same metres the menu quad is built from, converted into the world units the
+// eye replay works in.
+void ApplyVrHudVirtualScreen() {
+    const float unitsPerMeter = RuntimeConfigFile::VrWorldUnitsPerMeter(500.0f);
+    aurora_set_stereo_hud_screen(g_vrHudVirtualScreen,
+                                 RuntimeConfigFile::VrHudWidthMeters(2.4f) * unitsPerMeter,
+                                 RuntimeConfigFile::VrHudDistanceMeters(2.0f) * unitsPerMeter);
+}
+
 void DrawGraphicsSettings() {
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     struct EffectFlag {
@@ -827,6 +838,19 @@ void DrawGraphicsSettings() {
         "Both apply on the next frame. Turning either off restores the raw replay and is "
         "expected to black out the eyes.");
     ImGui::PopTextWrapPos();
+    ImGui::Separator();
+    ImGui::Text("VR 2D layer");
+    if (ImGui::Checkbox("2D layer on a virtual screen", &g_vrHudVirtualScreen)) {
+        ApplyVrHudVirtualScreen();
+        RuntimeConfigFile::SetVrHudVirtualScreen(g_vrHudVirtualScreen);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Puts the minimap, race position, item roulette and the rest of the race HUD on a "
+            "screen fixed ahead of the kart camera. Turn off to leave them stretched across "
+            "the whole view. Its size and distance are the [vr] hud_width_meters and "
+            "hud_distance_meters read at launch.");
+    }
 }
 
 void DrawFpsOverlay() {
@@ -1046,6 +1070,7 @@ void InitializeRuntimeSettings() noexcept {
     aurora_set_disable_copy_filter(g_disableCopyFilter);
     aurora_set_stereo_stop_at_display_copy(g_vrStopAtDisplayCopy);
     aurora_set_stereo_skip_copy_clears(g_vrSkipCopyClears);
+    ApplyVrHudVirtualScreen();
     aurora_set_skip_unready_pipelines(g_skipUnreadyPipelines);
     g_strapInputAccepted.store(false, std::memory_order_relaxed);
     g_startupDismissFrame.store(UINT64_MAX, std::memory_order_relaxed);

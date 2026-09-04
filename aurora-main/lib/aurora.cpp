@@ -82,6 +82,7 @@ struct StereoSinkRegistration {
 #endif
 std::mutex g_stereoRegistrationMutex;
 StereoProviderRegistration g_stereoProvider;
+std::atomic_bool g_stereoProviderActive{false};
 #ifdef AURORA_ENABLE_GX
 StereoSinkRegistration g_stereoSink;
 #endif
@@ -129,8 +130,7 @@ void wait_until_precise(PresentClock::time_point deadline) noexcept {
   static thread_local HighResolutionTimer timer;
   if (timer.handle != nullptr && timerDeadline > now) {
     const auto remaining100ns =
-        std::chrono::duration_cast<std::chrono::duration<int64_t, std::ratio<1, 10000000>>>(
-            timerDeadline - now);
+        std::chrono::duration_cast<std::chrono::duration<int64_t, std::ratio<1, 10000000>>>(timerDeadline - now);
     LARGE_INTEGER due{};
     due.QuadPart = -std::max<int64_t>(remaining100ns.count(), 1);
     if (::SetWaitableTimerEx(timer.handle, &due, 0, nullptr, nullptr, nullptr, 0) != FALSE) {
@@ -151,14 +151,9 @@ void wait_until_precise(PresentClock::time_point deadline) noexcept {
   }
 }
 
-void record_successful_present(bool, uint32_t,
-                               std::chrono::nanoseconds,
-                               std::chrono::nanoseconds,
-                               std::chrono::nanoseconds,
-                               std::chrono::nanoseconds,
-                               std::chrono::nanoseconds,
-                               std::chrono::nanoseconds, bool duplicated,
-                               uint32_t, std::chrono::nanoseconds) noexcept {
+void record_successful_present(bool, uint32_t, std::chrono::nanoseconds, std::chrono::nanoseconds,
+                               std::chrono::nanoseconds, std::chrono::nanoseconds, std::chrono::nanoseconds,
+                               std::chrono::nanoseconds, bool duplicated, uint32_t, std::chrono::nanoseconds) noexcept {
   const auto now = PresentClock::now();
   std::chrono::nanoseconds interval{};
   {
@@ -191,8 +186,7 @@ AuroraPresentTiming snapshot_present_timing() noexcept {
     for (size_t i = 0; i < g_presentTimingSampleCount; ++i) {
       const auto& sample = g_presentTimingSamples[i];
       if (sample.presentedAt >= cutoff && sample.interval.count() > 0) {
-        milliseconds.push_back(
-            std::chrono::duration<double, std::milli>(sample.interval).count());
+        milliseconds.push_back(std::chrono::duration<double, std::milli>(sample.interval).count());
         if (!sample.duplicated) {
           ++newMotionSamples;
         }
@@ -217,8 +211,7 @@ AuroraPresentTiming snapshot_present_timing() noexcept {
   // Duplicated presentation slots keep the presented cadence but carry no new
   // motion; scale them out so this reads as the rate the eye actually sees.
   result.effectiveFramesPerSecond =
-      result.framesPerSecond *
-      (static_cast<double>(newMotionSamples) / static_cast<double>(milliseconds.size()));
+      result.framesPerSecond * (static_cast<double>(newMotionSamples) / static_cast<double>(milliseconds.size()));
   for (const double value : milliseconds) {
     const double difference = value - result.averageFrameTimeMs;
     result.jitterMs += difference * difference;
@@ -389,8 +382,7 @@ bool wait_for_frame_worker_private_for(FrameWorkerPhase phase, std::chrono::micr
 
 void wait_for_frame_worker_private(FrameWorkerPhase phase) noexcept {
   constexpr auto kWaitServiceInterval = std::chrono::milliseconds(1);
-  while (!wait_for_frame_worker_private_for(phase, kWaitServiceInterval)) {
-  }
+  while (!wait_for_frame_worker_private_for(phase, kWaitServiceInterval)) {}
 }
 
 bool wait_for_frame_worker_private_for(FrameWorkerPhase phase, std::chrono::microseconds timeout) noexcept {
@@ -408,8 +400,7 @@ bool wait_for_frame_worker_private_for(FrameWorkerPhase phase, std::chrono::micr
     return frame_worker_phase_reached(phase);
   }
 
-  const bool reached =
-      g_frameWorker.cv.wait_for(lock, timeout, [phase] { return frame_worker_phase_reached(phase); });
+  const bool reached = g_frameWorker.cv.wait_for(lock, timeout, [phase] { return frame_worker_phase_reached(phase); });
   if (reached) {
     return true;
   }
@@ -444,9 +435,7 @@ void stop_frame_worker() noexcept {
   g_frameWorker.contentTag = AURORA_STEREO_CONTENT_TAG_UNKNOWN;
 }
 
-uint32_t align_to(uint32_t value, uint32_t alignment) noexcept {
-  return (value + alignment - 1) & ~(alignment - 1);
-}
+uint32_t align_to(uint32_t value, uint32_t alignment) noexcept { return (value + alignment - 1) & ~(alignment - 1); }
 
 void append_u16(std::ofstream& out, uint16_t value) {
   const char bytes[] = {static_cast<char>(value), static_cast<char>(value >> 8)};
@@ -454,15 +443,16 @@ void append_u16(std::ofstream& out, uint16_t value) {
 }
 
 void append_u32(std::ofstream& out, uint32_t value) {
-  const char bytes[] = {static_cast<char>(value), static_cast<char>(value >> 8),
-                        static_cast<char>(value >> 16), static_cast<char>(value >> 24)};
+  const char bytes[] = {static_cast<char>(value), static_cast<char>(value >> 8), static_cast<char>(value >> 16),
+                        static_cast<char>(value >> 24)};
   out.write(bytes, sizeof(bytes));
 }
 
-bool write_bmp(const char* path, const uint8_t* pixels, uint32_t width, uint32_t height,
-               uint32_t bytesPerRow, bool bgra) {
+bool write_bmp(const char* path, const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t bytesPerRow,
+               bool bgra) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  if (!out) return false;
+  if (!out)
+    return false;
   constexpr uint32_t pixelOffset = 14 + 40;
   const uint32_t imageSize = width * height * 4;
   out.write("BM", 2);
@@ -523,9 +513,7 @@ struct StereoEyeTarget {
   wgpu::TextureFormat colorFormat = wgpu::TextureFormat::Undefined;
   wgpu::TextureFormat depthFormat = wgpu::TextureFormat::Undefined;
 
-  const webgpu::TextureWithSampler& output() const noexcept {
-    return resolvedColor.texture ? resolvedColor : color;
-  }
+  const webgpu::TextureWithSampler& output() const noexcept { return resolvedColor.texture ? resolvedColor : color; }
 };
 std::array<StereoEyeTarget, AURORA_STEREO_EYE_COUNT> g_stereoEyeTargets;
 
@@ -541,8 +529,7 @@ void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height
   target = {};
   target.color = webgpu::create_render_texture(width, height, samples > 1);
   if (samples > 1) {
-    target.resolvedColor =
-        webgpu::create_render_texture(target.color.size.width, target.color.size.height, false);
+    target.resolvedColor = webgpu::create_render_texture(target.color.size.width, target.color.size.height, false);
   }
 
   const wgpu::TextureDescriptor depthDescriptor{
@@ -565,8 +552,7 @@ void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height
   target.depthFormat = target.depth.format;
 }
 
-std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame,
-                                                      uint64_t contentTag) noexcept {
+std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame, uint64_t contentTag) noexcept {
   StereoProviderRegistration registration;
   {
     std::lock_guard lock(g_stereoRegistrationMutex);
@@ -588,8 +574,7 @@ std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame,
     return std::nullopt;
   }
   if (frame.mode != AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && frame.mode != AURORA_STEREO_FRAME_VIRTUAL_SCREEN) {
-    Log.warn("Stereo frame {} has invalid mode {}; rendering in mono", logicalFrame,
-             static_cast<uint32_t>(frame.mode));
+    Log.warn("Stereo frame {} has invalid mode {}; rendering in mono", logicalFrame, static_cast<uint32_t>(frame.mode));
     return std::nullopt;
   }
   // A virtual-screen packet only copies the completed mono image and remains
@@ -597,8 +582,7 @@ std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame,
   // transforms, so it requires the exact tag latched for this sealed content.
   if (frame.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY &&
       (contentTag == AURORA_STEREO_CONTENT_TAG_UNKNOWN || frame.contentTag != contentTag)) {
-    Log.debug("Stereo frame {} content tag does not match its sealed frame; rendering in mono",
-              logicalFrame);
+    Log.debug("Stereo frame {} content tag does not match its sealed frame; rendering in mono", logicalFrame);
     return std::nullopt;
   }
 
@@ -617,8 +601,7 @@ std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame,
     const bool transformsValid = frame.mode == AURORA_STEREO_FRAME_VIRTUAL_SCREEN ||
                                  (finite(input.projection, 16) && finite(input.viewFromCenter, 12));
     if (input.width == 0 || input.height == 0 || !transformsValid) {
-      Log.warn("Stereo frame {} has invalid eye {} dimensions or transforms; rendering in mono",
-               logicalFrame, eye);
+      Log.warn("Stereo frame {} has invalid eye {} dimensions or transforms; rendering in mono", logicalFrame, eye);
       return std::nullopt;
     }
   }
@@ -648,8 +631,7 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input) 
   return replay;
 }
 
-void encode_virtual_screen_eye(wgpu::CommandEncoder& encoder, const webgpu::PresentSource& source,
-                               uint32_t eyeIndex) {
+void encode_virtual_screen_eye(wgpu::CommandEncoder& encoder, const webgpu::PresentSource& source, uint32_t eyeIndex) {
   const auto& output = g_stereoEyeTargets[eyeIndex].output();
   const std::array attachments{
       wgpu::RenderPassColorAttachment{
@@ -667,12 +649,11 @@ void encode_virtual_screen_eye(wgpu::CommandEncoder& encoder, const webgpu::Pres
   {
     const auto pass = encoder.BeginRenderPass(&descriptor);
     if (source.bindGroup && source.size.width != 0 && source.size.height != 0) {
-      const auto viewport = webgpu::calculate_present_viewport(
-          output.size.width, output.size.height, source.size.width, source.size.height);
+      const auto viewport = webgpu::calculate_present_viewport(output.size.width, output.size.height, source.size.width,
+                                                               source.size.height);
       pass.SetPipeline(webgpu::g_CopyPipeline);
       pass.SetBindGroup(0, source.bindGroup, 0, nullptr);
-      pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height,
-                       viewport.znear, viewport.zfar);
+      pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
       pass.Draw(3);
     }
     pass.End();
@@ -720,9 +701,7 @@ std::optional<PendingStereoSink> run_stereo_sink(wgpu::CommandEncoder& encoder, 
   };
 }
 
-void request_surface_reconfigure() noexcept {
-  g_surfaceReconfigurePending.store(true, std::memory_order_release);
-}
+void request_surface_reconfigure() noexcept { g_surfaceReconfigurePending.store(true, std::memory_order_release); }
 
 void request_surface_recreate() noexcept {
   g_surfaceRecreatePending.store(true, std::memory_order_release);
@@ -743,7 +722,8 @@ std::optional<PendingFrameCapture> encode_frame_capture(const wgpu::CommandEncod
                                                         const webgpu::PresentSource& source) {
   const uint32_t requestedFrame = g_captureFrame.load(std::memory_order_acquire);
   const uint32_t currentFrame = gfx::current_frame();
-  if (requestedFrame == UINT32_MAX || currentFrame < requestedFrame) return std::nullopt;
+  if (requestedFrame == UINT32_MAX || currentFrame < requestedFrame)
+    return std::nullopt;
   g_captureFrame.store(UINT32_MAX, std::memory_order_release);
   if (currentFrame != requestedFrame) {
     Log.error("Missed requested frame capture {} (current frame {})", requestedFrame, currentFrame);
@@ -753,10 +733,10 @@ std::optional<PendingFrameCapture> encode_frame_capture(const wgpu::CommandEncod
     Log.error("Frame {} capture has no present-source texture", currentFrame);
     return std::nullopt;
   }
-  const bool bgra = source.format == wgpu::TextureFormat::BGRA8Unorm ||
-                    source.format == wgpu::TextureFormat::BGRA8UnormSrgb;
-  const bool rgba = source.format == wgpu::TextureFormat::RGBA8Unorm ||
-                    source.format == wgpu::TextureFormat::RGBA8UnormSrgb;
+  const bool bgra =
+      source.format == wgpu::TextureFormat::BGRA8Unorm || source.format == wgpu::TextureFormat::BGRA8UnormSrgb;
+  const bool rgba =
+      source.format == wgpu::TextureFormat::RGBA8Unorm || source.format == wgpu::TextureFormat::RGBA8UnormSrgb;
   if (!bgra && !rgba) {
     Log.error("Frame {} capture does not support texture format {}", currentFrame,
               magic_enum::enum_name(source.format));
@@ -795,12 +775,12 @@ std::optional<PendingFrameCapture> encode_frame_capture(const wgpu::CommandEncod
 void complete_frame_capture(PendingFrameCapture& capture) {
   wgpu::MapAsyncStatus mapStatus = wgpu::MapAsyncStatus::CallbackCancelled;
   wgpu::StringView mapMessage{};
-  const auto future = capture.buffer.MapAsync(
-      wgpu::MapMode::Read, 0, capture.bufferSize, wgpu::CallbackMode::WaitAnyOnly,
-      [&mapStatus, &mapMessage](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-        mapStatus = status;
-        mapMessage = message;
-      });
+  const auto future =
+      capture.buffer.MapAsync(wgpu::MapMode::Read, 0, capture.bufferSize, wgpu::CallbackMode::WaitAnyOnly,
+                              [&mapStatus, &mapMessage](wgpu::MapAsyncStatus status, wgpu::StringView message) {
+                                mapStatus = status;
+                                mapMessage = message;
+                              });
   const auto waitStatus = g_instance.WaitAny(future, 5000000000);
   if (waitStatus != wgpu::WaitStatus::Success || mapStatus != wgpu::MapAsyncStatus::Success) {
     Log.error("Frame capture readback failed wait={} map={} message={}", magic_enum::enum_name(waitStatus),
@@ -879,7 +859,6 @@ constexpr std::array<AuroraBackend, 0> PreferredBackendOrder{};
 
 bool g_initialFrame = false;
 
-
 AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexcept {
   g_config = config;
   Log.info("Aurora initializing");
@@ -935,15 +914,15 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
         window::destroy_window();
       }
     } else {
-      Log.error("Failed to create a window for backend {}: {}", backend_name(selectedBackend),
-                SDL_GetError());
+      Log.error("Failed to create a window for backend {}: {}", backend_name(selectedBackend), SDL_GetError());
     }
     if (!windowCreated) {
       /* An explicitly requested backend that cannot be brought up falls back to the BACKEND_AUTO
        * search instead of aborting, and the substitution is always reported. */
-      Log.error("Requested graphics backend {} is unavailable on this system; "
-                "falling back to automatic selection",
-                backend_name(requestedBackend));
+      Log.error(
+          "Requested graphics backend {} is unavailable on this system; "
+          "falling back to automatic selection",
+          backend_name(requestedBackend));
     }
   }
 
@@ -964,9 +943,10 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
 
   ASSERT(windowCreated, "Error creating window: {}", SDL_GetError());
   if (requestedBackend != BACKEND_AUTO && selectedBackend != requestedBackend) {
-    Log.error("Graphics backend fallback in effect: video.graphics_api requested {}, "
-              "running on {}",
-              backend_name(requestedBackend), backend_name(selectedBackend));
+    Log.error(
+        "Graphics backend fallback in effect: video.graphics_api requested {}, "
+        "running on {}",
+        backend_name(requestedBackend), backend_name(selectedBackend));
   }
 
   // Initialize SDL_Renderer for ImGui when we can't use a Dawn backend
@@ -1077,11 +1057,9 @@ struct PresentationJob {
   uint32_t slidPeriods = 0;
 };
 
-std::array<std::vector<std::shared_ptr<PresentationImage>>, gx::MaxInterpolatedFrames + 1>
-    g_presentationImagePools;
+std::array<std::vector<std::shared_ptr<PresentationImage>>, gx::MaxInterpolatedFrames + 1> g_presentationImagePools;
 
-std::shared_ptr<PresentationImage> acquire_presentation_image(size_t slot, uint32_t width,
-                                                              uint32_t height) {
+std::shared_ptr<PresentationImage> acquire_presentation_image(size_t slot, uint32_t width, uint32_t height) {
   auto& pool = g_presentationImagePools.at(slot);
   // A use count of one means only the pool holds the image, so no job can be reading it. Idle
   // images from an older surface size are dropped here instead of leaking for the run.
@@ -1122,16 +1100,15 @@ bool present_presentation_job(const PresentationJob& job) {
   std::chrono::nanoseconds scheduleWaitDuration{};
   std::chrono::nanoseconds presentDuration{};
   bool presented = false;
-  if (g_surfaceReconfigurePending.load(std::memory_order_acquire) ||
-      window::native_resize_pending() || !window::is_presentable()) {
+  if (g_surfaceReconfigurePending.load(std::memory_order_acquire) || window::native_resize_pending() ||
+      !window::is_presentable()) {
     return false;
   }
   std::chrono::nanoseconds lateBy{};
   if (job.presentAt != PresentClock::time_point{}) {
     // How expired the deadline already is at dequeue. Positive values mean the
     // slot cannot be paced and fires immediately, which is a burst symptom.
-    lateBy = std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() -
-                                                                  job.presentAt);
+    lateBy = std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - job.presentAt);
   }
   {
     window::SurfaceLock surfaceLock;
@@ -1139,26 +1116,23 @@ bool present_presentation_job(const PresentationJob& job) {
     // surface lock covers all of them. The renderer mutex is deliberately not taken.
     const auto surfaceLockStarted = PresentClock::now();
     std::unique_lock surfaceOwnership(g_surfaceMutex);
-    surfaceLockDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        PresentClock::now() - surfaceLockStarted);
+    surfaceLockDuration =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - surfaceLockStarted);
     // Surface contention is waiting, not encoding, so keep it out of the encode timing where a
     // reconfigure would look like GPU command recording.
     const auto workStarted = PresentClock::now();
     bool surfaceSizeChanged = window::native_resize_pending();
-    if (!surfaceSizeChanged &&
-        !g_surfaceReconfigurePending.load(std::memory_order_acquire) &&
+    if (!surfaceSizeChanged && !g_surfaceReconfigurePending.load(std::memory_order_acquire) &&
         window::is_presentable() && g_surface) {
       // native_window_size_matches compares the OS client size with the configured swapchain, which is
       // what native_fb_* reports. One window query instead of SDL's per-call ones.
-      surfaceSizeChanged = !window::native_window_size_matches(
-          webgpu::g_graphicsConfig.surfaceConfiguration.width,
-          webgpu::g_graphicsConfig.surfaceConfiguration.height);
+      surfaceSizeChanged = !window::native_window_size_matches(webgpu::g_graphicsConfig.surfaceConfiguration.width,
+                                                               webgpu::g_graphicsConfig.surfaceConfiguration.height);
     }
     if (!surfaceSizeChanged && window::is_presentable()) {
       const auto acquireStarted = PresentClock::now();
       auto acquired = acquire_surface_texture();
-      acquireDuration =
-          std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - acquireStarted);
+      acquireDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - acquireStarted);
       if (acquired) {
         const wgpu::CommandEncoderDescriptor encoderDescriptor{
             .label = "Presentation encoder",
@@ -1179,59 +1153,52 @@ bool present_presentation_job(const PresentationJob& job) {
         const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
         pass.SetPipeline(webgpu::g_CopyPipeline);
         pass.SetBindGroup(0, job.image->bindGroup, 0, nullptr);
-        pass.SetViewport(0.f, 0.f,
-                         static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
-                         static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height),
-                         0.f, 1.f);
+        pass.SetViewport(0.f, 0.f, static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
+                         static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height), 0.f, 1.f);
         pass.Draw(3);
         pass.End();
         const auto encodeFinished = PresentClock::now();
-        encodeDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            encodeFinished - workStarted - acquireDuration);
+        encodeDuration =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(encodeFinished - workStarted - acquireDuration);
         const wgpu::CommandBufferDescriptor cmdBufDescriptor{
             .label = "Presentation command buffer",
         };
         const auto finishStarted = PresentClock::now();
         const auto buffer = encoder.Finish(&cmdBufDescriptor);
-        finishDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            PresentClock::now() - finishStarted);
+        finishDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - finishStarted);
         const auto submitStarted = PresentClock::now();
         {
           std::lock_guard submitLock(g_queueSubmitMutex);
           g_queue.Submit(1, &buffer);
         }
-        submitDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            PresentClock::now() - submitStarted);
+        submitDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - submitStarted);
         // Pace the Present() call itself, not the whole unit, so acquire/encode/submit variance stays out
         // of the cadence. Holding the image across the wait is safe while the surface lock is held.
         if (job.presentAt != PresentClock::time_point{}) {
           const auto scheduleWaitStarted = PresentClock::now();
           wait_until_precise(job.presentAt);
-          scheduleWaitDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-              PresentClock::now() - scheduleWaitStarted);
+          scheduleWaitDuration =
+              std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - scheduleWaitStarted);
         }
         // A native resize can arrive after acquisition, so drop the obsolete image and let the render
         // worker reconfigure at its ordered frame boundary.
-        if (!g_surfaceReconfigurePending.load(std::memory_order_acquire) &&
-            !window::native_resize_pending() && window::is_presentable() &&
-            window::native_window_size_matches(
-                webgpu::g_graphicsConfig.surfaceConfiguration.width,
-                webgpu::g_graphicsConfig.surfaceConfiguration.height)) {
+        if (!g_surfaceReconfigurePending.load(std::memory_order_acquire) && !window::native_resize_pending() &&
+            window::is_presentable() &&
+            window::native_window_size_matches(webgpu::g_graphicsConfig.surfaceConfiguration.width,
+                                               webgpu::g_graphicsConfig.surfaceConfiguration.height)) {
           const auto presentStarted = PresentClock::now();
           wgpu::Status presentStatus;
           {
             std::lock_guard submitLock(g_queueSubmitMutex);
             presentStatus = g_surface.Present();
           }
-          presentDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-              PresentClock::now() - presentStarted);
+          presentDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - presentStarted);
           if (presentStatus == wgpu::Status::Success) {
             presented = true;
             record_successful_present(
-                job.interpolated, job.logicalFrame, acquireDuration, encodeDuration,
-                finishDuration, submitDuration, presentDuration,
-                std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() -
-                                                                     submissionStarted),
+                job.interpolated, job.logicalFrame, acquireDuration, encodeDuration, finishDuration, submitDuration,
+                presentDuration,
+                std::chrono::duration_cast<std::chrono::nanoseconds>(PresentClock::now() - submissionStarted),
                 job.duplicated, job.slidPeriods, lateBy);
           } else {
             Log.warn("Surface present failed: {}", static_cast<int>(presentStatus));
@@ -1257,8 +1224,7 @@ bool present_presentation_job(const PresentationJob& job) {
       ++s_consecutiveStalledPresents;
       const auto now = PresentClock::now();
       if (s_consecutiveStalledPresents >= kStallRebuildThreshold &&
-          (s_lastStallRebuild == PresentClock::time_point{} ||
-           now - s_lastStallRebuild >= kStallRebuildCooldown)) {
+          (s_lastStallRebuild == PresentClock::time_point{} || now - s_lastStallRebuild >= kStallRebuildCooldown)) {
         s_lastStallRebuild = now;
         s_consecutiveStalledPresents = 0;
         rebuildRequested = true;
@@ -1266,17 +1232,18 @@ bool present_presentation_job(const PresentationJob& job) {
     } else {
       s_consecutiveStalledPresents = 0;
     }
-    Log.warn("Presentation job took {:.1f} ms (surface lock {:.1f}, acquire {:.1f}, encode {:.1f}, "
-             "finish {:.1f}, submit {:.1f}, schedule wait {:.1f}, present {:.1f}){}",
-             std::chrono::duration<double, std::milli>(totalDuration).count(),
-             std::chrono::duration<double, std::milli>(surfaceLockDuration).count(),
-             std::chrono::duration<double, std::milli>(acquireDuration).count(),
-             std::chrono::duration<double, std::milli>(encodeDuration).count(),
-             std::chrono::duration<double, std::milli>(finishDuration).count(),
-             std::chrono::duration<double, std::milli>(submitDuration).count(),
-             std::chrono::duration<double, std::milli>(scheduleWaitDuration).count(),
-             std::chrono::duration<double, std::milli>(presentDuration).count(),
-             rebuildRequested ? "; rebuilding the surface" : "");
+    Log.warn(
+        "Presentation job took {:.1f} ms (surface lock {:.1f}, acquire {:.1f}, encode {:.1f}, "
+        "finish {:.1f}, submit {:.1f}, schedule wait {:.1f}, present {:.1f}){}",
+        std::chrono::duration<double, std::milli>(totalDuration).count(),
+        std::chrono::duration<double, std::milli>(surfaceLockDuration).count(),
+        std::chrono::duration<double, std::milli>(acquireDuration).count(),
+        std::chrono::duration<double, std::milli>(encodeDuration).count(),
+        std::chrono::duration<double, std::milli>(finishDuration).count(),
+        std::chrono::duration<double, std::milli>(submitDuration).count(),
+        std::chrono::duration<double, std::milli>(scheduleWaitDuration).count(),
+        std::chrono::duration<double, std::milli>(presentDuration).count(),
+        rebuildRequested ? "; rebuilding the surface" : "");
     if (rebuildRequested) {
       request_surface_reconfigure();
     }
@@ -1345,8 +1312,7 @@ void wait_for_presenter_idle() noexcept {
     return;
   }
   std::unique_lock lock(g_presenter.mutex);
-  g_presenter.cv.wait(
-      lock, [] { return g_presenter.jobs.empty() && !g_presenter.presenting; });
+  g_presenter.cv.wait(lock, [] { return g_presenter.jobs.empty() && !g_presenter.presenting; });
 }
 
 void enqueue_presentations(std::vector<PresentationJob>&& jobs) {
@@ -1408,18 +1374,15 @@ void stop_presenter() noexcept {
 
 // `presentSource` is latched in the seal prologue: by the time this encodes, the producer's next
 // gfx::begin_frame() may already have cleared the display-copy override.
-void encode_presentation_snapshot(const wgpu::CommandEncoder& encoder,
-                                  const webgpu::PresentSource& presentSource,
-                                  const PresentationImage& image,
-                                  bool includeImGui) {
+void encode_presentation_snapshot(const wgpu::CommandEncoder& encoder, const webgpu::PresentSource& presentSource,
+                                  const PresentationImage& image, bool includeImGui) {
   ZoneScoped;
-  auto viewport = webgpu::calculate_present_viewport(
-      image.texture.size.width, image.texture.size.height, presentSource.size.width,
-      presentSource.size.height);
+  auto viewport = webgpu::calculate_present_viewport(image.texture.size.width, image.texture.size.height,
+                                                     presentSource.size.width, presentSource.size.height);
   float presentAspect = 0.f;
   if (window::get_present_aspect_ratio(presentAspect)) {
-    viewport = webgpu::calculate_present_viewport_for_aspect(
-        image.texture.size.width, image.texture.size.height, presentAspect);
+    viewport = webgpu::calculate_present_viewport_for_aspect(image.texture.size.width, image.texture.size.height,
+                                                             presentAspect);
   }
   wgpu::BindGroup presentBindGroup = presentSource.bindGroup;
   {
@@ -1438,8 +1401,7 @@ void encode_presentation_snapshot(const wgpu::CommandEncoder& encoder,
     const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
     pass.SetPipeline(webgpu::g_CopyPipeline);
     pass.SetBindGroup(0, presentBindGroup, 0, nullptr);
-    pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height,
-                     viewport.znear, viewport.zfar);
+    pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
     pass.Draw(3);
     pass.End();
   }
@@ -1478,6 +1440,7 @@ void shutdown() noexcept {
   {
     std::lock_guard lock(g_stereoRegistrationMutex);
     g_stereoProvider = {};
+    g_stereoProviderActive.store(false, std::memory_order_release);
 #ifdef AURORA_ENABLE_GX
     g_stereoSink = {};
 #endif
@@ -1502,14 +1465,11 @@ bool begin_frame_impl(bool pumpEvents, ImGuiFramePolicy imguiPolicy, bool* imgui
   if (pumpEvents) {
     window::pump_events();
   }
-  const bool surfaceReconfigurePending =
-      g_surfaceReconfigurePending.load(std::memory_order_acquire);
+  const bool surfaceReconfigurePending = g_surfaceReconfigurePending.load(std::memory_order_acquire);
   const bool surfaceMutationRequired =
-      surfaceReconfigurePending || !window::is_presentable() || !g_surface ||
-      window::native_resize_pending() ||
-      !window::native_window_size_matches(
-          webgpu::g_graphicsConfig.surfaceConfiguration.width,
-          webgpu::g_graphicsConfig.surfaceConfiguration.height);
+      surfaceReconfigurePending || !window::is_presentable() || !g_surface || window::native_resize_pending() ||
+      !window::native_window_size_matches(webgpu::g_graphicsConfig.surfaceConfiguration.width,
+                                          webgpu::g_graphicsConfig.surfaceConfiguration.height);
   if (surfaceMutationRequired) {
     wait_for_presenter_idle();
     window::SurfaceLock surfaceLock;
@@ -1526,10 +1486,8 @@ bool begin_frame_impl(bool pumpEvents, ImGuiFramePolicy imguiPolicy, bool* imgui
     if (window::is_paused()) {
       return false;
     }
-    const bool consumeSurfaceReconfigure =
-        g_surfaceReconfigurePending.exchange(false, std::memory_order_acq_rel);
-    const bool consumeSurfaceRecreate =
-        g_surfaceRecreatePending.exchange(false, std::memory_order_acq_rel);
+    const bool consumeSurfaceReconfigure = g_surfaceReconfigurePending.exchange(false, std::memory_order_acq_rel);
+    const bool consumeSurfaceRecreate = g_surfaceRecreatePending.exchange(false, std::memory_order_acq_rel);
     if (!g_surface || consumeSurfaceReconfigure) {
       // Reconfigure in place unless the surface was actually lost. See
       // g_surfaceRecreatePending for why destroying a live surface here is fatal
@@ -1598,8 +1556,7 @@ struct SealedFrameContext {
 
 // Phase 1: everything that touches producer-shared renderer state. Needs g_rendererGpuMutex and
 // a FIFO already drained into the recorded pass list.
-void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx,
-                       uint64_t contentTag) {
+void seal_frame_locked(gfx::SealedFrame& sealedFrame, SealedFrameContext& ctx, uint64_t contentTag) {
   ZoneScopedN("Seal frame");
   const auto encoderDescriptor = wgpu::CommandEncoderDescriptor{
       .label = "Redraw encoder",
@@ -1796,8 +1753,7 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
     const auto now = PresentClock::now();
     if (now > anchor) {
       const auto behind = std::chrono::duration_cast<std::chrono::nanoseconds>(now - anchor);
-      const uint64_t periods =
-          static_cast<uint64_t>(behind.count()) / ctx.scheduleIntervalNanos + 1u;
+      const uint64_t periods = static_cast<uint64_t>(behind.count()) / ctx.scheduleIntervalNanos + 1u;
       anchor += std::chrono::nanoseconds{static_cast<int64_t>(periods * ctx.scheduleIntervalNanos)};
     }
     if (s_lastGroupAnchor != PresentClock::time_point{} && anchor <= s_lastGroupAnchor) {
@@ -1807,8 +1763,7 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
         std::chrono::duration_cast<std::chrono::nanoseconds>(anchor - presentationJobs.front().presentAt);
     if (shift.count() > 0) {
       const uint32_t slidPeriods = static_cast<uint32_t>(
-          (static_cast<uint64_t>(shift.count()) + ctx.scheduleIntervalNanos - 1u) /
-          ctx.scheduleIntervalNanos);
+          (static_cast<uint64_t>(shift.count()) + ctx.scheduleIntervalNanos - 1u) / ctx.scheduleIntervalNanos);
       for (auto& job : presentationJobs) {
         job.presentAt += shift;
         job.slidPeriods = slidPeriods;
@@ -1843,8 +1798,7 @@ void publish_presentations(std::vector<PresentationJob>&& presentationJobs, bool
 #else
   // Keep presentation on the presenter whenever the async frame worker runs, even with
   // interpolation off, so every mode shares one surface/resize path. RenderDoc keeps the sync path.
-  if (frame_worker_requested() || interpolationActive ||
-      g_presenterStarted.load(std::memory_order_acquire)) {
+  if (frame_worker_requested() || interpolationActive || g_presenterStarted.load(std::memory_order_acquire)) {
     enqueue_presentations(std::move(presentationJobs));
   } else {
     for (const auto& job : presentationJobs) {
@@ -1885,14 +1839,11 @@ void record_frame_telemetry() {
       GetThreadTimes(GetCurrentThread(), &creation, &exit, &threadKernel, &threadUser) != FALSE;
   const uint64_t processCpu100ns =
       processTimesAvailable ? fileTimeValue(processKernel) + fileTimeValue(processUser) : 0;
-  const uint64_t threadCpu100ns =
-      threadTimesAvailable ? fileTimeValue(threadKernel) + fileTimeValue(threadUser) : 0;
+  const uint64_t threadCpu100ns = threadTimesAvailable ? fileTimeValue(threadKernel) + fileTimeValue(threadUser) : 0;
   static uint64_t previousProcessCpu100ns = processCpu100ns;
   static uint64_t previousThreadCpu100ns = threadCpu100ns;
-  TracyPlot("aurora: processCpuUsPerFrame",
-            static_cast<int64_t>((processCpu100ns - previousProcessCpu100ns) / 10));
-  TracyPlot("aurora: mainThreadCpuUsPerFrame",
-            static_cast<int64_t>((threadCpu100ns - previousThreadCpu100ns) / 10));
+  TracyPlot("aurora: processCpuUsPerFrame", static_cast<int64_t>((processCpu100ns - previousProcessCpu100ns) / 10));
+  TracyPlot("aurora: mainThreadCpuUsPerFrame", static_cast<int64_t>((threadCpu100ns - previousThreadCpu100ns) / 10));
   previousProcessCpu100ns = processCpu100ns;
   previousThreadCpu100ns = threadCpu100ns;
 #endif
@@ -1932,8 +1883,7 @@ bool run_frame_worker_cycle(gfx::SealedFrame& sealedFrame, uint64_t contentTag) 
   // staging buffers the producer's drain has nowhere to put its commands.
   bool imguiNewFrameOwed = false;
   const bool prepared = begin_frame_impl(
-      false, overlapEncode ? ImGuiFramePolicy::Deferred : ImGuiFramePolicy::Immediate,
-      &imguiNewFrameOwed);
+      false, overlapEncode ? ImGuiFramePolicy::Deferred : ImGuiFramePolicy::Immediate, &imguiNewFrameOwed);
 
   {
     std::lock_guard lock(g_frameWorker.mutex);
@@ -2014,12 +1964,10 @@ bool begin_frame() noexcept {
 #ifdef AURORA_ENABLE_GX
   // A surface mutation can legitimately fail preparation, and optimistic success would let GX/ImGui
   // record into a frame that was never begun, so join this path and return its real result.
-  waitForSurfacePreparation =
-      !window::is_presentable() || !g_surface ||
-      window::native_resize_pending() || window::is_paused() ||
-      !window::native_window_size_matches(
-          webgpu::g_graphicsConfig.surfaceConfiguration.width,
-          webgpu::g_graphicsConfig.surfaceConfiguration.height);
+  waitForSurfacePreparation = !window::is_presentable() || !g_surface || window::native_resize_pending() ||
+                              window::is_paused() ||
+                              !window::native_window_size_matches(webgpu::g_graphicsConfig.surfaceConfiguration.width,
+                                                                  webgpu::g_graphicsConfig.surfaceConfiguration.height);
 #endif
   bool workerPreparationPending = false;
   {
@@ -2126,6 +2074,7 @@ void quiesce_frame_worker() noexcept {
   }
 }
 std::recursive_mutex& renderer_gpu_mutex() noexcept { return g_rendererGpuMutex; }
+bool stereo_frame_provider_active() noexcept { return g_stereoProviderActive.load(std::memory_order_acquire); }
 
 void set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdata) noexcept {
   std::lock_guard lock(g_stereoRegistrationMutex);
@@ -2133,6 +2082,7 @@ void set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdat
       .callback = provider,
       .userdata = userdata,
   };
+  g_stereoProviderActive.store(provider != nullptr, std::memory_order_release);
 }
 
 #ifdef AURORA_ENABLE_GX
@@ -2250,8 +2200,7 @@ bool aurora_flush_efb_copies_to_ram() {
 }
 bool aurora_flush_efb_copy_to_ram(void* dest) {
 #ifdef AURORA_ENABLE_GX
-  if (dest == nullptr || !aurora::gfx::efb_ram::has_pending(dest) ||
-      !aurora::gfx::efb_ram::prepare_downloads(dest)) {
+  if (dest == nullptr || !aurora::gfx::efb_ram::has_pending(dest) || !aurora::gfx::efb_ram::prepare_downloads(dest)) {
     return false;
   }
 
@@ -2297,12 +2246,14 @@ void aurora_set_log_level(AuroraLogLevel level) { aurora::g_config.logLevel = le
 void aurora_set_pause_on_focus_lost(bool value) { aurora::g_config.pauseOnFocusLost = value; }
 void aurora_set_disable_copy_filter(bool disabled) { aurora::g_config.disableCopyFilter = disabled; }
 bool aurora_get_disable_copy_filter() { return aurora::g_config.disableCopyFilter; }
-void aurora_set_stereo_stop_at_display_copy(bool enabled) {
-  aurora::gfx::set_stereo_stop_at_display_copy(enabled);
-}
+void aurora_set_stereo_stop_at_display_copy(bool enabled) { aurora::gfx::set_stereo_stop_at_display_copy(enabled); }
 bool aurora_get_stereo_stop_at_display_copy() { return aurora::gfx::get_stereo_stop_at_display_copy(); }
 void aurora_set_stereo_skip_copy_clears(bool enabled) { aurora::gfx::set_stereo_skip_copy_clears(enabled); }
 bool aurora_get_stereo_skip_copy_clears() { return aurora::gfx::get_stereo_skip_copy_clears(); }
+void aurora_set_stereo_hud_screen(bool enabled, float width, float distance) {
+  aurora::gfx::set_stereo_hud_screen(enabled, width, distance);
+}
+bool aurora_get_stereo_hud_screen_enabled() { return aurora::gfx::get_stereo_hud_screen_enabled(); }
 void aurora_set_background_input(bool value) {
   aurora::g_config.allowJoystickBackgroundEvents = value;
   aurora::window::set_background_input(value);

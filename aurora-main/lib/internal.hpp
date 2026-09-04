@@ -134,6 +134,7 @@ std::chrono::nanoseconds wait_for_frame_worker_sealed() noexcept;
 bool wait_for_frame_worker_for(std::chrono::microseconds timeout) noexcept;
 void quiesce_frame_worker() noexcept;
 std::recursive_mutex& renderer_gpu_mutex() noexcept;
+bool stereo_frame_provider_active() noexcept;
 
 template <typename T>
 class ArrayRef {

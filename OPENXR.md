@@ -25,6 +25,8 @@ required = false
 render_scale = 1.0
 world_units_per_meter = 500.0
 hud_distance_meters = 2.0
+hud_width_meters = 2.4
+hud_virtual_screen = true
 stop_at_display_copy = true
 skip_copy_clears = true
 ```
@@ -39,7 +41,10 @@ or graphics-binding failure is logged and the game continues in ordinary desktop
 
 `render_scale` scales the per-eye size recommended by the OpenXR runtime.
 `world_units_per_meter` controls the scale of headset translation in the game world.
-`hud_distance_meters` controls the distance of the head-locked virtual screen.
+`hud_distance_meters` and `hud_width_meters` place and size the virtual screen. They are read at
+launch and govern both the menu screen and the in-race 2D screen, so 2D content keeps its place
+across the transition. `hud_virtual_screen` decides whether the race's 2D layer uses that screen;
+it is live and can be flipped from the F10 settings bar.
 `stop_at_display_copy` ends eye replay at the final `GXCopyDisp`, matching the frame shown on the
 desktop. `skip_copy_clears` independently suppresses the EFB reset performed after a copy. Both
 default on and can be changed live from the F10 settings bar for diagnostics.
@@ -56,8 +61,8 @@ The runtime deliberately fails safe instead of guessing which Mario Kart camera 
   virtual screen. Session/runtime loss safely tears down XR and continues on the desktop mirror.
 
 Aurora records the original GX frame once and replays it for both OpenXR eyes. Perspective GX draws
-receive asymmetric headset projections; orthographic and unclassified draws retain their original
-GX transforms during immersive replay. Menus and unsafe whole scenes use the virtual-screen path.
+receive asymmetric headset projections, while the game's 2D layer goes on a fixed virtual screen
+(see below). Menus and unsafe whole scenes use the virtual-screen path.
 Head pose is sampled by the OpenXR pacing thread, while Aurora's frame worker consumes a
 short-lived immutable stereo packet. Each sealed GX frame and immersive packet carry the same
 policy-generation tag; a mismatch is rendered in mono and the acquired XR frame is canceled, so an
@@ -65,6 +70,35 @@ asynchronous menu/race transition cannot replay race transforms over unsafe cont
 minimized window can withdraw an unencoded packet and end that compositor frame without layers; an
 encoded-work stall requests teardown at Aurora's next safe producer boundary. All OpenXR session
 and swapchain calls remain on their owning thread.
+
+## The race's 2D layer
+
+The minimap, race position, item roulette, lap times and the rest of the game's orthographic layer
+would otherwise be stretched across each eye's entire field of view. With `hud_virtual_screen` on
+they are instead placed on a rectangle fixed in the recorded camera's own frame, `hud_distance_meters`
+ahead of it and `hud_width_meters` across, its height following the aspect ratio the game is
+presenting at. The screen stays where the camera puts it, so looking around moves the view across it
+rather than dragging it along.
+
+An orthographic GX projection is affine, so the draw's clip position is already its position on the
+flat frame. Replay folds three further steps into that same projection matrix, one per eye: the
+draw viewport into full-frame coordinates, the frame position onto the screen rectangle, and the
+screen through that eye's view and OpenXR frustum. The draw's own position matrices are left alone.
+
+Depth uses the equivalent of DolphinXR's Exact Screen Depth path. A replay-only shader variant
+carries the draw's original GX depth through a flat-interpolated value and explicitly writes it at
+the fragment, including the draw's recorded viewport depth range. The reprojected geometry itself
+is parked at mid-depth for clipping. This avoids the view-dependent perspective-divide rounding
+that otherwise breaks equal-depth `LEQUAL` ordering and causes overlapping menu/HUD elements to
+z-fight.
+
+Two classes of draw are deliberately left on their recorded transforms: native framebuffer effects
+(bloom and the rest of the post-processing chain, recognised by sampling a freshly produced,
+reduced or blended-back EFB copy), which belong to the rendered image rather than to the game's 2D
+layer, and any draw whose matrix is not actually affine. Retained one-shot EFB bakes such as Mario
+Kart Wii's minimap are treated as game art and remain eligible for the screen. A reprojected 2D draw
+uses the full eye viewport and scissor because its recorded rectangle no longer describes where it
+ended up; its original viewport is folded into the projection instead.
 
 ## Backend status
 

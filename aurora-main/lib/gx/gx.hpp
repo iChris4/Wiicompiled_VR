@@ -65,7 +65,8 @@ constexpr u32 MaxIndStages = GX_MAX_INDTEXSTAGE;
 constexpr u32 MaxIndTexMtxs = 3;
 constexpr u32 MaxVtxFmt = GX_MAX_VTXFMT;
 constexpr u32 MaxPnMtx = (GX_PNMTX9 / 3) + 1;
-// Position and texture matrices share one shader array (`ubuf.postex_mtx`), mirroring XF matrix memory: rows 0..29 (slots 0..9) are position matrices and rows 30..59 (slots 10..19) are texture matrices.
+// Position and texture matrices share one shader array (`ubuf.postex_mtx`), mirroring XF matrix memory: rows 0..29
+// (slots 0..9) are position matrices and rows 30..59 (slots 10..19) are texture matrices.
 constexpr u32 MaxPostexMtx = MaxPnMtx + MaxTexMtx;
 constexpr u32 MaxIndexAttr = 12; // VA_POS -> VA_TEX7
 constexpr u32 MaxUniformSize = 3840;
@@ -439,7 +440,8 @@ struct GXState {
     regs[0xFE] = 0x00FFFFFF;
     return regs;
   }();
-  // Covers XF 0x00-0x5F: the scalar bank, viewport/projection, and the TexGen and post-transform registers that every material's display list re-emits.
+  // Covers XF 0x00-0x5F: the scalar bank, viewport/projection, and the TexGen and post-transform registers that every
+  // material's display list re-emits.
   std::array<u32, 0x60> xfRegCache{};
   std::array<u64, 2> xfRegCacheValid{};
 
@@ -490,13 +492,9 @@ inline float clear_depth_value() {
 
 inline bool render_target_has_alpha(GXPixelFmt pixelFmt) noexcept { return pixelFmt == GX_PF_RGBA6_Z24; }
 
-inline float indirect_matrix_scale_multiplier(s8 scaleExp) {
-  return std::exp2f(static_cast<float>(scaleExp));
-}
+inline float indirect_matrix_scale_multiplier(s8 scaleExp) { return std::exp2f(static_cast<float>(scaleExp)); }
 
-inline s32 indirect_matrix_mantissa(float value) noexcept {
-  return static_cast<s32>(std::lround(value * 1024.0f));
-}
+inline s32 indirect_matrix_mantissa(float value) noexcept { return static_cast<s32>(std::lround(value * 1024.0f)); }
 
 inline s32 indirect_matrix_shift(s8 scaleExp) noexcept { return -static_cast<s32>(scaleExp); }
 
@@ -542,7 +540,7 @@ struct AttrConfig {
   u8 stride = 0;         // Array stride
   u8 frac = 0;
   bool le = true;
-  u8 nrmIndexCount = 0;  // GX_NRM_NBT3 stores three separate normal/tangent/binormal indices.
+  u8 nrmIndexCount = 0; // GX_NRM_NBT3 stores three separate normal/tangent/binormal indices.
 };
 struct ShaderConfig {
   u8 fogType = GX_FOG_NONE;
@@ -550,7 +548,10 @@ struct ShaderConfig {
   u8 lineMode : 2 = 0; // 1 = GX_LINES, 2 = GX_LINESTRIP, 3 = GX_POINTS
   u8 dualTexEnabled : 1 = 0;
   u8 fogRangeAdjust : 1 = 0;
-  u8 pad1 : 4 = 0;
+  // Alternate replay-only shader variant that exports the original flat-screen
+  // depth for draws reprojected onto the VR virtual screen.
+  u8 exactScreenDepth : 1 = 0;
+  u8 pad1 : 3 = 0;
   u8 numTexGens = 0;
   u32 zTexture = 0; // bias[0:23], format[24:25], op[26:27]; 0 disables shader depth output.
   std::array<AttrConfig, MaxVtxAttr> attrs;
@@ -593,8 +594,7 @@ inline bool tev_stage_needs_fixed_texcoord_state(const ShaderConfig& config, u32
   const auto& stage = config.tevStages[stageIdx];
   const bool hasCoordOperation = stage.indTexMtxId != GX_ITM_OFF || stage.indTexWrapS != GX_ITW_OFF ||
                                  stage.indTexWrapT != GX_ITW_OFF || stage.indTexAddPrev;
-  const bool feedsNextAddPrev =
-      stageIdx + 1 < config.tevStageCount && config.tevStages[stageIdx + 1].indTexAddPrev;
+  const bool feedsNextAddPrev = stageIdx + 1 < config.tevStageCount && config.tevStages[stageIdx + 1].indTexAddPrev;
   return hasCoordOperation || feedsNextAddPrev;
 }
 
@@ -626,11 +626,11 @@ inline int tev_indirect_wrap_mask(GXIndTexWrap wrap) noexcept {
 
 inline constexpr s32 tev_s24_wrap(s32 value) noexcept {
   const u32 wrapped = static_cast<u32>(value) & 0x00ffffffu;
-  return (wrapped & 0x00800000u) != 0 ? static_cast<s32>(wrapped) - 0x01000000
-                                      : static_cast<s32>(wrapped);
+  return (wrapped & 0x00800000u) != 0 ? static_cast<s32>(wrapped) - 0x01000000 : static_cast<s32>(wrapped);
 }
 
-// GX falls back to texcoord 0 when a TEV order names GX_TEXCOORD_NULL or a coordinate beyond the configured texgen count.
+// GX falls back to texcoord 0 when a TEV order names GX_TEXCOORD_NULL or a coordinate beyond the configured texgen
+// count.
 inline int tev_effective_texcoord(const ShaderConfig& config, GXTexCoordID texCoordId) noexcept {
   if (config.numTexGens == 0) {
     return -1;
@@ -643,10 +643,9 @@ inline int tev_effective_texcoord(const ShaderConfig& config, GXTexCoordID texCo
 inline bool tev_stage_combiner_uses_texture(const TevStage& stage) noexcept {
   const auto& color = stage.colorPass;
   const auto& alpha = stage.alphaPass;
-  return color.a == GX_CC_TEXC || color.a == GX_CC_TEXA || color.b == GX_CC_TEXC ||
-         color.b == GX_CC_TEXA || color.c == GX_CC_TEXC || color.c == GX_CC_TEXA ||
-         color.d == GX_CC_TEXC || color.d == GX_CC_TEXA || alpha.a == GX_CA_TEXA ||
-         alpha.b == GX_CA_TEXA || alpha.c == GX_CA_TEXA || alpha.d == GX_CA_TEXA;
+  return color.a == GX_CC_TEXC || color.a == GX_CC_TEXA || color.b == GX_CC_TEXC || color.b == GX_CC_TEXA ||
+         color.c == GX_CC_TEXC || color.c == GX_CC_TEXA || color.d == GX_CC_TEXC || color.d == GX_CC_TEXA ||
+         alpha.a == GX_CA_TEXA || alpha.b == GX_CA_TEXA || alpha.c == GX_CA_TEXA || alpha.d == GX_CA_TEXA;
 }
 
 struct TevStageTextureDependency {
@@ -657,14 +656,12 @@ struct TevStageTextureDependency {
   bool canSampleTexture = false;
 };
 
-inline bool tev_texture_sample_enabled(const TevStageTextureDependency& dependency,
-                                       bool sampleRequested) noexcept {
+inline bool tev_texture_sample_enabled(const TevStageTextureDependency& dependency, bool sampleRequested) noexcept {
   return sampleRequested && dependency.canSampleTexture;
 }
 
 // Pure TEV order/dependency analysis used by both ShaderInfo and WGSL generation.
-inline TevStageTextureDependency tev_stage_texture_dependency(const ShaderConfig& config,
-                                                               u32 stageIdx) noexcept {
+inline TevStageTextureDependency tev_stage_texture_dependency(const ShaderConfig& config, u32 stageIdx) noexcept {
   if (stageIdx >= config.tevStageCount) {
     return {};
   }
@@ -712,9 +709,11 @@ struct GXBindGroups {
   // Bind group resolved at draw-build time so that gx::render does not have to hash-map the ref again for every draw.
   WGPUBindGroup resolvedTextureBindGroup = nullptr;
 };
-// Which matrix-memory slots a generated shader can actually read, and where each one lives in the compacted uniform arrays.
+// Which matrix-memory slots a generated shader can actually read, and where each one lives in the compacted uniform
+// arrays.
 struct UniformMatrixLayout {
-  // `postexSlots`/`nrmSlots` entry meaning "the matrix selected by the current matrix index", which is only known per draw.
+  // `postexSlots`/`nrmSlots` entry meaning "the matrix selected by the current matrix index", which is only known per
+  // draw.
   static constexpr u8 kCurrentPnMtx = 0xFE;
   // `postexRemap` entry for a slot that this shader never reads.
   static constexpr u8 kAbsent = 0xFF;
@@ -727,7 +726,8 @@ struct UniformMatrixLayout {
   std::array<u8, MaxPnMtx> nrmSlots{};
   u8 postexCount = 0;
   u8 nrmCount = 0;
-  // Position slots 0..MaxPnMtx-1 are uploaded 1:1 at compact indices 0..9, so `current_pnmtx` and any per-vertex index need no remapping.
+  // Position slots 0..MaxPnMtx-1 are uploaded 1:1 at compact indices 0..9, so `current_pnmtx` and any per-vertex index
+  // need no remapping.
   bool absolutePosRegion = false;
 };
 // Output info from shader generation
