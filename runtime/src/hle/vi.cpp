@@ -524,6 +524,10 @@ void PaceToRetraceBoundary(Clock::time_point deadline) {
 // will be paired with.
 void PublishVrSceneAnchor() {
     static bool s_engaged = false;
+    // Compute the anchor here rather than at the race draw boundary: the
+    // scene's camera matrix for this frame is only set once the draws run, so
+    // reading it earlier pairs a stale camera with a current kart pose.
+    mkw::vr::MkwVRFirstPersonCommit();
     const mkw::vr::FirstPersonAnchor anchor = mkw::vr::MkwVRFirstPersonGetAnchor();
     aurora_set_stereo_scene_anchor(anchor.valid ? anchor.anchor_from_scene.data() : nullptr);
 

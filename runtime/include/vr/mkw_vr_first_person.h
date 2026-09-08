@@ -188,10 +188,17 @@ void MkwVRFirstPersonConfigure(bool enabled, const FirstPersonHeadOffsets& offse
 // interpreted, shared by startup and the F10 settings bar.
 void MkwVRFirstPersonApplyConfiguredSettings() noexcept;
 
-// Reads the race camera and the player's kart and republishes the anchor. Call
-// once per guest frame, after the kart and camera updates and before the draws.
-// race_camera_address is the frame's own RaceCamera, or zero if none was seen.
+// Arms the anchor for this guest frame. Call once per frame from the race draw
+// boundary, with the frame's own RaceCamera, or zero if none was seen. This
+// only latches; the anchor itself is computed by Commit below, because the
+// scene's camera matrix for the frame is not set until the draws run.
 void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_address) noexcept;
+
+// Computes and publishes the anchor from the values the frame was drawn with.
+// Call from the producer's frame seal, after the draws and before the sealed
+// frame reaches Aurora. Does nothing unless Update armed the frame, which is
+// what keeps this to races.
+void MkwVRFirstPersonCommit() noexcept;
 
 // Drops every captured pointer and the held anchor. Call on race entry/exit.
 void MkwVRFirstPersonReset() noexcept;

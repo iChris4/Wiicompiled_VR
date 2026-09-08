@@ -27,6 +27,25 @@ namespace {
 // its r4 output buffer. The adjacent RaceCamera fields are state vectors, not
 // a view matrix, so call the game's getter instead of guessing an object offset.
 constexpr uint32_t kRaceCameraScratchBytes = 0x300u;
+// GetViewMtx also takes a float argument in f1. It scales the positional offset
+// the function folds into the camera it builds, so an inherited garbage value
+// puts the view somewhere unrelated to the kart while still looking finite.
+// The game's own call site (0x80711198) sources it from *(*(0x809C2898)+0x8BC);
+// reproduce that exactly, and fall back to zero, which means "no offset".
+constexpr uint32_t kRaceCameraBlendOwnerAddress = 0x809C2898u;
+constexpr uint32_t kRaceCameraBlendOffset = 0x8BCu;
+
+// nw4r::g3d::G3DState::GetCameraMtxPtr (0x80064180) resolves the matrix the
+// scene is actually rendered with, from a static CameraMtxState: a u16 at +2
+// selects the live bank and the 3x4 view matrix sits at +52 within it.
+//
+// This is the matrix the recorded GX draws carry. RaceCamera::GetViewMtx is
+// not: measured on device, the camera it returns sits ~155 units directly
+// above the kart, with under 5 units of horizontal separation, so a head
+// position derived from it has no chase-camera offset in it at all.
+constexpr uint32_t kG3DCameraMtxStateAddress = 0x802BBAB4u;
+constexpr uint32_t kG3DCameraMtxBankOffset = 0x2u;
+constexpr uint32_t kG3DCameraMtxOffset = 52u;
 
 // Kart::Manager's instance pointer. Its CreateInstance (0x8058FAA8) resolves
 // the slot as 0x809C0000 + 6392 in the generated translation. Read directly
@@ -83,6 +102,33 @@ bool ReadGuestMtx34(uint32_t address, Mtx34& out) noexcept {
     return detail::IsFiniteMtx34(out);
 }
 
+float ReadRaceCameraBlend() noexcept {
+    uint32_t owner = 0;
+    if (!ReadGuestPointer(kRaceCameraBlendOwnerAddress, owner) ||
+        !Memory::Contains(owner + kRaceCameraBlendOffset, sizeof(float))) {
+        return 0.0f;
+    }
+    try {
+        const float value = Memory::ReadFloat32(owner + kRaceCameraBlendOffset);
+        return detail::IsFiniteFloat(&value) ? value : 0.0f;
+    } catch (const Memory::AccessViolation&) {
+        return 0.0f;
+    }
+}
+
+bool ReadSceneViewMatrix(Mtx34& out) noexcept {
+    const uint32_t bank_address = kG3DCameraMtxStateAddress + kG3DCameraMtxBankOffset;
+    if (!Memory::Contains(bank_address, sizeof(uint16_t))) {
+        return false;
+    }
+    try {
+        const uint32_t bank = Memory::Read16(bank_address);
+        return ReadGuestMtx34(kG3DCameraMtxStateAddress + bank + kG3DCameraMtxOffset, out);
+    } catch (const Memory::AccessViolation&) {
+        return false;
+    }
+}
+
 bool ReadRaceCameraViewMatrix(const CpuContext* context, uint32_t camera_address,
                               Mtx34& out) noexcept {
     if (context == nullptr || camera_address == 0 ||
@@ -95,6 +141,9 @@ bool ReadRaceCameraViewMatrix(const CpuContext* context, uint32_t camera_address
     call_context.gpr[3] = camera_address;
     call_context.gpr[4] = scratch;
     call_context.gpr[5] = scratch + 48u;
+    // Every argument register has to be set deliberately: the rest of this
+    // context belongs to the observed function, not to the one being called.
+    call_context.fpr[1].d = static_cast<double>(ReadRaceCameraBlend());
     try {
         CpuContextScope scope(&call_context);
         func_805A6C58(&call_context);
@@ -145,6 +194,13 @@ struct FirstPersonState {
     float units_per_meter = 10.0f;
 
     uint32_t camera_address = 0;
+    // Armed by the draw boundary, consumed by the frame seal.
+    bool armed = false;
+    uint64_t armed_frame = 0;
+    // The scene matrix as it stood before this frame's draws, kept only to
+    // report how far it had moved by the time the frame was sealed.
+    Mtx34 armed_view = kIdentityMtx34;
+    bool armed_view_valid = false;
 
     FirstPersonAnchor anchor{};
     int hold_frames = 0;
@@ -189,6 +245,31 @@ void LogAnchorLocked(uint64_t frame, const Mtx34& anchor, const Mtx34& view_from
                            << kart_from_local[10] << "), translation=(" << kart_from_local[3]
                            << ", " << kart_from_local[7] << ", " << kart_from_local[11] << ")"
                            << std::endl;
+    // Both candidate cameras measured against the kart, so one run says which
+    // matrix actually describes the view the frame was rendered from. A real
+    // chase camera sits a few hundred units behind and above the kart; a value
+    // near zero horizontally means the matrix is kart-centred and unusable.
+    const auto eye_report = [&](const char* label, const Mtx34& v) {
+        const float cam[3] = {
+            -(v[0] * v[3] + v[4] * v[7] + v[8] * v[11]),
+            -(v[1] * v[3] + v[5] * v[7] + v[9] * v[11]),
+            -(v[2] * v[3] + v[6] * v[7] + v[10] * v[11]),
+        };
+        const float dx = kart_from_local[3] - cam[0];
+        const float dy = kart_from_local[7] - cam[1];
+        const float dz = kart_from_local[11] - cam[2];
+        RT_LOG(RT_TAG_RUNTIME)
+            << "[mkw-vr] first-person eye [" << label << "]: camera=(" << cam[0] << ", " << cam[1]
+            << ", " << cam[2] << "), kart-camera=(" << dx << ", " << dy << ", " << dz
+            << "), horizontal=" << std::sqrt(dx * dx + dz * dz) << std::endl;
+    };
+    eye_report("scene", view_from_world);
+    // The same matrix as it stood before this frame's draws. The gap between
+    // the two is the error the old draw-boundary timing was introducing, and
+    // it grows with how fast the chase camera is moving.
+    if (g_state.armed_view_valid) {
+        eye_report("scene at draw entry", g_state.armed_view);
+    }
     RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] first-person pose bits: translation=(0x"
                            << std::hex << std::bit_cast<uint32_t>(kart_from_local[3]) << ", 0x"
                            << std::bit_cast<uint32_t>(kart_from_local[7]) << ", 0x"
@@ -225,6 +306,8 @@ void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
 
 void MkwVRFirstPersonReset() noexcept {
     std::lock_guard lock(g_mutex);
+    g_state.armed = false;
+    g_state.armed_view_valid = false;
     g_state.camera_address = 0;
     g_state.anchor = {};
     g_state.hold_frames = 0;
@@ -235,23 +318,38 @@ void MkwVRFirstPersonReset() noexcept {
 
 void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_address) noexcept {
     std::lock_guard lock(g_mutex);
+    g_state.camera_address = race_camera_address;
     if (!g_state.enabled) {
         g_state.anchor = {};
         g_state.hold_frames = 0;
+        g_state.armed = false;
         return;
     }
-    g_state.camera_address = race_camera_address;
+    g_state.armed = true;
+    g_state.armed_frame = guest_frame_index;
+    g_state.armed_view_valid = ReadSceneViewMatrix(g_state.armed_view);
+}
+
+void MkwVRFirstPersonCommit() noexcept {
+    std::lock_guard lock(g_mutex);
+    if (!g_state.armed) {
+        return;
+    }
+    g_state.armed = false;
+    const uint64_t guest_frame_index = g_state.armed_frame;
 
     Mtx34 view_from_world{};
     Mtx34 kart_from_local{};
     Mtx34 anchor{};
     KartPoseRead kart{};
     const char* failed_step = nullptr;
-    if (race_camera_address == 0) {
-        failed_step = "race camera (none updated this frame)";
-    } else if (!ReadRaceCameraViewMatrix(TryGetCpuContext(), race_camera_address,
-                                         view_from_world)) {
-        failed_step = "race camera view matrix";
+    // The scene's own matrix first: it is what the recorded draws carry. The
+    // RaceCamera getter stays as a fallback, but it describes a different
+    // camera, so an anchor built from it cannot reach the chase view.
+    if (!ReadSceneViewMatrix(view_from_world) &&
+        !(g_state.camera_address != 0 &&
+          ReadRaceCameraViewMatrix(TryGetCpuContext(), g_state.camera_address, view_from_world))) {
+        failed_step = "scene view matrix";
     } else if (kart = ReadPlayerKartPose(kart_from_local); kart.failed_step != nullptr) {
         failed_step = kart.failed_step;
     } else if (!ComputeFirstPersonAnchor(view_from_world, kart_from_local,
@@ -282,7 +380,7 @@ void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_add
         RT_LOG(RT_TAG_RUNTIME)
             << "[mkw-vr] first-person camera is enabled but could not resolve the "
             << failed_step << "; staying on the game's own camera (camera=0x" << std::hex
-            << race_camera_address << ", manager=0x" << kart.manager << ", players=0x"
+            << g_state.camera_address << ", manager=0x" << kart.manager << ", players=0x"
             << kart.players << ", kart=0x" << kart.proxy << ", accessor=0x" << kart.accessor
             << ", body=0x" << kart.body << ", physics=0x" << kart.physics << std::dec << ")"
             << std::endl;
