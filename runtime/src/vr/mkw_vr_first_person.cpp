@@ -10,6 +10,8 @@
 #include <mutex>
 
 extern "C" void func_805A6C58(CpuContext* context);
+extern "C" void func_8056A470(CpuContext* context);
+extern "C" void func_8056A580(CpuContext* context);
 
 namespace mkw::vr {
 namespace {
@@ -67,6 +69,31 @@ constexpr uint32_t kKartBodyPhysicsOffset = 0x90u;
 // camera. Kart::Link::GetKartBodyMtx (0x80590278) returns KartBody+0x1C, the
 // visual pose, and is the alternative to try if the seat ever looks detached.
 constexpr uint32_t kKartPhysicsPoseOffset = 0x9Cu;
+
+// Kart::Link::GetModelsVisibility (0x8059108C) is proxy -> accessor -> +0x58.
+// Kart::ModelsVisibility::SetInvisible (0x8056A2F0) is nothing but two stores,
+// a u16 at +0x10 and a u8 at +0x12.
+//
+// Writing them is not enough on its own. UpdateModelsVisibility (0x8056A470)
+// is what carries the byte at +0x12 out to the models, looping over them and
+// calling a virtual through the secondary vtable at +0x0C, and the game runs it
+// during the kart update -- before the draw boundary where this can write. So
+// the write has to be followed by running that function again, or nothing ever
+// reads it. Measured on device, the mask at +0x10 is already 0 in normal play,
+// so it is not the field that decides what draws.
+constexpr uint32_t kKartAccessorModelsVisibilityOffset = 0x58u;
+constexpr uint32_t kModelsVisibilityMaskOffset = 0x10u;
+constexpr uint32_t kModelsVisibilityDrawOffset = 0x12u;
+
+// That one byte reaches every model the loop visits, which is why clearing it
+// takes the kart along with the driver. The loop walks an array of models: from
+// the holder at *(visibility[0] + 0x14), entries start at +0xD8 with a stride
+// of 4 and the count sits at +0xF0. SetModelDraw (0x8056A580) applies the byte
+// to a single one of them, so naming an index hides exactly that model.
+constexpr uint32_t kModelsVisibilityHolderOffset = 0x14u;
+constexpr uint32_t kModelHolderArrayOffset = 0xD8u;
+constexpr uint32_t kModelHolderCountOffset = 0xF0u;
+constexpr uint32_t kMaxPlayerModels = 32;
 
 // Offline Mario Kart Wii puts the local racer first, and immersive
 // presentation already requires exactly one on-screen player.
@@ -188,10 +215,27 @@ KartPoseRead ReadPlayerKartPose(Mtx34& out) noexcept {
 
 // ---------------------------------------------------------------------------
 
+// Hiding the player's own models. Like the anchor this only reads the game to
+// decide what to write, but unlike the anchor it does modify it, so it owns the
+// values it displaced and puts them back when it stops.
+struct ModelVisibilityState {
+    bool hide_driver = false;
+    // -1 hides every model of the player's kart, the vehicle included; a valid
+    // index hides only that model. Index 0 is the driver on PAL RMCP01.
+    int hidden_model = 0;
+    bool saved = false;
+    uint32_t saved_object = 0;
+    uint16_t original_mask = 0;
+    uint8_t original_draw = 0;
+    bool logged = false;
+    bool logged_models = false;
+    bool logged_range = false;
+};
+
 struct FirstPersonState {
     bool enabled = false;
     FirstPersonHeadOffsets offsets{};
-    float units_per_meter = 10.0f;
+    float units_per_meter = RuntimeConfigFile::kVrFirstPersonUnitsPerMeterDefault;
 
     uint32_t camera_address = 0;
     // Armed by the draw boundary, consumed by the frame seal.
@@ -211,6 +255,176 @@ struct FirstPersonState {
 
 std::mutex g_mutex;
 FirstPersonState g_state;
+ModelVisibilityState g_visibility;
+
+// Walks to the player's ModelsVisibility, or zero when the race is not up.
+uint32_t ResolveModelsVisibility() noexcept {
+    uint32_t manager = 0;
+    uint32_t players = 0;
+    uint32_t proxy = 0;
+    uint32_t accessor = 0;
+    uint32_t visibility = 0;
+    if (!ReadGuestPointer(kKartManagerInstanceAddress, manager) ||
+        !ReadGuestPointer(manager + kKartManagerPlayersOffset, players) ||
+        !ReadGuestPointer(players + kLocalPlayerIndex * 4u, proxy) ||
+        !ReadGuestPointer(proxy + kKartProxyAccessorOffset, accessor) ||
+        !ReadGuestPointer(accessor + kKartAccessorModelsVisibilityOffset, visibility)) {
+        return 0;
+    }
+    return visibility;
+}
+
+// Carries the visibility fields out to the models, the way the kart update
+// does. Without this the fields are just bytes nothing has read.
+void ApplyModelsVisibilityToModels(uint32_t visibility) noexcept {
+    const CpuContext* context = TryGetCpuContext();
+    if (context == nullptr || visibility == 0) {
+        return;
+    }
+    CpuContext call_context = *context;
+    call_context.gpr[3] = visibility;
+    try {
+        CpuContextScope scope(&call_context);
+        func_8056A470(&call_context);
+    } catch (const Memory::AccessViolation&) {
+    }
+}
+
+// Applies the draw byte to one model only. Bounded and pointer-checked because
+// this ends in a virtual call on a guest object.
+bool ApplyModelDraw(uint32_t visibility, uint32_t holder, uint32_t index) noexcept {
+    uint32_t model = 0;
+    if (!ReadGuestPointer(holder + kModelHolderArrayOffset + index * 4u, model)) {
+        return false;
+    }
+    const CpuContext* context = TryGetCpuContext();
+    if (context == nullptr || !Memory::Contains(model, 4)) {
+        return false;
+    }
+    CpuContext call_context = *context;
+    call_context.gpr[3] = visibility;
+    call_context.gpr[4] = model;
+    try {
+        CpuContextScope scope(&call_context);
+        func_8056A580(&call_context);
+    } catch (const Memory::AccessViolation&) {
+        return false;
+    }
+    return true;
+}
+
+// The model array the visibility loop walks, or zero when it cannot be reached.
+uint32_t ResolveModelHolder(uint32_t visibility, uint32_t& count) noexcept {
+    uint32_t holder = 0;
+    uint32_t owner = 0;
+    count = 0;
+    if (!ReadGuestPointer(visibility, owner) ||
+        !ReadGuestPointer(owner + kModelsVisibilityHolderOffset, holder) ||
+        !Memory::Contains(holder + kModelHolderCountOffset, 4)) {
+        return 0;
+    }
+    try {
+        count = Memory::Read32(holder + kModelHolderCountOffset);
+    } catch (const Memory::AccessViolation&) {
+        return 0;
+    }
+    if (count == 0 || count > kMaxPlayerModels) {
+        count = 0;
+        return 0;
+    }
+    return holder;
+}
+
+void RestoreModelVisibilityLocked() noexcept {
+    if (!g_visibility.saved) {
+        return;
+    }
+    if (Memory::Contains(g_visibility.saved_object + kModelsVisibilityDrawOffset, 1)) {
+        try {
+            Memory::Write16(g_visibility.saved_object + kModelsVisibilityMaskOffset,
+                            g_visibility.original_mask);
+            Memory::Write8(g_visibility.saved_object + kModelsVisibilityDrawOffset,
+                           g_visibility.original_draw);
+            ApplyModelsVisibilityToModels(g_visibility.saved_object);
+        } catch (const Memory::AccessViolation&) {
+        }
+    }
+    g_visibility.saved = false;
+    g_visibility.saved_object = 0;
+}
+
+// Applied at the draw boundary: the kart update has set these for the frame and
+// nothing has drawn yet.
+void ApplyModelVisibilityLocked() noexcept {
+    if (!g_visibility.hide_driver) {
+        RestoreModelVisibilityLocked();
+        return;
+    }
+    const uint32_t visibility = ResolveModelsVisibility();
+    if (visibility == 0 ||
+        !Memory::Contains(visibility + kModelsVisibilityDrawOffset, 1)) {
+        return;
+    }
+    try {
+        if (!g_visibility.saved || g_visibility.saved_object != visibility) {
+            RestoreModelVisibilityLocked();
+            g_visibility.original_mask =
+                Memory::Read16(visibility + kModelsVisibilityMaskOffset);
+            g_visibility.original_draw =
+                Memory::Read8(visibility + kModelsVisibilityDrawOffset);
+            g_visibility.saved_object = visibility;
+            g_visibility.saved = true;
+            if (!g_visibility.logged) {
+                g_visibility.logged = true;
+                // The values the game normally holds. If clearing the byte on
+                // its own does not remove the driver, these say which bits of
+                // the mask are worth trying instead.
+                RT_LOG(RT_TAG_RUNTIME)
+                    << "[mkw-vr] model visibility: object=0x" << std::hex << visibility
+                    << ", mask=0x" << g_visibility.original_mask << ", driver=0x"
+                    << static_cast<uint32_t>(g_visibility.original_draw) << std::dec
+                    << std::endl;
+            }
+        }
+        uint32_t count = 0;
+        const uint32_t holder = ResolveModelHolder(visibility, count);
+        if (!g_visibility.logged_models && holder != 0) {
+            g_visibility.logged_models = true;
+            RT_LOG(RT_TAG_RUNTIME)
+                << "[mkw-vr] model visibility: " << count
+                << " models; set first_person_hidden_model to one of 0.." << (count - 1)
+                << " to hide a single one, or -1 for all of them" << std::endl;
+        }
+        const bool index_in_range =
+            g_visibility.hidden_model >= 0 && holder != 0 &&
+            static_cast<uint32_t>(g_visibility.hidden_model) < count;
+        if (g_visibility.hidden_model >= 0 && !index_in_range) {
+            // Naming a model the kart does not have should leave it alone, not
+            // silently fall through to hiding all of them.
+            if (!g_visibility.logged_range) {
+                g_visibility.logged_range = true;
+                RT_LOG(RT_TAG_RUNTIME)
+                    << "[mkw-vr] model visibility: model " << g_visibility.hidden_model
+                    << " is out of range for this kart's " << count
+                    << "; nothing hidden" << std::endl;
+            }
+        } else if (index_in_range) {
+            // Show everything, then take back the one model that is named.
+            Memory::Write8(visibility + kModelsVisibilityDrawOffset,
+                           g_visibility.original_draw);
+            ApplyModelsVisibilityToModels(visibility);
+            Memory::Write8(visibility + kModelsVisibilityDrawOffset, 0);
+            ApplyModelDraw(visibility, holder,
+                           static_cast<uint32_t>(g_visibility.hidden_model));
+            Memory::Write8(visibility + kModelsVisibilityDrawOffset,
+                           g_visibility.original_draw);
+        } else {
+            Memory::Write8(visibility + kModelsVisibilityDrawOffset, 0);
+            ApplyModelsVisibilityToModels(visibility);
+        }
+    } catch (const Memory::AccessViolation&) {
+    }
+}
 
 void LogAnchorLocked(uint64_t frame, const Mtx34& anchor, const Mtx34& view_from_world,
                      const KartPoseRead& kart, const Mtx34& kart_from_local) noexcept {
@@ -294,18 +508,28 @@ void MkwVRFirstPersonConfigure(bool enabled, const FirstPersonHeadOffsets& offse
 }
 
 void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
-    const float units_per_meter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter(10.0f);
+    const float units_per_meter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter();
     const FirstPersonHeadOffsets offsets{
-        RuntimeConfigFile::VrFirstPersonHeadRightMeters(0.0f),
-        RuntimeConfigFile::VrFirstPersonHeadUpMeters(1.0f),
-        RuntimeConfigFile::VrFirstPersonHeadForwardMeters(0.0f),
+        RuntimeConfigFile::VrFirstPersonHeadRightMeters(),
+        RuntimeConfigFile::VrFirstPersonHeadUpMeters(),
+        RuntimeConfigFile::VrFirstPersonHeadForwardMeters(),
     };
     MkwVRFirstPersonConfigure(RuntimeConfigFile::VrFirstPerson(false), offsets, units_per_meter);
     MkwVRPolicySetFirstPersonUnitsPerMeter(units_per_meter);
+    {
+        // Same lock the guest thread applies these under.
+        std::lock_guard lock(g_mutex);
+        g_visibility.hide_driver = RuntimeConfigFile::VrFirstPersonHideDriver();
+        g_visibility.hidden_model = RuntimeConfigFile::VrFirstPersonHiddenModel();
+    }
 }
 
 void MkwVRFirstPersonReset() noexcept {
     std::lock_guard lock(g_mutex);
+    RestoreModelVisibilityLocked();
+    g_visibility.logged = false;
+    g_visibility.logged_models = false;
+    g_visibility.logged_range = false;
     g_state.armed = false;
     g_state.armed_view_valid = false;
     g_state.camera_address = 0;
@@ -323,11 +547,20 @@ void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_add
         g_state.anchor = {};
         g_state.hold_frames = 0;
         g_state.armed = false;
+        RestoreModelVisibilityLocked();
         return;
     }
     g_state.armed = true;
     g_state.armed_frame = guest_frame_index;
     g_state.armed_view_valid = ReadSceneViewMatrix(g_state.armed_view);
+    // Uses last frame's verdict, since this frame's anchor is not computed
+    // until the seal. One frame of lag on hiding a model is not visible, and
+    // it keeps the player's kart drawn whenever the anchor is not engaged.
+    if (g_state.anchor.valid) {
+        ApplyModelVisibilityLocked();
+    } else {
+        RestoreModelVisibilityLocked();
+    }
 }
 
 void MkwVRFirstPersonCommit() noexcept {

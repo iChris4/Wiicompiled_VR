@@ -60,6 +60,8 @@ struct RuntimeUserConfig {
     std::optional<float> vrFirstPersonHeadUpMeters;
     std::optional<float> vrFirstPersonHeadForwardMeters;
     std::optional<float> vrFirstPersonHeadRightMeters;
+    std::optional<bool> vrFirstPersonHideDriver;
+    std::optional<int32_t> vrFirstPersonHiddenModel;
     std::optional<float> audioVolume;
     std::optional<float> audioMusicVolume;
     std::optional<float> audioSoundEffectsVolume;
@@ -133,6 +135,17 @@ inline constexpr const char* kPortableUserDataDirectoryName = "UserData";
 // bound is deliberately small so an unrelated marker far up a drive can never capture an ordinary
 // installation.
 inline constexpr int kPortableSearchDepth = 4;
+
+// First-person camera defaults and the range its head offsets accept, in one
+// place: the config getters, the on-disk template and the F10 bar's reset all
+// read them from here, so they cannot drift apart again.
+inline constexpr float kVrFirstPersonUnitsPerMeterDefault = 30.0f;
+inline constexpr float kVrFirstPersonHeadUpDefault = 3.0f;
+inline constexpr float kVrFirstPersonHeadForwardDefault = 0.0f;
+inline constexpr float kVrFirstPersonHeadRightDefault = 0.0f;
+inline constexpr bool kVrFirstPersonHideDriverDefault = true;
+inline constexpr int32_t kVrFirstPersonHiddenModelDefault = 0;
+inline constexpr float kVrFirstPersonHeadOffsetLimit = 10.0f;
 
 inline std::string Trim(std::string_view text) {
     size_t begin = 0;
@@ -351,11 +364,18 @@ inline void EnsureConfigFile() {
               "# below replaces world_units_per_meter while it is engaged: 10 is\n"
               "# life-size, where the 500 above makes the race a small diorama.\n"
               "first_person = false\n"
-              "first_person_units_per_meter = 10.0\n"
+              "first_person_units_per_meter = 30.0\n"
               "# Where the head sits in the kart's own frame, in metres.\n"
-              "first_person_head_up_meters = 1.0\n"
+              "first_person_head_up_meters = 3.0\n"
               "first_person_head_forward_meters = 12.0\n"
-              "first_person_head_right_meters = 0.0\n\n"
+              "first_person_head_right_meters = 0.0\n"
+              "# In first person the driver sits where your eyes are. Hiding\n"
+              "# the driver removes the head that would otherwise be in the\n"
+              "# way; hiding the kart removes the vehicle around you too.\n"
+              "first_person_hide_driver = true\n"
+              "# 0 is the driver, which is the usual choice. -1 hides every\n"
+              "# model of your kart, the vehicle included.\n"
+              "first_person_hidden_model = 0\n\n"
               "[audio]\n"
               "volume = 1.0\n"
               "music_volume = 1.0\n"
@@ -522,16 +542,25 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         config.vrFirstPersonUnitsPerMeter = *value;
     }
     if (auto value = FindConfigFloat(document, "vr", "first_person_head_up_meters");
-        value && *value >= -3.0f && *value <= 3.0f) {
+        value && *value >= -kVrFirstPersonHeadOffsetLimit &&
+        *value <= kVrFirstPersonHeadOffsetLimit) {
         config.vrFirstPersonHeadUpMeters = *value;
     }
     if (auto value = FindConfigFloat(document, "vr", "first_person_head_forward_meters");
-        value && *value >= -3.0f && *value <= 3.0f) {
+        value && *value >= -kVrFirstPersonHeadOffsetLimit &&
+        *value <= kVrFirstPersonHeadOffsetLimit) {
         config.vrFirstPersonHeadForwardMeters = *value;
     }
     if (auto value = FindConfigFloat(document, "vr", "first_person_head_right_meters");
-        value && *value >= -3.0f && *value <= 3.0f) {
+        value && *value >= -kVrFirstPersonHeadOffsetLimit &&
+        *value <= kVrFirstPersonHeadOffsetLimit) {
         config.vrFirstPersonHeadRightMeters = *value;
+    }
+    config.vrFirstPersonHideDriver =
+        FindConfigValue<bool>(document, "vr", "first_person_hide_driver");
+    if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
+        value && *value >= -1 && *value <= 31) {
+        config.vrFirstPersonHiddenModel = static_cast<int32_t>(*value);
     }
 
     auto readVolume = [&](std::string_view key) -> std::optional<float> {
@@ -789,7 +818,7 @@ inline bool SetVrFirstPersonUnitsPerMeter(float value) {
 }
 
 inline bool SetVrFirstPersonHeadUpMeters(float value) {
-    value = std::clamp(value, -3.0f, 3.0f);
+    value = std::clamp(value, -kVrFirstPersonHeadOffsetLimit, kVrFirstPersonHeadOffsetLimit);
     Mutable().vrFirstPersonHeadUpMeters = value;
     std::ostringstream formatted;
     formatted << value;
@@ -797,15 +826,28 @@ inline bool SetVrFirstPersonHeadUpMeters(float value) {
 }
 
 inline bool SetVrFirstPersonHeadForwardMeters(float value) {
-    value = std::clamp(value, -3.0f, 3.0f);
+    value = std::clamp(value, -kVrFirstPersonHeadOffsetLimit, kVrFirstPersonHeadOffsetLimit);
     Mutable().vrFirstPersonHeadForwardMeters = value;
     std::ostringstream formatted;
     formatted << value;
     return WriteSetting("vr", "first_person_head_forward_meters", formatted.str());
 }
 
+inline bool SetVrFirstPersonHideDriver(bool value) {
+    Mutable().vrFirstPersonHideDriver = value;
+    return WriteSetting("vr", "first_person_hide_driver", value ? "true" : "false");
+}
+
+inline bool SetVrFirstPersonHiddenModel(int32_t value) {
+    value = std::clamp(value, -1, 31);
+    Mutable().vrFirstPersonHiddenModel = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", "first_person_hidden_model", formatted.str());
+}
+
 inline bool SetVrFirstPersonHeadRightMeters(float value) {
-    value = std::clamp(value, -3.0f, 3.0f);
+    value = std::clamp(value, -kVrFirstPersonHeadOffsetLimit, kVrFirstPersonHeadOffsetLimit);
     Mutable().vrFirstPersonHeadRightMeters = value;
     std::ostringstream formatted;
     formatted << value;
@@ -1064,20 +1106,31 @@ inline bool VrFirstPerson(bool fallback = false) {
     return Get().vrFirstPerson.value_or(fallback);
 }
 
-inline float VrFirstPersonUnitsPerMeter(float fallback = 10.0f) {
+inline float VrFirstPersonUnitsPerMeter(float fallback = kVrFirstPersonUnitsPerMeterDefault) {
     return std::clamp(Get().vrFirstPersonUnitsPerMeter.value_or(fallback), 1.0f, 10000.0f);
 }
 
-inline float VrFirstPersonHeadUpMeters(float fallback = 1.0f) {
-    return std::clamp(Get().vrFirstPersonHeadUpMeters.value_or(fallback), -3.0f, 3.0f);
+inline float VrFirstPersonHeadUpMeters(float fallback = kVrFirstPersonHeadUpDefault) {
+    return std::clamp(Get().vrFirstPersonHeadUpMeters.value_or(fallback),
+                      -kVrFirstPersonHeadOffsetLimit, kVrFirstPersonHeadOffsetLimit);
 }
 
-inline float VrFirstPersonHeadForwardMeters(float fallback = 0.0f) {
-    return std::clamp(Get().vrFirstPersonHeadForwardMeters.value_or(fallback), -20.0f, 20.0f);
+inline float VrFirstPersonHeadForwardMeters(float fallback = kVrFirstPersonHeadForwardDefault) {
+    return std::clamp(Get().vrFirstPersonHeadForwardMeters.value_or(fallback),
+                      -kVrFirstPersonHeadOffsetLimit, kVrFirstPersonHeadOffsetLimit);
 }
 
-inline float VrFirstPersonHeadRightMeters(float fallback = 0.0f) {
-    return std::clamp(Get().vrFirstPersonHeadRightMeters.value_or(fallback), -3.0f, 3.0f);
+inline float VrFirstPersonHeadRightMeters(float fallback = kVrFirstPersonHeadRightDefault) {
+    return std::clamp(Get().vrFirstPersonHeadRightMeters.value_or(fallback),
+                      -kVrFirstPersonHeadOffsetLimit, kVrFirstPersonHeadOffsetLimit);
+}
+
+inline bool VrFirstPersonHideDriver(bool fallback = kVrFirstPersonHideDriverDefault) {
+    return Get().vrFirstPersonHideDriver.value_or(fallback);
+}
+
+inline int32_t VrFirstPersonHiddenModel(int32_t fallback = kVrFirstPersonHiddenModelDefault) {
+    return std::clamp(Get().vrFirstPersonHiddenModel.value_or(fallback), -1, 31);
 }
 
 inline std::string GraphicsApi(std::string fallback = "auto") {

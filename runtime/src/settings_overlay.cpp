@@ -106,10 +106,12 @@ bool g_vrStopAtDisplayCopy = RuntimeConfigFile::VrStopAtDisplayCopy(true);
 bool g_vrSkipCopyClears = RuntimeConfigFile::VrSkipCopyClears(true);
 bool g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
 bool g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson(false);
-float g_vrFirstPersonUnitsPerMeter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter(10.0f);
-float g_vrFirstPersonHeadUp = RuntimeConfigFile::VrFirstPersonHeadUpMeters(1.0f);
-float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMeters(0.0f);
-float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters(0.0f);
+float g_vrFirstPersonUnitsPerMeter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter();
+float g_vrFirstPersonHeadUp = RuntimeConfigFile::VrFirstPersonHeadUpMeters();
+float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMeters();
+float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters();
+bool g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
+int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -889,11 +891,11 @@ void DrawGraphicsSettings() {
     }
     bool headOffsetsChanged = false;
     headOffsetsChanged |=
-        ImGui::SliderFloat("Head height (m)", &g_vrFirstPersonHeadUp, -1.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("Head height (m)", &g_vrFirstPersonHeadUp, -RuntimeConfigFile::kVrFirstPersonHeadOffsetLimit, RuntimeConfigFile::kVrFirstPersonHeadOffsetLimit, "%.2f");
     headOffsetsChanged |=
         ImGui::SliderFloat("Head forward (m)", &g_vrFirstPersonHeadForward, -20.0f, 20.0f, "%.2f");
     headOffsetsChanged |=
-        ImGui::SliderFloat("Head sideways (m)", &g_vrFirstPersonHeadRight, -3.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("Head sideways (m)", &g_vrFirstPersonHeadRight, -RuntimeConfigFile::kVrFirstPersonHeadOffsetLimit, RuntimeConfigFile::kVrFirstPersonHeadOffsetLimit, "%.2f");
     if (headOffsetsChanged) {
         RuntimeConfigFile::SetVrFirstPersonHeadUpMeters(g_vrFirstPersonHeadUp);
         RuntimeConfigFile::SetVrFirstPersonHeadForwardMeters(g_vrFirstPersonHeadForward);
@@ -901,10 +903,52 @@ void DrawGraphicsSettings() {
         mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
     }
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
-    ImGui::TextDisabled(
-        "Where the head sits in the kart's own frame. Nudge it forward if the driver's own "
-        "head intrudes on the view.");
+    ImGui::TextDisabled("Where the head sits in the kart's own frame.");
     ImGui::PopTextWrapPos();
+    // Two presentations of one setting: which models go, or none at all.
+    // Ticking either replaces the other, and unticking both shows everything.
+    const auto applyHiding = [](bool enabled, int model) {
+        g_vrFirstPersonHideDriver = enabled;
+        if (enabled) {
+            g_vrFirstPersonHiddenModel = model;
+            RuntimeConfigFile::SetVrFirstPersonHiddenModel(model);
+        }
+        RuntimeConfigFile::SetVrFirstPersonHideDriver(enabled);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    };
+    bool hideDriver = g_vrFirstPersonHideDriver && g_vrFirstPersonHiddenModel >= 0;
+    bool hideDriverAndKart = g_vrFirstPersonHideDriver && g_vrFirstPersonHiddenModel < 0;
+    if (ImGui::Checkbox("Hide driver", &hideDriver)) {
+        applyHiding(hideDriver, RuntimeConfigFile::kVrFirstPersonHiddenModelDefault);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Removes your character and leaves the kart around you. Their head would "
+            "otherwise be where your eyes are. Other racers are unaffected.");
+    }
+    if (ImGui::Checkbox("Hide driver and kart", &hideDriverAndKart)) {
+        applyHiding(hideDriverAndKart, -1);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Removes the vehicle as well, leaving nothing of your own kart.");
+    }
+    ImGui::Separator();
+    if (ImGui::Button("Reset first-person defaults")) {
+        g_vrFirstPersonUnitsPerMeter = RuntimeConfigFile::kVrFirstPersonUnitsPerMeterDefault;
+        g_vrFirstPersonHeadUp = RuntimeConfigFile::kVrFirstPersonHeadUpDefault;
+        g_vrFirstPersonHeadForward = RuntimeConfigFile::kVrFirstPersonHeadForwardDefault;
+        g_vrFirstPersonHeadRight = RuntimeConfigFile::kVrFirstPersonHeadRightDefault;
+        g_vrFirstPersonHideDriver = RuntimeConfigFile::kVrFirstPersonHideDriverDefault;
+        g_vrFirstPersonHiddenModel = RuntimeConfigFile::kVrFirstPersonHiddenModelDefault;
+        RuntimeConfigFile::SetVrFirstPersonUnitsPerMeter(g_vrFirstPersonUnitsPerMeter);
+        RuntimeConfigFile::SetVrFirstPersonHeadUpMeters(g_vrFirstPersonHeadUp);
+        RuntimeConfigFile::SetVrFirstPersonHeadForwardMeters(g_vrFirstPersonHeadForward);
+        RuntimeConfigFile::SetVrFirstPersonHeadRightMeters(g_vrFirstPersonHeadRight);
+        RuntimeConfigFile::SetVrFirstPersonHideDriver(g_vrFirstPersonHideDriver);
+        RuntimeConfigFile::SetVrFirstPersonHiddenModel(g_vrFirstPersonHiddenModel);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+        ApplyVrHudVirtualScreen();
+    }
 }
 
 void DrawFpsOverlay() {

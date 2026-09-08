@@ -30,10 +30,12 @@ hud_virtual_screen = true
 stop_at_display_copy = true
 skip_copy_clears = true
 first_person = false
-first_person_units_per_meter = 10.0
-first_person_head_up_meters = 1.0
+first_person_units_per_meter = 30.0
+first_person_head_up_meters = 3.0
 first_person_head_forward_meters = 0.0
 first_person_head_right_meters = 0.0
+first_person_hide_driver = true
+first_person_hidden_model = 0
 ```
 
 Set `enabled = true`, close the game completely, and start it again. These settings are read only
@@ -61,8 +63,8 @@ four are live and are also exposed in the F10 settings bar.
 By default the headset sits where Mario Kart's own chase camera sits, and `world_units_per_meter`
 of 500 presents the race as a small diorama on a table. Turning on `first_person` moves the camera
 to the Player 1 driver's head instead, and switches the world scale to
-`first_person_units_per_meter`, which defaults to the 10 units per metre Mario Kart Wii is
-authored at, so the race reads life-size.
+`first_person_units_per_meter`, whose default of 30 is what makes the race read life-size from the
+seat. It is a matter of taste rather than a property of the game, so the F10 bar exposes it.
 
 The game's own transforms are never modified. Each guest frame the runtime reads the race camera's
 view matrix and the player kart's physics pose and derives one affine transform from the recorded
@@ -82,11 +84,23 @@ immersive stereo. Menus, split-screen, and the virtual-screen fallback are unaff
 the desktop mirror, which keeps showing the game's ordinary third-person view. If the kart or
 camera cannot be read the camera stays where the game put it rather than guessing.
 
-Two limitations are worth knowing. Mario Kart still culls the scene from its own chase camera, so
-a wide head turn in first person can reveal the edge of what the game decided to draw. And the
-driver's own head is still rendered; nudge `first_person_head_forward_meters` if it intrudes. As
-with the rest of the race instrumentation, the object offsets this reads are specific to the
-project's supported PAL `RMCP01` translation.
+Your own driver sits exactly where your eyes are, so their head would fill the view.
+`first_person_hide_driver` removes it. The game applies one draw byte across every model of a kart
+and to its body, so clearing it outright takes the vehicle along with the driver;
+`first_person_hidden_model` names a single model to hide instead. On PAL `RMCP01` a kart carries two
+models and index `0` is the driver, which is the default: the character goes and the vehicle stays.
+`-1` restores the blunt behaviour and hides everything. An index the kart does not have hides
+nothing, and the log reports how many it has when the mode engages. The F10 bar presents this as
+two toggles, "Hide driver" and "Hide driver and kart", alongside a button that restores every
+first-person default. Both settings touch your own kart
+only, so the other racers are untouched, and the original values are restored when first person
+stops or the race ends. This is the one place the first-person camera modifies the game rather than
+only reading it.
+
+One limitation is worth knowing: Mario Kart still culls the scene from its own chase camera, so a
+wide head turn in first person can reveal the edge of what the game decided to draw. As with the
+rest of the race instrumentation, the object offsets this reads are specific to the project's
+supported PAL `RMCP01` translation.
 
 ## Presentation policy
 

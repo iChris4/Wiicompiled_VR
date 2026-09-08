@@ -23,7 +23,7 @@ inline constexpr Mtx34 kIdentityMtx34{
 // frame is the EGG convention: +x right, +y up, +z forward.
 struct FirstPersonHeadOffsets {
     float right = 0.0f;
-    float up = 1.0f;
+    float up = 3.0f;
     float forward = 0.0f;
 };
 
@@ -183,6 +183,10 @@ inline bool ComputeFirstPersonAnchor(const Mtx34& view_from_world, const Mtx34& 
 void MkwVRFirstPersonConfigure(bool enabled, const FirstPersonHeadOffsets& offsets,
                                float units_per_meter) noexcept;
 
+// While the anchor is driving the view the player's own models can be removed,
+// since the driver otherwise sits exactly where the eyes are. This uses the
+// game's own visibility fields, and puts them back when it stops.
+//
 // Reads the current [vr] first-person settings and applies them here and to the
 // presentation policy's world scale. The single place those settings are
 // interpreted, shared by startup and the F10 settings bar.

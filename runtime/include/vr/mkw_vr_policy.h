@@ -78,11 +78,11 @@ struct MkwVRPolicyConfig {
     // immersive race HUD so 2D content keeps its place across the transition.
     float hud_width_meters = 2.4f;
     float hud_scale = 1.0f;
-    // World scale used while the first-person camera is engaged. Mario Kart
-    // Wii is authored at roughly this many units per metre, so it is what
-    // makes the race read life-size; the third-person default deliberately
-    // does not, presenting the race as a small diorama instead.
-    float first_person_units_per_meter = 10.0f;
+    // World scale used while the first-person camera is engaged. This is what
+    // makes the race read life-size from the driver's seat; the third-person
+    // default deliberately does not, presenting it as a small diorama instead.
+    // Kept in step with RuntimeConfigFile's default, which the F10 bar resets to.
+    float first_person_units_per_meter = 30.0f;
 };
 
 struct MkwVRSceneObservation {
