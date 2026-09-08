@@ -816,6 +816,12 @@ void DrawGraphicsSettings() {
     }
     ImGui::Separator();
     ImGui::Text("Graphics API: %s", GraphicsApiDisplayName());
+}
+
+// The VR settings live in their own top-bar menu: they are a self-contained
+// group, and keeping them out of Graphics stops that menu from running off the
+// bottom of the screen.
+void DrawVrSettings() {
     if (ImGui::Checkbox("Enable OpenXR VR", &g_vrEnabled)) {
         RuntimeConfigFile::SetVrEnabled(g_vrEnabled);
     }
@@ -1076,6 +1082,11 @@ void DrawTopBar() {
 
     if (ImGui::BeginMenu("Graphics")) {
         DrawGraphicsSettings();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("VR")) {
+        DrawVrSettings();
         ImGui::EndMenu();
     }
 
