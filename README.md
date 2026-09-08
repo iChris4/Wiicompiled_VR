@@ -53,7 +53,9 @@ Press **F10** while the game window has focus:
 - Internal resolution
 - FPS counter
 - Controller assignment for all four ports
-- Full per-controller button mapping
+- Full per-controller button mapping, including the bumpers
+- Dolphin-syntax input expressions and GCPadNew.ini import
+- Controller vibration on/off
 - Volume, instant mute, and the music ducking toggle
 
 Everything you change is saved to `Config.toml` on the spot and restored next launch.
@@ -63,25 +65,20 @@ Controllers are fed to the game as a GameCube controller.
 Mappings are positional (`south`, `east`, `west`, `north`) rather than Xbox-labelled, so the
 same config makes sense on Xbox, PlayStation, Nintendo and generic SDL pads alike, and extra
 inputs like paddles, touchpads and share buttons show up when the hardware reports them.
+
+**Dolphin-compatible input expressions.** 
+Each GameCube control can carry an expression in Dolphin's input syntax, with the same operators
+and the same functions.
+A Dolphin `GCPadNew.ini` can be imported directly from the F10 bar.
+
+**Vibration toggle.** 
+Force feedback can be turned off for every port at once.
 The official Wii U / Switch GameCube adapter (WUP-028) works too; as with Dolphin, on Windows the
 adapter must be switched to the WinUSB driver once (Zadig).
 
 **Real Wii Remotes over Bluetooth.**
 Pair a Wii Remote with Windows (Settings > Bluetooth > Add device, press 1+2 or SYNC, leave the
-PIN empty) and the game reads it as an actual Wii Remote through KPAD: Wii Remote icons and
-prompts, Wii Wheel tilt steering, wheelies and tricks all come from the game's own motion code.
-Nunchuk and Classic Controller are real Wii extensions too: the game gets the Nunchuk's stick,
-C/Z and accelerometer, and the Classic Controller through `KPADGetUnifiedWpadStatus` with its own
-layout and icons, so its buttons do what the game says they do and no mapping is involved. Plug an
-extension in or pull it out mid-game and the game switches control scheme like on the console
-(the runtime patches SDL's Wii driver, which otherwise loses the remote for good on an extension
-change). Only the Wii U Pro Controller, which has no Wii-era equivalent, is fed to the game as a
-GameCube pad with Nintendo's layout. If a remote drops out or was switched on after launch, the
-runtime keeps rescanning Bluetooth until it comes back (F10 > Controller settings > Wii Remotes). SDL's read of
-the remote's factory accelerometer calibration often times out over Bluetooth (`console.log`
-then says "Using fallback accelerometer calibration") and it falls back to a nominal zero point,
-so the same menu has a one-button calibration (remote flat, buttons up) that removes the small
-tilt offset some remotes show.
+PIN empty)
 
 Known limitations of the Wii Remote path:
 - No IR pointer yet: menus are navigated with the D-pad and A (the game treats the remote as
