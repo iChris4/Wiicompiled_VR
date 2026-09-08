@@ -7,6 +7,7 @@
 #include "runtime_log.h"
 #include "vr/mkw_vr_first_person.h"
 #include "vr/mkw_vr_policy.h"
+#include "vr/openxr_integration.h"
 #include "wii_remote_input.h"
 
 #include <imgui.h>
@@ -112,6 +113,14 @@ float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMe
 float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters();
 bool g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
 int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
+// SDL_SCANCODE_UNKNOWN means unbound, which is also what an unrecognised
+// name in the config file resolves to rather than silently picking a key.
+SDL_Scancode g_vrRecenterScancode = [] {
+    const std::string name = RuntimeConfigFile::VrRecenterKey();
+    return name.empty() ? SDL_SCANCODE_UNKNOWN
+                        : SDL_GetScancodeFromName(name.c_str());
+}();
+bool g_vrRecenterRebinding = false;
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -869,6 +878,38 @@ void DrawVrSettings() {
             "hud_distance_meters read at launch.");
     }
     ImGui::Separator();
+    ImGui::Text("VR view");
+    if (ImGui::Button("Recenter view")) {
+        mkw::vr::OpenXRRequestRecenter();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Makes where you are sitting right now the centre of the view. Position "
+            "only, so the horizon stays level and forward is unchanged; use your "
+            "headset's own recenter to change forward. Applies during an immersive "
+            "race, as the menu screen already follows your head.");
+    }
+    ImGui::SameLine();
+    // Click to arm, then the next key press is captured in HandleEvents.
+    if (g_vrRecenterRebinding) {
+        if (ImGui::Button("Press a key... (Esc to cancel)###VrRecenterKey")) {
+            g_vrRecenterRebinding = false;
+        }
+    } else {
+        const char* name = g_vrRecenterScancode == SDL_SCANCODE_UNKNOWN
+                               ? nullptr
+                               : SDL_GetScancodeName(g_vrRecenterScancode);
+        const std::string label =
+            std::string("Hotkey: ") + ((name && *name) ? name : "unbound") +
+            "###VrRecenterKey";
+        if (ImGui::Button(label.c_str())) {
+            g_vrRecenterRebinding = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Click to rebind. Esc cancels, Backspace unbinds.");
+        }
+    }
+    ImGui::Separator();
     ImGui::Text("VR camera");
     if (ImGui::Checkbox("First-person camera", &g_vrFirstPerson)) {
         RuntimeConfigFile::SetVrFirstPerson(g_vrFirstPerson);
@@ -1119,6 +1160,27 @@ bool IsToggleKey(const SDL_Event& event, SDL_Scancode code) {
     return event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == code;
 }
 
+// Consumes the next key press into the recenter binding while the menu
+// button is armed. Esc leaves the existing binding alone, Backspace clears
+// it; anything else becomes the new hotkey.
+bool CaptureVrRecenterBinding(const SDL_Event& event) {
+    if (!g_vrRecenterRebinding || event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) {
+        return false;
+    }
+    g_vrRecenterRebinding = false;
+    if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
+        return true;
+    }
+    g_vrRecenterScancode = event.key.scancode == SDL_SCANCODE_BACKSPACE
+                               ? SDL_SCANCODE_UNKNOWN
+                               : event.key.scancode;
+    const char* name = g_vrRecenterScancode == SDL_SCANCODE_UNKNOWN
+                           ? nullptr
+                           : SDL_GetScancodeName(g_vrRecenterScancode);
+    RuntimeConfigFile::SetVrRecenterKey(name ? name : "");
+    return true;
+}
+
 bool IsMouseActivity(const SDL_Event& event) {
     switch (event.type) {
     case SDL_EVENT_MOUSE_MOTION:
@@ -1201,8 +1263,15 @@ void HandleEvents(const AuroraEvent* events) noexcept {
             continue;
         }
         controller_mapping_wizard::HandleSdlEvent(ev->sdl);
+        if (CaptureVrRecenterBinding(ev->sdl)) {
+            continue;
+        }
         if (IsToggleKey(ev->sdl, SDL_SCANCODE_F10)) {
             SetTopBarVisible(!g_topBarVisible);
+        }
+        if (g_vrRecenterScancode != SDL_SCANCODE_UNKNOWN &&
+            IsToggleKey(ev->sdl, g_vrRecenterScancode)) {
+            mkw::vr::OpenXRRequestRecenter();
         }
         if (IsMouseActivity(ev->sdl)) {
             g_lastMouseActivity = Clock::now();

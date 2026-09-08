@@ -60,11 +60,6 @@ struct Quaternion {
     float w = 1.0f;
 };
 
-struct Pose {
-    Quaternion orientation{};
-    std::array<float, 3> position{};
-};
-
 Quaternion Normalize(Quaternion value) noexcept {
     const float length_squared = value.x * value.x + value.y * value.y +
                                  value.z * value.z + value.w * value.w;
@@ -81,15 +76,6 @@ Quaternion Normalize(Quaternion value) noexcept {
 
 Quaternion Conjugate(Quaternion value) noexcept {
     return {-value.x, -value.y, -value.z, value.w};
-}
-
-Quaternion Multiply(const Quaternion& left, const Quaternion& right) noexcept {
-    return Normalize({
-        left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
-        left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
-        left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w,
-        left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
-    });
 }
 
 std::array<float, 3> Rotate(const Quaternion& q, const std::array<float, 3>& value) noexcept {
@@ -126,29 +112,16 @@ void RotationMatrix(const Quaternion& value, float matrix[9]) noexcept {
     matrix[8] = 1.0f - 2.0f * (xx + yy);
 }
 
-Pose CenterPose(const OpenXRFrame& frame, bool position_valid) noexcept {
+// Midpoint between the eyes: the head position the tracking origin is latched
+// to. Callers check XR_VIEW_STATE_POSITION_VALID_BIT first.
+std::array<float, 3> CenterPosition(const OpenXRFrame& frame) noexcept {
     const auto& left = frame.views[0].pose;
     const auto& right = frame.views[1].pose;
-    Quaternion l{left.orientation.x, left.orientation.y, left.orientation.z,
-                 left.orientation.w};
-    Quaternion r{right.orientation.x, right.orientation.y, right.orientation.z,
-                 right.orientation.w};
-    l = Normalize(l);
-    r = Normalize(r);
-    const float dot = l.x * r.x + l.y * r.y + l.z * r.z + l.w * r.w;
-    if (dot < 0.0f) {
-        r = {-r.x, -r.y, -r.z, -r.w};
-    }
-    Pose center;
-    center.orientation = Normalize({l.x + r.x, l.y + r.y, l.z + r.z, l.w + r.w});
-    if (position_valid) {
-        center.position = {
-            (left.position.x + right.position.x) * 0.5f,
-            (left.position.y + right.position.y) * 0.5f,
-            (left.position.z + right.position.z) * 0.5f,
-        };
-    }
-    return center;
+    return {
+        (left.position.x + right.position.x) * 0.5f,
+        (left.position.y + right.position.y) * 0.5f,
+        (left.position.z + right.position.z) * 0.5f,
+    };
 }
 
 void IdentityEye(AuroraStereoEye& eye) noexcept {
@@ -177,21 +150,25 @@ void ProjectionFromFov(const XrFovf& fov, float output[16]) noexcept {
     output[6] = (up + down) * inverse_height;
 }
 
-void ViewFromBase(const XrPosef& eye_pose, const Pose& base, bool position_valid,
-                  float units_per_meter, float output[12]) noexcept {
+// The base is a position and nothing else. OpenXR keeps its reference spaces
+// gravity-aligned, so handing the headset's rotation to the game camera as-is
+// leaves the game's horizon level and its forward fixed to the reference space.
+// Composing a latched head orientation in here instead would bake that instant's
+// pitch and roll into the neutral and tilt the horizon for the rest of the session.
+void ViewFromBase(const XrPosef& eye_pose, const std::array<float, 3>& base_position,
+                  bool position_valid, float units_per_meter, float output[12]) noexcept {
     const Quaternion eye = Normalize({eye_pose.orientation.x, eye_pose.orientation.y,
                                       eye_pose.orientation.z, eye_pose.orientation.w});
     const Quaternion inverse_eye = Conjugate(eye);
-    const Quaternion delta = Multiply(inverse_eye, base.orientation);
     float rotation[9];
-    RotationMatrix(delta, rotation);
+    RotationMatrix(inverse_eye, rotation);
 
     std::array<float, 3> translation{};
     if (position_valid) {
         const std::array<float, 3> base_to_eye{
-            base.position[0] - eye_pose.position.x,
-            base.position[1] - eye_pose.position.y,
-            base.position[2] - eye_pose.position.z,
+            base_position[0] - eye_pose.position.x,
+            base_position[1] - eye_pose.position.y,
+            base_position[2] - eye_pose.position.z,
         };
         translation = Rotate(inverse_eye, base_to_eye);
     }
@@ -344,6 +321,10 @@ public:
     }
 
     bool IsRunning() const noexcept { return running_.load(std::memory_order_acquire); }
+
+    void RequestRecenter() noexcept {
+        recenter_requested_.store(true, std::memory_order_release);
+    }
 
     void ServiceProducerFrameBoundary() noexcept {
         if (teardown_requested_.load(std::memory_order_acquire)) {
@@ -591,25 +572,34 @@ private:
             IdentityEye(destination.eyes[eye]);
         }
         if (!immersive) {
+            // The virtual screen is submitted in view space, so it is
+            // head-locked and has no origin to recenter. Drop the request rather
+            // than leaving it queued for a race start that latches the position
+            // on its own anyway.
+            recenter_requested_.store(false, std::memory_order_relaxed);
             last_immersive_ = false;
             return;
         }
 
         const bool position_valid =
             (source.xr_frame.view_state_flags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0;
-        if (!base_pose_valid_ || !last_immersive_) {
-            base_pose_ = CenterPose(source.xr_frame, position_valid);
-            base_pose_valid_ = true;
-            base_position_valid_ = position_valid;
-        } else if (position_valid && !base_position_valid_) {
-            base_pose_.position = CenterPose(source.xr_frame, true).position;
+        if (recenter_requested_.exchange(false, std::memory_order_acq_rel)) {
+            ResetTrackingOrigin();
+        }
+        // Latch on the first immersive frame, after a recenter or an origin
+        // change, and on re-entry from the virtual screen so a race start
+        // recenters a player who shifted during the menus. Position only: the
+        // heading and the horizon belong to the reference space, so no
+        // transition here can tilt the view or redefine forward.
+        if (position_valid && (!base_position_valid_ || !last_immersive_)) {
+            base_position_ = CenterPosition(source.xr_frame);
             base_position_valid_ = true;
         }
         last_immersive_ = true;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             ProjectionFromFov(source.xr_frame.views[eye].fov,
                               destination.eyes[eye].projection);
-            ViewFromBase(source.xr_frame.views[eye].pose, base_pose_,
+            ViewFromBase(source.xr_frame.views[eye].pose, base_position_,
                          position_valid && base_position_valid_,
                          units_per_meter, destination.eyes[eye].viewFromCenter);
         }
@@ -622,8 +612,7 @@ private:
     }
 
     void ResetTrackingOrigin() noexcept {
-        base_pose_ = {};
-        base_pose_valid_ = false;
+        base_position_ = {};
         base_position_valid_ = false;
         last_immersive_ = false;
     }
@@ -654,6 +643,7 @@ private:
     std::atomic_bool stop_{false};
     std::atomic_bool running_{false};
     std::atomic_bool teardown_requested_{false};
+    std::atomic_bool recenter_requested_{false};
     std::atomic<PublishedFrame*> published_{nullptr};
     PublishedFrame published_frame_{};
     std::mutex published_mutex_;
@@ -661,8 +651,7 @@ private:
     std::condition_variable stop_cv_;
     mutable std::mutex error_mutex_;
     std::string last_error_;
-    Pose base_pose_{};
-    bool base_pose_valid_ = false;
+    std::array<float, 3> base_position_{};
     bool base_position_valid_ = false;
     bool last_immersive_ = false;
     uint64_t applied_session_run_serial_ = 0;
@@ -724,6 +713,12 @@ bool OpenXRIsRunning() noexcept {
     return OpenXRIntegration::Get().IsRunning();
 #else
     return false;
+#endif
+}
+
+void OpenXRRequestRecenter() noexcept {
+#if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
+    OpenXRIntegration::Get().RequestRecenter();
 #endif
 }
 

@@ -62,6 +62,7 @@ struct RuntimeUserConfig {
     std::optional<float> vrFirstPersonHeadRightMeters;
     std::optional<bool> vrFirstPersonHideDriver;
     std::optional<int32_t> vrFirstPersonHiddenModel;
+    std::optional<std::string> vrRecenterKey;
     std::optional<float> audioVolume;
     std::optional<float> audioMusicVolume;
     std::optional<float> audioSoundEffectsVolume;
@@ -146,6 +147,9 @@ inline constexpr float kVrFirstPersonHeadRightDefault = 0.0f;
 inline constexpr bool kVrFirstPersonHideDriverDefault = true;
 inline constexpr int32_t kVrFirstPersonHiddenModelDefault = 0;
 inline constexpr float kVrFirstPersonHeadOffsetLimit = 10.0f;
+// SDL scancode name, spelled the way SDL_GetScancodeName produces it. An
+// empty string leaves the recenter hotkey unbound, menu button only.
+inline constexpr std::string_view kVrRecenterKeyDefault = "F9";
 
 inline std::string Trim(std::string_view text) {
     size_t begin = 0;
@@ -375,7 +379,15 @@ inline void EnsureConfigFile() {
               "first_person_hide_driver = true\n"
               "# 0 is the driver, which is the usual choice. -1 hides every\n"
               "# model of your kart, the vehicle included.\n"
-              "first_person_hidden_model = 0\n\n"
+              "first_person_hidden_model = 0\n"
+              "# Keyboard shortcut that recenters the VR view, naming the key the\n"
+              "# way SDL does (F9, Home, Keypad 5, ...). It moves the view to where\n"
+              "# you are sitting now and nothing else: forward and the horizon come\n"
+              "# from the headset's own reference space, so recentering cannot tilt\n"
+              "# the game. Applies during an immersive race; the menu screen is\n"
+              "# head-locked already. Rebindable from the F10 menu under VR. Leave\n"
+              "# empty to unbind.\n"
+              "recenter_key = \"F9\"\n\n"
               "[audio]\n"
               "volume = 1.0\n"
               "music_volume = 1.0\n"
@@ -558,6 +570,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     }
     config.vrFirstPersonHideDriver =
         FindConfigValue<bool>(document, "vr", "first_person_hide_driver");
+    if (auto value = FindConfigValue<std::string>(document, "vr", "recenter_key")) {
+        config.vrRecenterKey = *value;
+    }
     if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
         value && *value >= -1 && *value <= 31) {
         config.vrFirstPersonHiddenModel = static_cast<int32_t>(*value);
@@ -831,6 +846,11 @@ inline bool SetVrFirstPersonHeadForwardMeters(float value) {
     std::ostringstream formatted;
     formatted << value;
     return WriteSetting("vr", "first_person_head_forward_meters", formatted.str());
+}
+
+inline bool SetVrRecenterKey(std::string value) {
+    Mutable().vrRecenterKey = value;
+    return WriteSetting("vr", "recenter_key", FormatString(value));
 }
 
 inline bool SetVrFirstPersonHideDriver(bool value) {
@@ -1123,6 +1143,10 @@ inline float VrFirstPersonHeadForwardMeters(float fallback = kVrFirstPersonHeadF
 inline float VrFirstPersonHeadRightMeters(float fallback = kVrFirstPersonHeadRightDefault) {
     return std::clamp(Get().vrFirstPersonHeadRightMeters.value_or(fallback),
                       -kVrFirstPersonHeadOffsetLimit, kVrFirstPersonHeadOffsetLimit);
+}
+
+inline std::string VrRecenterKey(std::string fallback = std::string(kVrRecenterKeyDefault)) {
+    return Get().vrRecenterKey.value_or(std::move(fallback));
 }
 
 inline bool VrFirstPersonHideDriver(bool fallback = kVrFirstPersonHideDriverDefault) {
