@@ -44,4 +44,12 @@ std::string OpenXRLastError();
 // immersive race, where the head-locked menu screen has no origin to recenter.
 void OpenXRRequestRecenter() noexcept;
 
+// Sets a fixed pitch of the game camera for a player sitting reclined, in
+// degrees, clamped to RuntimeConfigFile::kVrLeanBackDegreesLimit. Positive
+// tilts the camera back with the player, so an angle matching how far they are
+// reclined puts the track back in front of them. 0 applies no pitch at all.
+// Applies to the immersive race view only; callable from any thread and read
+// once per published frame.
+void OpenXRSetLeanBackDegrees(float degrees) noexcept;
+
 } // namespace mkw::vr

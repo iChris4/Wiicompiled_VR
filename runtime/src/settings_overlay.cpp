@@ -121,6 +121,7 @@ SDL_Scancode g_vrRecenterScancode = [] {
                         : SDL_GetScancodeFromName(name.c_str());
 }();
 bool g_vrRecenterRebinding = false;
+float g_vrLeanBackDegrees = RuntimeConfigFile::VrLeanBackDegrees();
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -908,6 +909,20 @@ void DrawVrSettings() {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Click to rebind. Esc cancels, Backspace unbinds.");
         }
+    }
+    if (ImGui::SliderFloat("Lean back angle (deg)", &g_vrLeanBackDegrees,
+                           -RuntimeConfigFile::kVrLeanBackDegreesLimit,
+                           RuntimeConfigFile::kVrLeanBackDegreesLimit, "%.1f")) {
+        mkw::vr::OpenXRSetLeanBackDegrees(g_vrLeanBackDegrees);
+        RuntimeConfigFile::SetVrLeanBackDegrees(g_vrLeanBackDegrees);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Tilts the game camera back with you when you play reclined, so set it to "
+            "roughly how far back your seat is and the track comes back in front of you "
+            "instead of above. 0 applies no tilt. Unlike recentering, this deliberately "
+            "does pitch the view, and looking sideways while it is set will roll the "
+            "horizon the way a real recline would.");
     }
     ImGui::Separator();
     ImGui::Text("VR camera");

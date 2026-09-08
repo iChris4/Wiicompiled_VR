@@ -37,6 +37,8 @@
 namespace mkw::vr {
 namespace {
 
+inline constexpr float kDegreesToRadians = 0.01745329252f;
+
 void ConfigurePolicy(bool enabled) noexcept {
     MkwVRPolicyReset();
     MkwVRPolicyConfig config{};
@@ -76,6 +78,15 @@ Quaternion Normalize(Quaternion value) noexcept {
 
 Quaternion Conjugate(Quaternion value) noexcept {
     return {-value.x, -value.y, -value.z, value.w};
+}
+
+Quaternion Multiply(const Quaternion& left, const Quaternion& right) noexcept {
+    return Normalize({
+        left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
+        left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
+        left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w,
+        left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
+    });
 }
 
 std::array<float, 3> Rotate(const Quaternion& q, const std::array<float, 3>& value) noexcept {
@@ -155,13 +166,26 @@ void ProjectionFromFov(const XrFovf& fov, float output[16]) noexcept {
 // leaves the game's horizon level and its forward fixed to the reference space.
 // Composing a latched head orientation in here instead would bake that instant's
 // pitch and roll into the neutral and tilt the horizon for the rest of the session.
+//
+// lean_back_radians is the one deliberate exception: a fixed pitch of the game
+// camera about the reference space's right axis, for a player sitting reclined.
+// It multiplies in on the right, so it turns the world before the head rotation
+// rather than after it, which is what makes it cancel a reclined head exactly
+// and, when you then look sideways, roll the view the way a real recline would.
 void ViewFromBase(const XrPosef& eye_pose, const std::array<float, 3>& base_position,
-                  bool position_valid, float units_per_meter, float output[12]) noexcept {
+                  bool position_valid, float units_per_meter, float lean_back_radians,
+                  float output[12]) noexcept {
     const Quaternion eye = Normalize({eye_pose.orientation.x, eye_pose.orientation.y,
                                       eye_pose.orientation.z, eye_pose.orientation.w});
     const Quaternion inverse_eye = Conjugate(eye);
     float rotation[9];
-    RotationMatrix(inverse_eye, rotation);
+    if (lean_back_radians == 0.0f) {
+        RotationMatrix(inverse_eye, rotation);
+    } else {
+        const float half_angle = 0.5f * lean_back_radians;
+        const Quaternion lean{std::sin(half_angle), 0.0f, 0.0f, std::cos(half_angle)};
+        RotationMatrix(Multiply(inverse_eye, lean), rotation);
+    }
 
     std::array<float, 3> translation{};
     if (position_valid) {
@@ -324,6 +348,13 @@ public:
 
     void RequestRecenter() noexcept {
         recenter_requested_.store(true, std::memory_order_release);
+    }
+
+    void SetLeanBackDegrees(float degrees) noexcept {
+        lean_back_degrees_.store(
+            std::clamp(degrees, -RuntimeConfigFile::kVrLeanBackDegreesLimit,
+                       RuntimeConfigFile::kVrLeanBackDegreesLimit),
+            std::memory_order_relaxed);
     }
 
     void ServiceProducerFrameBoundary() noexcept {
@@ -596,12 +627,16 @@ private:
             base_position_valid_ = true;
         }
         last_immersive_ = true;
+        // Read once so both eyes are built from the same angle even if the
+        // settings slider moves between them.
+        const float lean_back_radians =
+            lean_back_degrees_.load(std::memory_order_relaxed) * kDegreesToRadians;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             ProjectionFromFov(source.xr_frame.views[eye].fov,
                               destination.eyes[eye].projection);
             ViewFromBase(source.xr_frame.views[eye].pose, base_position_,
-                         position_valid && base_position_valid_,
-                         units_per_meter, destination.eyes[eye].viewFromCenter);
+                         position_valid && base_position_valid_, units_per_meter,
+                         lean_back_radians, destination.eyes[eye].viewFromCenter);
         }
     }
 
@@ -644,6 +679,7 @@ private:
     std::atomic_bool running_{false};
     std::atomic_bool teardown_requested_{false};
     std::atomic_bool recenter_requested_{false};
+    std::atomic<float> lean_back_degrees_{RuntimeConfigFile::VrLeanBackDegrees()};
     std::atomic<PublishedFrame*> published_{nullptr};
     PublishedFrame published_frame_{};
     std::mutex published_mutex_;
@@ -719,6 +755,14 @@ bool OpenXRIsRunning() noexcept {
 void OpenXRRequestRecenter() noexcept {
 #if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
     OpenXRIntegration::Get().RequestRecenter();
+#endif
+}
+
+void OpenXRSetLeanBackDegrees(float degrees) noexcept {
+#if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
+    OpenXRIntegration::Get().SetLeanBackDegrees(degrees);
+#else
+    (void)degrees;
 #endif
 }
 

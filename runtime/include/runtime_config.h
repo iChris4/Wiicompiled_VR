@@ -63,6 +63,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrFirstPersonHideDriver;
     std::optional<int32_t> vrFirstPersonHiddenModel;
     std::optional<std::string> vrRecenterKey;
+    std::optional<float> vrLeanBackDegrees;
     std::optional<float> audioVolume;
     std::optional<float> audioMusicVolume;
     std::optional<float> audioSoundEffectsVolume;
@@ -150,6 +151,10 @@ inline constexpr float kVrFirstPersonHeadOffsetLimit = 10.0f;
 // SDL scancode name, spelled the way SDL_GetScancodeName produces it. An
 // empty string leaves the recenter hotkey unbound, menu button only.
 inline constexpr std::string_view kVrRecenterKeyDefault = "F9";
+// Fixed pitch of the game camera for a player sitting reclined, in degrees.
+// Positive leans the camera back with you; 0 disables it entirely.
+inline constexpr float kVrLeanBackDegreesDefault = 0.0f;
+inline constexpr float kVrLeanBackDegreesLimit = 45.0f;
 
 inline std::string Trim(std::string_view text) {
     size_t begin = 0;
@@ -387,7 +392,12 @@ inline void EnsureConfigFile() {
               "# the game. Applies during an immersive race; the menu screen is\n"
               "# head-locked already. Rebindable from the F10 menu under VR. Leave\n"
               "# empty to unbind.\n"
-              "recenter_key = \"F9\"\n\n"
+              "recenter_key = \"F9\"\n"
+              "# Fixed pitch of the game camera, in degrees, for a player sitting\n"
+              "# reclined. Positive tilts the camera back with you, so 20 here cancels\n"
+              "# reclining about 20 degrees and puts the track back in front of you.\n"
+              "# 0 disables it. Changeable live from the F10 menu under VR.\n"
+              "lean_back_degrees = 0.0\n\n"
               "[audio]\n"
               "volume = 1.0\n"
               "music_volume = 1.0\n"
@@ -572,6 +582,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         FindConfigValue<bool>(document, "vr", "first_person_hide_driver");
     if (auto value = FindConfigValue<std::string>(document, "vr", "recenter_key")) {
         config.vrRecenterKey = *value;
+    }
+    if (auto value = FindConfigFloat(document, "vr", "lean_back_degrees");
+        value && *value >= -kVrLeanBackDegreesLimit && *value <= kVrLeanBackDegreesLimit) {
+        config.vrLeanBackDegrees = static_cast<float>(*value);
     }
     if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
         value && *value >= -1 && *value <= 31) {
@@ -851,6 +865,14 @@ inline bool SetVrFirstPersonHeadForwardMeters(float value) {
 inline bool SetVrRecenterKey(std::string value) {
     Mutable().vrRecenterKey = value;
     return WriteSetting("vr", "recenter_key", FormatString(value));
+}
+
+inline bool SetVrLeanBackDegrees(float value) {
+    value = std::clamp(value, -kVrLeanBackDegreesLimit, kVrLeanBackDegreesLimit);
+    Mutable().vrLeanBackDegrees = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", "lean_back_degrees", formatted.str());
 }
 
 inline bool SetVrFirstPersonHideDriver(bool value) {
@@ -1147,6 +1169,11 @@ inline float VrFirstPersonHeadRightMeters(float fallback = kVrFirstPersonHeadRig
 
 inline std::string VrRecenterKey(std::string fallback = std::string(kVrRecenterKeyDefault)) {
     return Get().vrRecenterKey.value_or(std::move(fallback));
+}
+
+inline float VrLeanBackDegrees(float fallback = kVrLeanBackDegreesDefault) {
+    return std::clamp(Get().vrLeanBackDegrees.value_or(fallback),
+                      -kVrLeanBackDegreesLimit, kVrLeanBackDegreesLimit);
 }
 
 inline bool VrFirstPersonHideDriver(bool fallback = kVrFirstPersonHideDriverDefault) {
