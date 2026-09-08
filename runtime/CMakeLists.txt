@@ -342,6 +342,19 @@ target_include_directories(mkw_vr_first_person_tests PRIVATE "${CMAKE_CURRENT_LI
 target_compile_features(mkw_vr_first_person_tests PRIVATE cxx_std_17)
 add_test(NAME mkw_vr_first_person_tests COMMAND mkw_vr_first_person_tests)
 
+if(MKW_ENABLE_OPENXR AND MKW_PLATFORM_WINDOWS)
+    add_executable(mkw_openxr_replay_tests
+        tests/openxr_d3d12_replay_tests.cpp src/vr/openxr_d3d12.cpp)
+    target_include_directories(mkw_openxr_replay_tests PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/include"
+        "${CMAKE_CURRENT_LIST_DIR}/../aurora-main/include"
+        "$<TARGET_PROPERTY:${MKW_OPENXR_TARGET},INTERFACE_INCLUDE_DIRECTORIES>")
+    target_compile_definitions(mkw_openxr_replay_tests PRIVATE MKW_ENABLE_OPENXR=1)
+    target_compile_features(mkw_openxr_replay_tests PRIVATE cxx_std_17)
+    set_target_properties(mkw_openxr_replay_tests PROPERTIES UNITY_BUILD OFF)
+    add_test(NAME mkw_openxr_replay_tests COMMAND mkw_openxr_replay_tests)
+endif()
+
 add_executable(mkw_nand_save_tests "${CMAKE_CURRENT_LIST_DIR}/tests/nand_save_tests.cpp")
 target_include_directories(mkw_nand_save_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
 target_compile_features(mkw_nand_save_tests PRIVATE cxx_std_17)

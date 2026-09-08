@@ -110,6 +110,8 @@ bool aurora_get_stereo_hud_screen_enabled();
 // ordinary mono presentation untouched, the eye views mirror what the headset is
 // actually displaying, and NONE presents a black window. Live, and only
 // consulted while a stereo frame provider is supplying frames.
+// When a frame has no new XR packet, eye views retain the previous eye image
+// instead of falling back to the ordinary desktop view.
 //
 // A menu frame reaches the headset as a virtual screen carrying the very mono
 // image the desktop already shows, so there is no distinct eye view to mirror:

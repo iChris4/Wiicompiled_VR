@@ -18,6 +18,7 @@ if (AURORA_ENABLE_GX)
     gx_fifo_test.cpp
     gx_test_stubs.cpp
     stereo_replay_test.cpp
+    stereo_mirror_test.cpp
     texture_bind_group_cache_key_test.cpp
     ../lib/gfx/efb_ram_encoder.cpp
     # GX API implementations (encoders)

@@ -53,4 +53,8 @@ void OpenXRRequestRecenter() noexcept;
 // once per published frame.
 void OpenXRSetLeanBackDegrees(float degrees) noexcept;
 
+// Live pacing choice. Disabled: submit fresh frames promptly and repeat during
+// stalls. Enabled: repeat at each headset display deadline while waiting.
+void OpenXRSetEagerFrameHeartbeat(bool enabled) noexcept;
+
 } // namespace mkw::vr

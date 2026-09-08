@@ -23,6 +23,7 @@ configuration and is created with the following defaults:
 enabled = false
 required = false
 mirror_view = "normal"
+eager_frame_heartbeat = false
 render_scale = 1.0
 world_units_per_meter = 500.0
 hud_distance_meters = 2.0
@@ -55,6 +56,15 @@ sits directly under the enable switch as *Desktop view*. Menus reach the headset
 screen carrying the desktop image itself, so there is no separate eye view to mirror there and the
 three eye choices show that same image; only `"none"` differs. The F10 bar is drawn over whichever
 image is chosen, so the setting can always be changed back.
+Eye mirror modes retain the last eye image when a desktop frame has no new XR packet, so they
+do not alternate with the normal camera. `"none"` also stays black between XR packets.
+
+`eager_frame_heartbeat` is live in **F10 > VR > Eager Frame Heartbeat** and defaults to `false`.
+With it off, the XR thread waits for new game frames and repeats the last valid image during
+stalls, with a 50 ms keep-alive interval. With it on, the thread repeats at headset display
+deadlines while waiting for new rendering, matching the eager behavior. Compare both settings
+during the same race to check smoothness with your OpenXR runtime. Both retain the protection
+against black frames during pauses and window dragging.
 
 `render_scale` scales the per-eye size recommended by the OpenXR runtime.
 `world_units_per_meter` controls the scale of headset translation in the game world.
@@ -135,10 +145,23 @@ receive asymmetric headset projections, while the game's 2D layer goes on a fixe
 Head pose is sampled by the OpenXR pacing thread, while Aurora's frame worker consumes a
 short-lived immutable stereo packet. Each sealed GX frame and immersive packet carry the same
 policy-generation tag; a mismatch is rendered in mono and the acquired XR frame is canceled, so an
-asynchronous menu/race transition cannot replay race transforms over unsafe content. A pause or
-minimized window can withdraw an unencoded packet and end that compositor frame without layers; an
-encoded-work stall requests teardown at Aurora's next safe producer boundary. All OpenXR session
-and swapchain calls remain on their owning thread.
+asynchronous menu/race transition cannot replay race transforms over unsafe content.
+
+The D3D12 pacing thread retains the last completed projection or virtual-screen layer and
+resubmits it during stalls (or missed display deadlines with eager heartbeat enabled), including while moving the desktop window,
+pausing, or minimizing. The scene freezes until rendering resumes; the compositor can still
+reproject the retained image for head movement. Repeated layers keep their original render poses
+and field of view, paired with the new compositor display time. Two pairs of eye swapchains keep
+the retained image separate from pending or canceled rendering (at the cost of additional GPU
+memory). Unencoded packets can be withdrawn after 50 ms; encoded work retains its images while
+the pacing thread continues submitting the last completed layer. A stall alone no longer requests
+desktop fallback after 250 ms.
+
+Before the first valid image, when OpenXR requests no rendering, or after a session/reference-space
+change invalidates the retained content, frames can still have no layers. Actual runtime or GPU
+submission failures retain the safe teardown path. This does not detect black images rendered by
+the game itself, and cannot keep submitting if the entire process or XR runtime is suspended.
+All OpenXR session and swapchain calls remain on their owning thread.
 
 ## The race's 2D layer
 

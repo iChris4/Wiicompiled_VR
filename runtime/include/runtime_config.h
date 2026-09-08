@@ -57,6 +57,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrStopAtDisplayCopy;
     std::optional<bool> vrSkipCopyClears;
     std::optional<std::string> vrMirrorView;
+    std::optional<bool> vrEagerFrameHeartbeat;
     std::optional<bool> vrFirstPerson;
     std::optional<float> vrFirstPersonUnitsPerMeter;
     std::optional<float> vrFirstPersonHeadUpMeters;
@@ -375,6 +376,8 @@ inline void EnsureConfigFile() {
               "# \"right\" mirror the headset's eyes, and \"none\" blacks the window\n"
               "# out. Changeable live from the F10 menu.\n"
               "mirror_view = \"normal\"\n"
+              "# Repeat at headset cadence (true), or only during stalls (false). Live.\n"
+              "eager_frame_heartbeat = false\n"
               "render_scale = 1.0\n"
               "world_units_per_meter = 500.0\n"
               "hud_distance_meters = 2.0\n"
@@ -635,6 +638,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         value && IsSupportedVrMirrorView(*value)) {
         config.vrMirrorView = *value;
     }
+    config.vrEagerFrameHeartbeat = FindConfigValue<bool>(document, "vr", "eager_frame_heartbeat");
     if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
         value && *value >= -1 && *value <= 31) {
         config.vrFirstPersonHiddenModel = static_cast<int32_t>(*value);
@@ -934,6 +938,11 @@ inline bool SetVrMirrorView(std::string value) {
     }
     Mutable().vrMirrorView = value;
     return WriteSetting("vr", "mirror_view", FormatString(value));
+}
+
+inline bool SetVrEagerFrameHeartbeat(bool value) {
+    Mutable().vrEagerFrameHeartbeat = value;
+    return WriteSetting("vr", "eager_frame_heartbeat", value ? "true" : "false");
 }
 
 inline bool SetVrFirstPersonRotation(std::string value) {
@@ -1266,6 +1275,10 @@ inline bool VrFirstPersonHideDriver(bool fallback = kVrFirstPersonHideDriverDefa
 inline std::string VrMirrorView(std::string fallback = kVrMirrorViewDefault) {
     const auto& value = Get().vrMirrorView;
     return value && IsSupportedVrMirrorView(*value) ? *value : std::move(fallback);
+}
+
+inline bool VrEagerFrameHeartbeat() {
+    return Get().vrEagerFrameHeartbeat.value_or(false);
 }
 
 inline std::string VrFirstPersonRotation(std::string fallback = kVrFirstPersonRotationDefault) {

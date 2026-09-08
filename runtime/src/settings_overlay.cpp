@@ -117,6 +117,7 @@ float g_vrFirstPersonHeadUp = RuntimeConfigFile::VrFirstPersonHeadUpMeters();
 float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMeters();
 float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters();
 bool g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
+bool g_vrEagerFrameHeartbeat = RuntimeConfigFile::VrEagerFrameHeartbeat();
 int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
 // Config spellings and menu labels for the desktop mirror, index-matched to
 // AuroraStereoMirrorView so the combo selection converts to either directly.
@@ -923,6 +924,17 @@ void DrawVrSettings() {
             "desktop view, the eye choices mirror what you are actually seeing in the headset, "
             "and None leaves the window black. Menus reach the headset as a screen showing this "
             "same desktop image, so the eye choices only differ from Normal during a race.");
+    }
+
+    if (ImGui::Checkbox("Eager Frame Heartbeat", &g_vrEagerFrameHeartbeat)) {
+        mkw::vr::OpenXRSetEagerFrameHeartbeat(g_vrEagerFrameHeartbeat);
+        RuntimeConfigFile::SetVrEagerFrameHeartbeat(g_vrEagerFrameHeartbeat);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "On: repeat the last frame at headset refresh rate while waiting for the game. "
+            "Off (default): follow the game's frame rate, with repeats during stalls. "
+            "Compare both during a race to check headset smoothness. Applies immediately.");
     }
 
     // Like the mirror above and unlike the enable toggle, these two apply to the

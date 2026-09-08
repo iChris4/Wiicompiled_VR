@@ -8,6 +8,7 @@
 #include "gx/shader_info.hpp"
 #include "imgui.hpp"
 #include "stereo.hpp"
+#include "stereo_mirror.hpp"
 #include "webgpu/gpu.hpp"
 #include <webgpu/webgpu_cpp.h>
 #endif
@@ -544,6 +545,7 @@ struct StereoEyeTarget {
   const webgpu::TextureWithSampler& output() const noexcept { return resolvedColor.texture ? resolvedColor : color; }
 };
 std::array<StereoEyeTarget, AURORA_STEREO_EYE_COUNT> g_stereoEyeTargets;
+stereo::MirrorState g_stereoMirrorState;
 
 // The eye targets outlive a frame, so the mirror samples them through a bind
 // group cached beside them rather than one built per presentation slot.
@@ -1422,35 +1424,7 @@ void stop_presenter() noexcept {
 // view; the rest mirror the headset and are only ever chosen while a stereo
 // provider is feeding one. ImGui is drawn over all of them alike, so the
 // settings menu stays reachable even under Black.
-enum class MirrorPlan {
-  Mono,
-  LeftEye,
-  RightEye,
-  BothEyes,
-  Black,
-};
-
-// A virtual-screen (menu) frame puts the desktop's own mono image on both eyes,
-// so there is no separate eye view to mirror and the eye choices collapse onto
-// Mono. Only Black still has something distinct to do there.
-MirrorPlan resolve_mirror_plan(AuroraStereoMirrorView view, bool stereoOutput, bool immersiveReplay) noexcept {
-  if (!stereoOutput) {
-    return MirrorPlan::Mono;
-  }
-  switch (view) {
-  case AURORA_STEREO_MIRROR_NONE:
-    return MirrorPlan::Black;
-  case AURORA_STEREO_MIRROR_BOTH_EYES:
-    return immersiveReplay ? MirrorPlan::BothEyes : MirrorPlan::Mono;
-  case AURORA_STEREO_MIRROR_LEFT_EYE:
-    return immersiveReplay ? MirrorPlan::LeftEye : MirrorPlan::Mono;
-  case AURORA_STEREO_MIRROR_RIGHT_EYE:
-    return immersiveReplay ? MirrorPlan::RightEye : MirrorPlan::Mono;
-  case AURORA_STEREO_MIRROR_NORMAL:
-    break;
-  }
-  return MirrorPlan::Mono;
-}
+using stereo::MirrorPlan;
 
 // Places one eye inside `bounds`, keeping the eye's own aspect ratio rather
 // than the game's presented one: an eye is already the shape the headset asked
@@ -1567,6 +1541,7 @@ void shutdown() noexcept {
 #ifdef AURORA_ENABLE_GX
   stop_presenter();
   g_stereoEyeTargets = {};
+  g_stereoMirrorState.Reset();
   g_presentationImagePools = {};
   imgui::shutdown();
   gfx::shutdown();
@@ -1785,7 +1760,8 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
   const bool immersiveReplay = stereoOutput && ctx.immersiveStereoPrepared;
   // One choice for the whole group: a slot showing the mono view next to slots
   // mirroring an eye would strobe between two different images.
-  const MirrorPlan mirrorPlan = resolve_mirror_plan(gfx::get_stereo_mirror_view(), stereoOutput, immersiveReplay);
+  const MirrorPlan mirrorPlan = g_stereoMirrorState.Resolve(
+      gfx::get_stereo_mirror_view(), stereo_frame_provider_active(), stereoOutput, immersiveReplay);
 
   // Each slot is submitted as soon as it is encoded, so the GPU starts slot 0 while slot 1 is still
   // recording. Queue order preserves the ordering the single batched buffer gave.
@@ -2238,6 +2214,11 @@ bool stereo_frame_provider_active() noexcept { return g_stereoProviderActive.loa
 
 void set_stereo_frame_provider(AuroraStereoFrameProvider provider, void* userdata) noexcept {
   std::lock_guard lock(g_stereoRegistrationMutex);
+#ifdef AURORA_ENABLE_GX
+  // Registration changes require an idle frame worker, so its cached mirror
+  // state can be reset here without racing texture use.
+  g_stereoMirrorState.Reset();
+#endif
   g_stereoProvider = {
       .callback = provider,
       .userdata = userdata,

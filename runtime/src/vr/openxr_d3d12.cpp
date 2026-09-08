@@ -261,6 +261,8 @@ public:
         frame_active_ = true;
         active_frame_serial_ = frame.xr_frame.serial;
         active_frame_ = frame.xr_frame;
+        render_session_serial_ = runtime_->SessionRunSerial();
+        render_space_serial_ = runtime_->LastReferenceSpaceChange().serial;
 
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             frame.render_width[eye] = eye_swapchains_[eye].width;
@@ -393,22 +395,83 @@ public:
         const bool can_submit = submit_layer && release_ok && frame.xr_frame.should_render &&
                                 frame.xr_frame.views_valid && frame.expects_gpu_submission &&
                                 composition_pose_valid;
-        bool end_ok = false;
+        if (can_submit) {
+            // xrEndFrame references the MOST RECENTLY RELEASED image of a
+            // swapchain, not an explicit image index. Keep the displayed pair
+            // separate from the pair Aurora can write or cancel next.
+            std::swap(eye_swapchains_, retained_swapchains_);
+            retained_frame_ = frame;
+            retained_session_serial_ = render_session_serial_;
+            retained_space_serial_ = render_space_serial_;
+            have_retained_frame_ = true;
+        }
+        const bool end_ok = EndRetainedFrame();
+
+        frame_active_ = false;
+        active_frame_serial_ = 0;
+        active_frame_ = {};
+        frame.expects_gpu_submission = false;
+        {
+            std::lock_guard lock(submission_mutex_);
+            awaiting_token_ = 0;
+            submission_arrived_ = false;
+            submission_success_ = false;
+            submission_unsafe_ = false;
+        }
+        return release_ok && end_ok;
+    }
+
+    bool RepeatFrame(const OpenXRD3D12Frame& frame) {
+        if (!frame_active_ || runtime_ == nullptr ||
+            frame.xr_frame.serial != active_frame_serial_) {
+            return Fail("RepeatFrame received a stale or inactive render token");
+        }
+        const bool end_ok = EndRetainedFrame();
+        // EndFrame consumes the compositor token even when submission fails.
+        // Teardown must not try to end that same token again.
+        frame_active_ = false;
+        if (!end_ok) {
+            return Fail("OpenXR could not resubmit the retained frame");
+        }
+        // active_frame_serial_ continues to identify Aurora's pending render;
+        // active_frame_ identifies the independently advancing compositor cycle.
+        if (runtime_->PollEvents() != OpenXREventStatus::Continue ||
+            !runtime_->IsSessionRunning() || runtime_->ShouldExit()) {
+            return Fail("OpenXR session stopped while waiting for stereo rendering");
+        }
+        if (runtime_->WaitFrame(active_frame_) != OpenXRFrameStatus::Ready ||
+            !runtime_->BeginFrame(active_frame_)) {
+            return Fail("OpenXR could not start a retained-frame compositor cycle");
+        }
+        frame_active_ = true;
+        return true;
+    }
+
+    bool EndRetainedFrame() {
         if (!runtime_->IsSessionRunning()) {
             // A session that is no longer running needs no compositor frame
             // completion call. Preserve the original backend failure instead
             // of replacing it with a stale-token error.
-            end_ok = true;
-        } else if (!can_submit) {
-            end_ok = runtime_->EndFrameWithoutLayers(frame.xr_frame);
-        } else if (frame.presentation.mode == OpenXRD3D12FrameMode::VirtualScreen) {
+            return true;
+        }
+        // Old poses cannot be reused after the runtime changes their coordinate
+        // system. Also discard content across session restarts.
+        if (retained_session_serial_ != runtime_->SessionRunSerial() ||
+            retained_space_serial_ != runtime_->LastReferenceSpaceChange().serial) {
+            have_retained_frame_ = false;
+        }
+        if (!have_retained_frame_ || !active_frame_.should_render) {
+            return runtime_->EndFrameWithoutLayers(active_frame_);
+        }
+        const auto& frame = retained_frame_;
+        if (frame.presentation.mode == OpenXRD3D12FrameMode::VirtualScreen) {
             XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
             quad.layerFlags = 0;
             quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-            quad.subImage.swapchain = eye_swapchains_[0].handle;
+            quad.subImage.swapchain = retained_swapchains_[0].handle;
             quad.subImage.imageRect = {{0, 0},
-                                       {static_cast<int32_t>(eye_swapchains_[0].width),
-                                        static_cast<int32_t>(eye_swapchains_[0].height)}};
+                                       {static_cast<int32_t>(retained_swapchains_[0].width),
+                                        static_cast<int32_t>(retained_swapchains_[0].height)}};
             quad.subImage.imageArrayIndex = 0;
             if (frame.presentation.quad_anchored) {
                 // Placed in the application space, so the screen keeps its place
@@ -424,25 +487,23 @@ public:
                     0.0f, 0.0f, -std::max(0.25f, frame.presentation.quad_distance_meters)};
             }
             quad.size.width = std::max(0.25f, frame.presentation.quad_width_meters);
-            quad.size.height = quad.size.width * static_cast<float>(eye_swapchains_[0].height) /
-                               static_cast<float>(eye_swapchains_[0].width);
+            quad.size.height = quad.size.width * static_cast<float>(retained_swapchains_[0].height) /
+                               static_cast<float>(retained_swapchains_[0].width);
             const XrCompositionLayerBaseHeader* layers[] = {
                 reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad)};
-            end_ok = runtime_->EndFrame(frame.xr_frame, layers, 1);
+            return runtime_->EndFrame(active_frame_, layers, 1);
         } else {
             std::array<XrCompositionLayerProjectionView, kOpenXREyeCount> views{};
             for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
                 views[eye] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
                 views[eye].pose.orientation = frame.xr_frame.views[eye].pose.orientation;
-                views[eye].pose.position = position_valid
-                                               ? frame.xr_frame.views[eye].pose.position
-                                               : XrVector3f{0.0f, 0.0f, 0.0f};
+                views[eye].pose.position = frame.xr_frame.views[eye].pose.position;
                 views[eye].fov = frame.xr_frame.views[eye].fov;
-                views[eye].subImage.swapchain = eye_swapchains_[eye].handle;
+                views[eye].subImage.swapchain = retained_swapchains_[eye].handle;
                 views[eye].subImage.imageRect = {
                     {0, 0},
-                    {static_cast<int32_t>(eye_swapchains_[eye].width),
-                     static_cast<int32_t>(eye_swapchains_[eye].height)}};
+                    {static_cast<int32_t>(retained_swapchains_[eye].width),
+                     static_cast<int32_t>(retained_swapchains_[eye].height)}};
                 views[eye].subImage.imageArrayIndex = 0;
             }
             XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -452,21 +513,8 @@ public:
             projection.views = views.data();
             const XrCompositionLayerBaseHeader* layers[] = {
                 reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection)};
-            end_ok = runtime_->EndFrame(frame.xr_frame, layers, 1);
+            return runtime_->EndFrame(active_frame_, layers, 1);
         }
-
-        frame_active_ = false;
-        active_frame_serial_ = 0;
-        active_frame_ = {};
-        frame.expects_gpu_submission = false;
-        {
-            std::lock_guard lock(submission_mutex_);
-            awaiting_token_ = 0;
-            submission_arrived_ = false;
-            submission_success_ = false;
-            submission_unsafe_ = false;
-        }
-        return release_ok && end_ok;
     }
 
     bool Shutdown() {
@@ -552,9 +600,13 @@ private:
     }
 
     bool CreateSwapchains() {
+        return CreateSwapchainPair(eye_swapchains_) && CreateSwapchainPair(retained_swapchains_);
+    }
+
+    bool CreateSwapchainPair(std::array<EyeSwapchain, kOpenXREyeCount>& pair) {
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             const auto& view = runtime_->ViewConfiguration()[eye];
-            auto& swapchain = eye_swapchains_[eye];
+            auto& swapchain = pair[eye];
             swapchain.width = view.render_width;
             swapchain.height = view.render_height;
 
@@ -685,7 +737,15 @@ private:
     }
 
     void DestroySwapchains() {
-        for (auto& swapchain : eye_swapchains_) {
+        DestroySwapchainPair(eye_swapchains_);
+        DestroySwapchainPair(retained_swapchains_);
+        have_retained_frame_ = false;
+        retained_frame_ = {};
+        swapchain_format_ = DXGI_FORMAT_UNKNOWN;
+    }
+
+    void DestroySwapchainPair(std::array<EyeSwapchain, kOpenXREyeCount>& pair) {
+        for (auto& swapchain : pair) {
             if (swapchain.handle != XR_NULL_HANDLE && !swapchain.acquired) {
                 xrDestroySwapchain(swapchain.handle);
             } else if (swapchain.acquired) {
@@ -694,7 +754,6 @@ private:
             }
             swapchain = {};
         }
-        swapchain_format_ = DXGI_FORMAT_UNKNOWN;
     }
 
     void EndActiveFrameWithoutLayers(const OpenXRFrame& frame) {
@@ -752,6 +811,11 @@ private:
     OpenXRLogCallback logger_;
     OpenXRD3D12GraphicsRequirements requirements_{};
     std::array<EyeSwapchain, kOpenXREyeCount> eye_swapchains_{};
+    std::array<EyeSwapchain, kOpenXREyeCount> retained_swapchains_{};
+    OpenXRD3D12Frame retained_frame_{};
+    uint64_t retained_session_serial_ = 0;
+    uint64_t retained_space_serial_ = 0;
+    bool have_retained_frame_ = false;
     DXGI_FORMAT aurora_format_ = DXGI_FORMAT_UNKNOWN;
     DXGI_FORMAT swapchain_format_ = DXGI_FORMAT_UNKNOWN;
     std::string last_error_;
@@ -766,6 +830,8 @@ private:
     bool shutting_down_ = false;
 
     uint64_t active_frame_serial_ = 0;
+    uint64_t render_session_serial_ = 0;
+    uint64_t render_space_serial_ = 0;
     OpenXRFrame active_frame_{};
     bool requirements_queried_ = false;
     bool owns_session_ = false;
@@ -804,6 +870,10 @@ bool OpenXRD3D12Backend::TryCancelPendingFrame(OpenXRD3D12Frame& frame) {
 
 bool OpenXRD3D12Backend::FinishFrame(OpenXRD3D12Frame& frame, bool submit_layer) {
     return m_impl->FinishFrame(frame, submit_layer);
+}
+
+bool OpenXRD3D12Backend::RepeatFrame(const OpenXRD3D12Frame& frame) {
+    return m_impl->RepeatFrame(frame);
 }
 
 bool OpenXRD3D12Backend::Shutdown() { return m_impl->Shutdown(); }

@@ -92,7 +92,7 @@ public:
 
     // timeout_ms == UINT32_MAX waits until Aurora publishes this token or
     // Shutdown() interrupts the wait. A timeout does not release XR images;
-    // the caller must first drain/cancel Aurora, then FinishFrame(false).
+    // the caller may keep pacing with RepeatFrame while Aurora still owns them.
     OpenXRD3D12SubmissionStatus WaitForSubmission(const OpenXRD3D12Frame& frame,
                                                   uint32_t timeout_ms = UINT32_MAX);
 
@@ -101,11 +101,17 @@ public:
     // is required to release them and close the compositor frame.
     bool TryCancelPendingFrame(OpenXRD3D12Frame& frame);
 
+    // Ends the current compositor cycle with the last completed layer and starts
+    // another, without releasing or changing Aurora's pending images/render token.
+    // The original render poses remain attached to the pending and retained images.
+    bool RepeatFrame(const OpenXRD3D12Frame& frame);
+
     // Releases acquired images and calls xrEndFrame. submit_layer must only be
     // true after WaitForSubmission returned Success. Immersive frames submit
     // XrCompositionLayerProjection; virtual-screen frames submit an
     // XrCompositionLayerQuad using the single mono target, placed as the
-    // presentation's quad_anchored/quad_pose describe.
+    // presentation's quad_anchored/quad_pose describe. If no new usable layer is
+    // available, resubmits the retained layer using the current display time.
     bool FinishFrame(OpenXRD3D12Frame& frame, bool submit_layer);
 
     // Call on the XR owner thread after Aurora's worker is idle and before

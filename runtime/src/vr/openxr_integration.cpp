@@ -365,6 +365,10 @@ public:
         recenter_requested_.store(true, std::memory_order_release);
     }
 
+    void SetEagerFrameHeartbeat(bool enabled) noexcept {
+        eager_frame_heartbeat_.store(enabled, std::memory_order_relaxed);
+    }
+
     void SetLeanBackDegrees(float degrees) noexcept {
         lean_back_degrees_.store(
             std::clamp(degrees, -RuntimeConfigFile::kVrLeanBackDegreesLimit,
@@ -533,28 +537,33 @@ private:
 
             OpenXRD3D12SubmissionStatus submission = OpenXRD3D12SubmissionStatus::Timeout;
             bool canceled_before_encode = false;
-            bool submission_stalled = false;
-            const auto submission_deadline =
-                std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+            const auto cancel_after =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
             while (!stop_.load(std::memory_order_acquire) &&
                    submission == OpenXRD3D12SubmissionStatus::Timeout) {
-                submission = backend_->WaitForSubmission(frame, 50);
+                // Eager mode fills missed headset slots. With it off, completion
+                // wakes us immediately at the game's cadence, while a 50 ms
+                // keep-alive still protects pauses and window drags from black.
+                // Read each iteration so the toggle also works during a stall.
+                const auto wait_ms = eager_frame_heartbeat_.load(std::memory_order_relaxed)
+                    ? static_cast<uint32_t>(std::clamp<XrDuration>(
+                          frame.xr_frame.predicted_display_period / 1'000'000 - 4, 0, 12))
+                    : 50u;
+                submission = backend_->WaitForSubmission(frame, wait_ms);
                 if (submission == OpenXRD3D12SubmissionStatus::Timeout) {
                     // A pause, minimized window, or guest stall may leave no GX
                     // frame to consume this packet. Withdraw it, then cancel the
                     // matching bridge target only if Encode has not taken ownership.
-                    WithdrawPublishedFrame();
-                    canceled_before_encode = backend_->TryCancelPendingFrame(frame);
-                    if (canceled_before_encode) {
-                        break;
+                    if (std::chrono::steady_clock::now() >= cancel_after) {
+                        WithdrawPublishedFrame();
+                        canceled_before_encode = backend_->TryCancelPendingFrame(frame);
+                        if (canceled_before_encode) {
+                            break;
+                        }
                     }
-                    if (std::chrono::steady_clock::now() >= submission_deadline) {
-                        // Cancellation may lose a race to completion. Recheck
-                        // the callback-published predicate under the backend
-                        // mutex before declaring a stall at the deadline.
-                        submission = backend_->WaitForSubmission(frame, 0);
-                        submission_stalled =
-                            submission == OpenXRD3D12SubmissionStatus::Timeout;
+                    if (!backend_->RepeatFrame(frame)) {
+                        SetError(backend_->LastError());
+                        fatal = true;
                         break;
                     }
                 }
@@ -573,10 +582,7 @@ private:
                 }
                 continue;
             }
-            if (submission_stalled) {
-                SetError("Aurora did not complete the OpenXR stereo submission; "
-                         "requesting a safe desktop fallback");
-                fatal = true;
+            if (fatal) {
                 break;
             }
             const bool submit = submission == OpenXRD3D12SubmissionStatus::Success;
@@ -723,6 +729,7 @@ private:
     std::atomic_bool teardown_requested_{false};
     std::atomic_bool recenter_requested_{false};
     std::atomic<float> lean_back_degrees_{RuntimeConfigFile::VrLeanBackDegrees()};
+    std::atomic_bool eager_frame_heartbeat_{RuntimeConfigFile::VrEagerFrameHeartbeat()};
     std::atomic<PublishedFrame*> published_{nullptr};
     PublishedFrame published_frame_{};
     std::mutex published_mutex_;
@@ -808,6 +815,14 @@ void OpenXRSetLeanBackDegrees(float degrees) noexcept {
     OpenXRIntegration::Get().SetLeanBackDegrees(degrees);
 #else
     (void)degrees;
+#endif
+}
+
+void OpenXRSetEagerFrameHeartbeat(bool enabled) noexcept {
+#if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
+    OpenXRIntegration::Get().SetEagerFrameHeartbeat(enabled);
+#else
+    (void)enabled;
 #endif
 }
 
