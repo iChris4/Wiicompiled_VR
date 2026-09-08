@@ -56,6 +56,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrHudVirtualScreen;
     std::optional<bool> vrStopAtDisplayCopy;
     std::optional<bool> vrSkipCopyClears;
+    std::optional<std::string> vrMirrorView;
     std::optional<bool> vrFirstPerson;
     std::optional<float> vrFirstPersonUnitsPerMeter;
     std::optional<float> vrFirstPersonHeadUpMeters;
@@ -157,6 +158,15 @@ inline constexpr const char* kVrFirstPersonRotationDefault = "yaw";
 
 inline bool IsSupportedVrFirstPersonRotation(std::string_view value) {
     return value == "yaw" || value == "yaw_pitch" || value == "full";
+}
+// What the desktop window shows while the headset is running: "normal" leaves
+// the ordinary desktop view alone, "both", "left" and "right" mirror the
+// headset's eyes, and "none" blacks the window out. Matches
+// AuroraStereoMirrorView.
+inline constexpr const char* kVrMirrorViewDefault = "normal";
+
+inline bool IsSupportedVrMirrorView(std::string_view value) {
+    return value == "normal" || value == "both" || value == "left" || value == "right" || value == "none";
 }
 // SDL scancode name, spelled the way SDL_GetScancodeName produces it. An
 // empty string leaves the recenter hotkey unbound, menu button only.
@@ -360,6 +370,11 @@ inline void EnsureConfigFile() {
               "# to the ordinary desktop renderer. These values are read at launch.\n"
               "enabled = false\n"
               "required = false\n"
+              "# What the desktop window shows while the headset is running:\n"
+              "# \"normal\" keeps the ordinary desktop view, \"both\", \"left\" and\n"
+              "# \"right\" mirror the headset's eyes, and \"none\" blacks the window\n"
+              "# out. Changeable live from the F10 menu.\n"
+              "mirror_view = \"normal\"\n"
               "render_scale = 1.0\n"
               "world_units_per_meter = 500.0\n"
               "hud_distance_meters = 2.0\n"
@@ -615,6 +630,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     if (auto value = FindConfigValue<std::string>(document, "vr", "first_person_rotation");
         value && IsSupportedVrFirstPersonRotation(*value)) {
         config.vrFirstPersonRotation = *value;
+    }
+    if (auto value = FindConfigValue<std::string>(document, "vr", "mirror_view");
+        value && IsSupportedVrMirrorView(*value)) {
+        config.vrMirrorView = *value;
     }
     if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
         value && *value >= -1 && *value <= 31) {
@@ -907,6 +926,14 @@ inline bool SetVrLeanBackDegrees(float value) {
 inline bool SetVrFirstPersonHideDriver(bool value) {
     Mutable().vrFirstPersonHideDriver = value;
     return WriteSetting("vr", "first_person_hide_driver", value ? "true" : "false");
+}
+
+inline bool SetVrMirrorView(std::string value) {
+    if (!IsSupportedVrMirrorView(value)) {
+        return false;
+    }
+    Mutable().vrMirrorView = value;
+    return WriteSetting("vr", "mirror_view", FormatString(value));
 }
 
 inline bool SetVrFirstPersonRotation(std::string value) {
@@ -1234,6 +1261,11 @@ inline float VrLeanBackDegrees(float fallback = kVrLeanBackDegreesDefault) {
 
 inline bool VrFirstPersonHideDriver(bool fallback = kVrFirstPersonHideDriverDefault) {
     return Get().vrFirstPersonHideDriver.value_or(fallback);
+}
+
+inline std::string VrMirrorView(std::string fallback = kVrMirrorViewDefault) {
+    const auto& value = Get().vrMirrorView;
+    return value && IsSupportedVrMirrorView(*value) ? *value : std::move(fallback);
 }
 
 inline std::string VrFirstPersonRotation(std::string fallback = kVrFirstPersonRotationDefault) {

@@ -388,6 +388,11 @@ bool get_stereo_skip_copy_clears() noexcept;
 void set_stereo_hud_screen(bool enabled, float width, float distance) noexcept;
 bool get_stereo_hud_screen_enabled() noexcept;
 
+// What the desktop window presents while a stereo provider is feeding a
+// headset. Live, and read once per presentation group by the frame worker.
+void set_stereo_mirror_view(AuroraStereoMirrorView value) noexcept;
+AuroraStereoMirrorView get_stereo_mirror_view() noexcept;
+
 void begin_offscreen(uint32_t width, uint32_t height);
 void end_offscreen();
 bool is_offscreen() noexcept;

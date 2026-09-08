@@ -537,10 +537,23 @@ struct StereoEyeTarget {
   uint32_t samples = 0;
   wgpu::TextureFormat colorFormat = wgpu::TextureFormat::Undefined;
   wgpu::TextureFormat depthFormat = wgpu::TextureFormat::Undefined;
+  // Built on demand for the desktop mirror only, and dropped with the rest of
+  // the target when ensure_stereo_eye_target replaces the textures.
+  wgpu::BindGroup copyBindGroup;
 
   const webgpu::TextureWithSampler& output() const noexcept { return resolvedColor.texture ? resolvedColor : color; }
 };
 std::array<StereoEyeTarget, AURORA_STEREO_EYE_COUNT> g_stereoEyeTargets;
+
+// The eye targets outlive a frame, so the mirror samples them through a bind
+// group cached beside them rather than one built per presentation slot.
+wgpu::BindGroup stereo_eye_copy_bind_group(uint32_t eyeIndex) {
+  auto& target = g_stereoEyeTargets[eyeIndex];
+  if (!target.copyBindGroup && target.output().texture) {
+    target.copyBindGroup = webgpu::create_copy_bind_group(target.output());
+  }
+  return target.copyBindGroup;
+}
 
 void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height) {
   auto& target = g_stereoEyeTargets[eyeIndex];
@@ -1405,10 +1418,68 @@ void stop_presenter() noexcept {
   g_presenterStarted.store(false, std::memory_order_release);
 }
 
+// What a presentation slot draws under the image. Mono is the ordinary desktop
+// view; the rest mirror the headset and are only ever chosen while a stereo
+// provider is feeding one. ImGui is drawn over all of them alike, so the
+// settings menu stays reachable even under Black.
+enum class MirrorPlan {
+  Mono,
+  LeftEye,
+  RightEye,
+  BothEyes,
+  Black,
+};
+
+// A virtual-screen (menu) frame puts the desktop's own mono image on both eyes,
+// so there is no separate eye view to mirror and the eye choices collapse onto
+// Mono. Only Black still has something distinct to do there.
+MirrorPlan resolve_mirror_plan(AuroraStereoMirrorView view, bool stereoOutput, bool immersiveReplay) noexcept {
+  if (!stereoOutput) {
+    return MirrorPlan::Mono;
+  }
+  switch (view) {
+  case AURORA_STEREO_MIRROR_NONE:
+    return MirrorPlan::Black;
+  case AURORA_STEREO_MIRROR_BOTH_EYES:
+    return immersiveReplay ? MirrorPlan::BothEyes : MirrorPlan::Mono;
+  case AURORA_STEREO_MIRROR_LEFT_EYE:
+    return immersiveReplay ? MirrorPlan::LeftEye : MirrorPlan::Mono;
+  case AURORA_STEREO_MIRROR_RIGHT_EYE:
+    return immersiveReplay ? MirrorPlan::RightEye : MirrorPlan::Mono;
+  case AURORA_STEREO_MIRROR_NORMAL:
+    break;
+  }
+  return MirrorPlan::Mono;
+}
+
+// Places one eye inside `bounds`, keeping the eye's own aspect ratio rather
+// than the game's presented one: an eye is already the shape the headset asked
+// for, so letterboxing it to the game's aspect would crop the compositor's view.
+void draw_mirror_eye(const wgpu::RenderPassEncoder& pass, uint32_t eyeIndex, const webgpu::Viewport& bounds) {
+  const auto bindGroup = stereo_eye_copy_bind_group(eyeIndex);
+  const auto& output = g_stereoEyeTargets[eyeIndex].output();
+  if (!bindGroup || output.size.width == 0 || output.size.height == 0 || bounds.width <= 0.f ||
+      bounds.height <= 0.f) {
+    return;
+  }
+  const auto fitted = webgpu::calculate_present_viewport(static_cast<uint32_t>(bounds.width),
+                                                         static_cast<uint32_t>(bounds.height), output.size.width,
+                                                         output.size.height);
+  // A window too small to hold a half still rounds down to nothing here.
+  if (fitted.width <= 0.f || fitted.height <= 0.f) {
+    return;
+  }
+  pass.SetBindGroup(0, bindGroup, 0, nullptr);
+  pass.SetViewport(bounds.left + fitted.left, bounds.top + fitted.top, fitted.width, fitted.height, fitted.znear,
+                   fitted.zfar);
+  pass.Draw(3);
+}
+
 // `presentSource` is latched in the seal prologue: by the time this encodes, the producer's next
 // gfx::begin_frame() may already have cleared the display-copy override.
 void encode_presentation_snapshot(const wgpu::CommandEncoder& encoder, const webgpu::PresentSource& presentSource,
-                                  const PresentationImage& image, bool includeImGui) {
+                                  const PresentationImage& image, bool includeImGui,
+                                  MirrorPlan plan = MirrorPlan::Mono) {
   ZoneScoped;
   auto viewport = webgpu::calculate_present_viewport(image.texture.size.width, image.texture.size.height,
                                                      presentSource.size.width, presentSource.size.height);
@@ -1432,10 +1503,41 @@ void encode_presentation_snapshot(const wgpu::CommandEncoder& encoder, const web
         .colorAttachments = attachments.data(),
     };
     const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
-    pass.SetPipeline(webgpu::g_CopyPipeline);
-    pass.SetBindGroup(0, presentBindGroup, 0, nullptr);
-    pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
-    pass.Draw(3);
+    const auto imageWidth = static_cast<float>(image.texture.size.width);
+    const auto imageHeight = static_cast<float>(image.texture.size.height);
+    // Black needs nothing but the clear the attachment already performed.
+    if (plan != MirrorPlan::Black) {
+      pass.SetPipeline(webgpu::g_CopyPipeline);
+    }
+    switch (plan) {
+    case MirrorPlan::Mono:
+      pass.SetBindGroup(0, presentBindGroup, 0, nullptr);
+      pass.SetViewport(viewport.left, viewport.top, viewport.width, viewport.height, viewport.znear, viewport.zfar);
+      pass.Draw(3);
+      break;
+    case MirrorPlan::LeftEye:
+    case MirrorPlan::RightEye:
+      draw_mirror_eye(pass, plan == MirrorPlan::LeftEye ? 0u : 1u,
+                      {.left = 0.f, .top = 0.f, .width = imageWidth, .height = imageHeight, .znear = 0.f, .zfar = 1.f});
+      break;
+    case MirrorPlan::BothEyes: {
+      // Side by side in the window's two halves, in the order the compositor
+      // receives them, so the pair reads the way the headset is wearing it.
+      const float halfWidth = imageWidth * 0.5f;
+      for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+        draw_mirror_eye(pass, eye,
+                        {.left = static_cast<float>(eye) * halfWidth,
+                         .top = 0.f,
+                         .width = halfWidth,
+                         .height = imageHeight,
+                         .znear = 0.f,
+                         .zfar = 1.f});
+      }
+      break;
+    }
+    case MirrorPlan::Black:
+      break;
+    }
     pass.End();
   }
   if (includeImGui) {
@@ -1679,6 +1781,11 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
   std::vector<PresentationJob> presentationJobs;
   presentationJobs.reserve(presentationJobCount);
   std::optional<PendingStereoSink> pendingStereoSink;
+  const bool stereoOutput = ctx.stereoReplay.has_value();
+  const bool immersiveReplay = stereoOutput && ctx.immersiveStereoPrepared;
+  // One choice for the whole group: a slot showing the mono view next to slots
+  // mirroring an eye would strobe between two different images.
+  const MirrorPlan mirrorPlan = resolve_mirror_plan(gfx::get_stereo_mirror_view(), stereoOutput, immersiveReplay);
 
   // Each slot is submitted as soon as it is encoded, so the GPU starts slot 0 while slot 1 is still
   // recording. Queue order preserves the ordering the single batched buffer gave.
@@ -1704,7 +1811,7 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
     for (uint32_t interpolatedFrame = 0; interpolatedFrame < ctx.interpolatedFrameCount; ++interpolatedFrame) {
       gfx::render(sealedFrame, encoder, static_cast<int32_t>(interpolatedFrame), false);
       auto image = acquire_presentation_image(interpolatedFrame, ctx.snapshotWidth, ctx.snapshotHeight);
-      encode_presentation_snapshot(encoder, ctx.presentSource, *image, true);
+      encode_presentation_snapshot(encoder, ctx.presentSource, *image, true, mirrorPlan);
       presentationJobs.push_back({
           .image = std::move(image),
           .logicalFrame = ctx.logicalFrame,
@@ -1718,8 +1825,6 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
 
   // A demanded CPU-visible EFB readback submits a prefix of the frame, so replaying the resumed
   // stream would mutate an already-rendered EFB. Render once, then duplicate into the slots.
-  const bool stereoOutput = ctx.stereoReplay.has_value();
-  const bool immersiveReplay = stereoOutput && ctx.immersiveStereoPrepared;
   gfx::render(sealedFrame, encoder, -1, !immersiveReplay);
   // The copy targets now hold this frame's resolves, so queue their readbacks on the same encoder;
   // completion is harvested in gfx::after_submit, never waited on here.
@@ -1727,7 +1832,7 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
   if (!ctx.replayInterpolatedFrames) {
     for (uint32_t interpolatedFrame = 0; interpolatedFrame < ctx.interpolatedFrameCount; ++interpolatedFrame) {
       auto image = acquire_presentation_image(interpolatedFrame, ctx.snapshotWidth, ctx.snapshotHeight);
-      encode_presentation_snapshot(encoder, ctx.presentSource, *image, true);
+      encode_presentation_snapshot(encoder, ctx.presentSource, *image, true, mirrorPlan);
       presentationJobs.push_back({
           .image = std::move(image),
           .logicalFrame = ctx.logicalFrame,
@@ -1739,18 +1844,28 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
       encoder = g_device.CreateCommandEncoder(&encoderDescriptor);
     }
   }
-  auto finalImage = acquire_presentation_image(ctx.interpolatedFrameCount, ctx.snapshotWidth, ctx.snapshotHeight);
-  encode_presentation_snapshot(encoder, ctx.presentSource, *finalImage, true);
-
   // Keep both eye replays and the sink copy in the final submission. The
   // duplicate-slot path above may submit and rotate the encoder several
   // times, so encoding stereo before it would pair the post-submit callback
-  // with the wrong command buffer.
+  // with the wrong command buffer. Within this last encoder the eyes come
+  // first, so a mirroring final slot samples this frame's eyes rather than the
+  // previous frame's; the interpolated slots above necessarily mirror the
+  // previous frame, having been encoded before this replay.
   if (immersiveReplay) {
     for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
       gfx::render_stereo_eye(sealedFrame, encoder, *ctx.stereoReplay, eye, eye + 1 == AURORA_STEREO_EYE_COUNT);
     }
-  } else if (stereoOutput) {
+  }
+
+  auto finalImage = acquire_presentation_image(ctx.interpolatedFrameCount, ctx.snapshotWidth, ctx.snapshotHeight);
+  // A virtual-screen frame builds its eyes out of the completed mono snapshot,
+  // so that snapshot must hold the mono image whatever the desktop ends up
+  // showing. Black re-clears it below, once the eyes have taken their copy.
+  const bool virtualScreenNeedsMono = stereoOutput && !immersiveReplay;
+  encode_presentation_snapshot(encoder, ctx.presentSource, *finalImage, true,
+                               virtualScreenNeedsMono ? MirrorPlan::Mono : mirrorPlan);
+
+  if (virtualScreenNeedsMono) {
     // Use the completed mono snapshot so virtual-screen XR includes ImGui at
     // the same scale and aspect as the desktop presentation. Rendering the
     // same ImGui draw data directly into differently-sized eye textures would
@@ -1763,6 +1878,9 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
     };
     for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
       encode_virtual_screen_eye(encoder, completedMono, eye);
+    }
+    if (mirrorPlan == MirrorPlan::Black) {
+      encode_presentation_snapshot(encoder, ctx.presentSource, *finalImage, true, MirrorPlan::Black);
     }
   }
   if (stereoOutput) {
@@ -2325,6 +2443,8 @@ void aurora_set_stereo_hud_screen(bool enabled, float width, float distance) {
   aurora::gfx::set_stereo_hud_screen(enabled, width, distance);
 }
 bool aurora_get_stereo_hud_screen_enabled() { return aurora::gfx::get_stereo_hud_screen_enabled(); }
+void aurora_set_stereo_mirror_view(AuroraStereoMirrorView view) { aurora::gfx::set_stereo_mirror_view(view); }
+AuroraStereoMirrorView aurora_get_stereo_mirror_view() { return aurora::gfx::get_stereo_mirror_view(); }
 void aurora_set_background_input(bool value) {
   aurora::g_config.allowJoystickBackgroundEvents = value;
   aurora::window::set_background_input(value);

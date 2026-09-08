@@ -118,6 +118,25 @@ float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMe
 float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters();
 bool g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
 int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
+// Config spellings and menu labels for the desktop mirror, index-matched to
+// AuroraStereoMirrorView so the combo selection converts to either directly.
+constexpr std::array<const char*, 5> kVrMirrorViewNames{"normal", "both", "left", "right", "none"};
+constexpr std::array<const char*, 5> kVrMirrorViewLabels{"Normal", "Both eyes", "Left eye", "Right eye", "None"};
+static_assert(kVrMirrorViewNames.size() == kVrMirrorViewLabels.size());
+static_assert(static_cast<int>(AURORA_STEREO_MIRROR_NORMAL) == 0);
+static_assert(static_cast<int>(AURORA_STEREO_MIRROR_BOTH_EYES) == 1);
+static_assert(static_cast<int>(AURORA_STEREO_MIRROR_LEFT_EYE) == 2);
+static_assert(static_cast<int>(AURORA_STEREO_MIRROR_RIGHT_EYE) == 3);
+static_assert(static_cast<int>(AURORA_STEREO_MIRROR_NONE) == 4);
+int g_vrMirrorView = [] {
+    const std::string mode = RuntimeConfigFile::VrMirrorView();
+    for (size_t i = 0; i < kVrMirrorViewNames.size(); ++i) {
+        if (mode == kVrMirrorViewNames[i]) {
+            return static_cast<int>(i);
+        }
+    }
+    return 0;
+}();
 constexpr std::array<const char*, 3> kVrFirstPersonRotationNames{"yaw", "yaw_pitch", "full"};
 int g_vrFirstPersonRotation = [] {
     const std::string mode = RuntimeConfigFile::VrFirstPersonRotation();
@@ -891,9 +910,23 @@ void DrawVrSettings() {
         RuntimeConfigFile::SetVrEnabled(g_vrEnabled);
     }
     ImGui::TextDisabled("OpenXR mode changes take effect after restarting the game.");
+    // Live, unlike the enable toggle above, so it is left usable either way:
+    // set before a restart it is simply what the next session starts on.
+    if (ImGui::Combo("Desktop view", &g_vrMirrorView, kVrMirrorViewLabels.data(),
+                     static_cast<int>(kVrMirrorViewLabels.size()))) {
+        aurora_set_stereo_mirror_view(static_cast<AuroraStereoMirrorView>(g_vrMirrorView));
+        RuntimeConfigFile::SetVrMirrorView(kVrMirrorViewNames[static_cast<size_t>(g_vrMirrorView)]);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "What this window shows while the headset is running. Normal keeps the ordinary "
+            "desktop view, the eye choices mirror what you are actually seeing in the headset, "
+            "and None leaves the window black. Menus reach the headset as a screen showing this "
+            "same desktop image, so the eye choices only differ from Normal during a race.");
+    }
 
-    // Unlike the toggle above, these two apply to the very next frame, so they
-    // can be compared against each other from inside a running race.
+    // Like the mirror above and unlike the enable toggle, these two apply to the
+    // very next frame, so they can be compared from inside a running race.
     ImGui::Separator();
     ImGui::Text("VR eye replay (EFB)");
     if (ImGui::Checkbox("Stop eye at display copy", &g_vrStopAtDisplayCopy)) {
@@ -1331,6 +1364,7 @@ void InitializeRuntimeSettings() noexcept {
     aurora_set_disable_copy_filter(g_disableCopyFilter);
     aurora_set_stereo_stop_at_display_copy(g_vrStopAtDisplayCopy);
     aurora_set_stereo_skip_copy_clears(g_vrSkipCopyClears);
+    aurora_set_stereo_mirror_view(static_cast<AuroraStereoMirrorView>(g_vrMirrorView));
     ApplyVrHudVirtualScreen();
     aurora_set_skip_unready_pipelines(g_skipUnreadyPipelines);
     mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();

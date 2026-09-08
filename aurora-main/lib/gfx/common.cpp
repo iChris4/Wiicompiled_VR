@@ -228,6 +228,28 @@ void set_stereo_hud_screen(bool enabled, float width, float distance) noexcept {
 }
 bool get_stereo_hud_screen_enabled() noexcept { return g_stereoHudScreenEnabled.load(std::memory_order_relaxed); }
 
+// The desktop mirror choice. Normal is the ordinary mono presentation, so a
+// build that never touches this setting presents exactly as it did before.
+static std::atomic<AuroraStereoMirrorView> g_stereoMirrorView{AURORA_STEREO_MIRROR_NORMAL};
+
+void set_stereo_mirror_view(AuroraStereoMirrorView value) noexcept {
+  switch (value) {
+  case AURORA_STEREO_MIRROR_NORMAL:
+  case AURORA_STEREO_MIRROR_BOTH_EYES:
+  case AURORA_STEREO_MIRROR_LEFT_EYE:
+  case AURORA_STEREO_MIRROR_RIGHT_EYE:
+  case AURORA_STEREO_MIRROR_NONE:
+    break;
+  default:
+    // An out-of-range value would otherwise black the window out with no way
+    // back from inside the game.
+    Log.warn("Ignoring unknown stereo mirror view {}", static_cast<int>(value));
+    return;
+  }
+  g_stereoMirrorView.store(value, std::memory_order_relaxed);
+}
+AuroraStereoMirrorView get_stereo_mirror_view() noexcept { return g_stereoMirrorView.load(std::memory_order_relaxed); }
+
 // Recycle command storage: discarding passes used to free their command lists too, so each frame
 // rebuilt hundreds of KB from zero capacity. The passes themselves are cheap to recreate.
 using CommandListPool = std::vector<CommandList>;

@@ -22,6 +22,7 @@ configuration and is created with the following defaults:
 [vr]
 enabled = false
 required = false
+mirror_view = "normal"
 render_scale = 1.0
 world_units_per_meter = 500.0
 hud_distance_meters = 2.0
@@ -46,6 +47,14 @@ required.
 `required = false` is the safe default: an absent runtime, disconnected headset, unsupported GPU,
 or graphics-binding failure is logged and the game continues in ordinary desktop mode. Set it to
 `true` only when a failed VR startup should stop the game with an error.
+
+`mirror_view` chooses what the desktop window shows while the headset is running: `"normal"`
+keeps the ordinary desktop view, `"both"`, `"left"` and `"right"` mirror the headset's eyes, and
+`"none"` blacks the window out. It is live and can be changed from the F10 settings bar, where it
+sits directly under the enable switch as *Desktop view*. Menus reach the headset as a virtual
+screen carrying the desktop image itself, so there is no separate eye view to mirror there and the
+three eye choices show that same image; only `"none"` differs. The F10 bar is drawn over whichever
+image is chosen, so the setting can always be changed back.
 
 `render_scale` scales the per-eye size recommended by the OpenXR runtime.
 `world_units_per_meter` controls the scale of headset translation in the game world.

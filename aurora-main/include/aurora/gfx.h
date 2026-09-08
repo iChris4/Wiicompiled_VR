@@ -106,6 +106,28 @@ bool aurora_get_stereo_skip_copy_clears();
 void aurora_set_stereo_hud_screen(bool enabled, float width, float distance);
 bool aurora_get_stereo_hud_screen_enabled();
 
+// What the desktop window shows while a headset is being fed. NORMAL leaves the
+// ordinary mono presentation untouched, the eye views mirror what the headset is
+// actually displaying, and NONE presents a black window. Live, and only
+// consulted while a stereo frame provider is supplying frames.
+//
+// A menu frame reaches the headset as a virtual screen carrying the very mono
+// image the desktop already shows, so there is no distinct eye view to mirror:
+// every eye choice presents that same image there, and only NONE differs.
+//
+// Interpolated presentation slots are encoded before the frame's eyes are
+// rendered, so under an eye choice they mirror the previous frame's eyes while
+// the real slot mirrors the current one.
+typedef enum {
+  AURORA_STEREO_MIRROR_NORMAL = 0,
+  AURORA_STEREO_MIRROR_BOTH_EYES = 1,
+  AURORA_STEREO_MIRROR_LEFT_EYE = 2,
+  AURORA_STEREO_MIRROR_RIGHT_EYE = 3,
+  AURORA_STEREO_MIRROR_NONE = 4,
+} AuroraStereoMirrorView;
+void aurora_set_stereo_mirror_view(AuroraStereoMirrorView view);
+AuroraStereoMirrorView aurora_get_stereo_mirror_view();
+
 // Guest-RAM write tracking. `generation` changes whenever guest RAM covering a host range was
 // written (or returns AURORA_GUEST_WRITE_UNTRACKED); `notify` reports writes aurora made itself.
 #define AURORA_GUEST_WRITE_UNTRACKED UINT64_MAX
