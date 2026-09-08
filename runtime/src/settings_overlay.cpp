@@ -885,10 +885,10 @@ void DrawVrSettings() {
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Makes where you are sitting right now the centre of the view. Position "
-            "only, so the horizon stays level and forward is unchanged; use your "
-            "headset's own recenter to change forward. Applies during an immersive "
-            "race, as the menu screen already follows your head.");
+            "Makes where you are sitting right now the centre of the view, and brings "
+            "the menu screen back upright in front of you. The race view moves in "
+            "position only, so the horizon stays level and forward is unchanged; use "
+            "your headset's own recenter to change forward.");
     }
     ImGui::SameLine();
     // Click to arm, then the next key press is captured in HandleEvents.

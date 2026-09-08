@@ -404,15 +404,25 @@ public:
         } else if (frame.presentation.mode == OpenXRD3D12FrameMode::VirtualScreen) {
             XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
             quad.layerFlags = 0;
-            quad.space = runtime_->ViewSpace();
             quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             quad.subImage.swapchain = eye_swapchains_[0].handle;
             quad.subImage.imageRect = {{0, 0},
                                        {static_cast<int32_t>(eye_swapchains_[0].width),
                                         static_cast<int32_t>(eye_swapchains_[0].height)}};
             quad.subImage.imageArrayIndex = 0;
-            quad.pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
-            quad.pose.position = {0.0f, 0.0f, -std::max(0.25f, frame.presentation.quad_distance_meters)};
+            if (frame.presentation.quad_anchored) {
+                // Placed in the application space, so the screen keeps its place
+                // in the room while the player looks around it.
+                quad.space = runtime_->AppSpace();
+                quad.pose = frame.presentation.quad_pose;
+            } else {
+                // No head pose to anchor against yet: keep it in front of the
+                // player so the menus are never left stranded behind them.
+                quad.space = runtime_->ViewSpace();
+                quad.pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+                quad.pose.position = {
+                    0.0f, 0.0f, -std::max(0.25f, frame.presentation.quad_distance_meters)};
+            }
             quad.size.width = std::max(0.25f, frame.presentation.quad_width_meters);
             quad.size.height = quad.size.width * static_cast<float>(eye_swapchains_[0].height) /
                                static_cast<float>(eye_swapchains_[0].width);

@@ -41,10 +41,17 @@ struct OpenXRD3D12GraphicsRequirements {
 struct OpenXRD3D12Presentation {
     OpenXRD3D12FrameMode mode = OpenXRD3D12FrameMode::ImmersiveProjection;
 
-    // Used only by VirtualScreen. The quad is head-locked in XR_VIEW_SPACE
-    // and centered straight ahead at -Z.
+    // Used only by VirtualScreen.
     float quad_distance_meters = 2.0f;
     float quad_width_meters = 2.4f;
+
+    // When quad_anchored is set, the quad is placed at quad_pose in the
+    // application reference space and stays put as the player looks around.
+    // Otherwise it falls back to being head-locked in XR_VIEW_SPACE, centered
+    // straight ahead at -Z, which is what happens until tracking has produced a
+    // head pose good enough to anchor against.
+    bool quad_anchored = false;
+    XrPosef quad_pose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
 };
 
 struct OpenXRD3D12Frame {
@@ -96,8 +103,9 @@ public:
 
     // Releases acquired images and calls xrEndFrame. submit_layer must only be
     // true after WaitForSubmission returned Success. Immersive frames submit
-    // XrCompositionLayerProjection; virtual-screen frames submit a head-locked
-    // XrCompositionLayerQuad using the single mono target.
+    // XrCompositionLayerProjection; virtual-screen frames submit an
+    // XrCompositionLayerQuad using the single mono target, placed as the
+    // presentation's quad_anchored/quad_pose describe.
     bool FinishFrame(OpenXRD3D12Frame& frame, bool submit_layer);
 
     // Call on the XR owner thread after Aurora's worker is idle and before

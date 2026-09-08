@@ -36,12 +36,13 @@ void OpenXRServiceProducerFrameBoundary() noexcept;
 bool OpenXRIsRunning() noexcept;
 std::string OpenXRLastError();
 
-// Recenters the view on where the player is sitting now. Position only: the
-// forward direction and the horizon come from the OpenXR reference space and
-// are never relatched from the headset, so recentering cannot tilt the game's
-// horizon. Use the runtime's own recenter gesture to change forward. Callable
-// from any thread; serviced on the XR pacing thread and ignored outside an
-// immersive race, where the head-locked menu screen has no origin to recenter.
+// Recenters on where the player is sitting now: it moves the immersive race
+// view's origin, and re-places the anchored menu screen upright in front of
+// them. Position only for the race view: the forward direction and the horizon
+// come from the OpenXR reference space and are never relatched from the
+// headset, so recentering cannot tilt the game's horizon. Use the runtime's own
+// recenter gesture to change forward. Callable from any thread; serviced once
+// per frame on the XR pacing thread.
 void OpenXRRequestRecenter() noexcept;
 
 // Sets a fixed pitch of the game camera for a player sitting reclined, in

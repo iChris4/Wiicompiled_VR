@@ -135,6 +135,21 @@ std::array<float, 3> CenterPosition(const OpenXRFrame& frame) noexcept {
     };
 }
 
+// Places an upright screen `distance` metres ahead of the head. Only the
+// head's yaw is used, so the screen is never pitched or rolled by whatever the
+// player's head happened to be doing when it was anchored.
+XrPosef ScreenPoseAhead(const OpenXRFrame& frame, float distance) noexcept {
+    const auto& q = frame.views[0].pose.orientation;
+    const float yaw =
+        std::atan2(2.0f * (q.x * q.z + q.w * q.y), 1.0f - 2.0f * (q.x * q.x + q.y * q.y));
+    const std::array<float, 3> center = CenterPosition(frame);
+    XrPosef pose{};
+    pose.orientation = {0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f)};
+    pose.position = {center[0] - std::sin(yaw) * distance, center[1],
+                     center[2] - std::cos(yaw) * distance};
+    return pose;
+}
+
 void IdentityEye(AuroraStereoEye& eye) noexcept {
     std::fill(std::begin(eye.projection), std::end(eye.projection), 0.0f);
     eye.projection[0] = 1.0f;
@@ -492,6 +507,11 @@ private:
                 break;
             }
 
+            // Both of these read this frame's located head pose and must run
+            // before FinishFrame submits a layer built from it.
+            ServiceRecenterRequest();
+            UpdateVirtualScreenPose(frame);
+
             if (!frame.expects_gpu_submission) {
                 if (!backend_->FinishFrame(frame, false)) {
                     SetError(backend_->LastError());
@@ -603,20 +623,12 @@ private:
             IdentityEye(destination.eyes[eye]);
         }
         if (!immersive) {
-            // The virtual screen is submitted in view space, so it is
-            // head-locked and has no origin to recenter. Drop the request rather
-            // than leaving it queued for a race start that latches the position
-            // on its own anyway.
-            recenter_requested_.store(false, std::memory_order_relaxed);
             last_immersive_ = false;
             return;
         }
 
         const bool position_valid =
             (source.xr_frame.view_state_flags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0;
-        if (recenter_requested_.exchange(false, std::memory_order_acq_rel)) {
-            ResetTrackingOrigin();
-        }
         // Latch on the first immersive frame, after a recenter or an origin
         // change, and on re-entry from the virtual screen so a race start
         // recenters a player who shifted during the menus. Position only: the
@@ -640,6 +652,34 @@ private:
         }
     }
 
+    // Runs once per located frame, before the virtual screen is placed and
+    // before the immersive origin is latched, so a recenter reaches both from
+    // this frame's head pose rather than the next one's.
+    void ServiceRecenterRequest() noexcept {
+        if (recenter_requested_.exchange(false, std::memory_order_acq_rel)) {
+            ResetTrackingOrigin();
+        }
+    }
+
+    // Anchors the menu screen in the application space and holds it there. The
+    // pose is captured once, from the first frame whose head pose is good enough
+    // to place it, and released again by a recenter or an origin change.
+    void UpdateVirtualScreenPose(OpenXRD3D12Frame& frame) noexcept {
+        if (frame.presentation.mode != OpenXRD3D12FrameMode::VirtualScreen) {
+            return;
+        }
+        constexpr XrViewStateFlags kPoseUsable =
+            XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
+        if (!virtual_screen_pose_valid_ && frame.xr_frame.views_valid &&
+            (frame.xr_frame.view_state_flags & kPoseUsable) == kPoseUsable) {
+            virtual_screen_pose_ = ScreenPoseAhead(
+                frame.xr_frame, std::max(0.25f, frame.presentation.quad_distance_meters));
+            virtual_screen_pose_valid_ = true;
+        }
+        frame.presentation.quad_anchored = virtual_screen_pose_valid_;
+        frame.presentation.quad_pose = virtual_screen_pose_;
+    }
+
     void ApplyPendingReferenceSpaceChange(const OpenXRFrame& frame) noexcept {
         if (runtime_->ConsumeAppSpaceChangesThrough(frame.predicted_display_time)) {
             ResetTrackingOrigin();
@@ -650,6 +690,9 @@ private:
         base_position_ = {};
         base_position_valid_ = false;
         last_immersive_ = false;
+        // The anchored menu screen is placed in the same space, so it is stale
+        // for exactly the same reasons and is re-placed on the next frame.
+        virtual_screen_pose_valid_ = false;
     }
 
     void WaitForStopOrDelay(std::chrono::milliseconds delay) {
@@ -689,6 +732,8 @@ private:
     std::string last_error_;
     std::array<float, 3> base_position_{};
     bool base_position_valid_ = false;
+    XrPosef virtual_screen_pose_{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
+    bool virtual_screen_pose_valid_ = false;
     bool last_immersive_ = false;
     uint64_t applied_session_run_serial_ = 0;
     bool session_was_active_ = false;
