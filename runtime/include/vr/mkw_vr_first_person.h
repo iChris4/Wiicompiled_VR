@@ -27,6 +27,19 @@ struct FirstPersonHeadOffsets {
     float forward = 0.0f;
 };
 
+// Where the anchored camera's orientation comes from, mirroring DolphinXR's
+// camera-anchor modes. The headset always adds free look on top of whichever
+// is chosen; this only decides the frame it looks around from.
+enum class FirstPersonRotation : uint8_t {
+    // The horizon is kept level and only a heading is taken. Comfort default.
+    YawOnly,
+    // The kart's heading and its climb, with roll dropped: slopes and wheelies
+    // tip the view, but a banked corner never rolls the horizon.
+    YawPitch,
+    // The kart's whole orientation, so the view banks and pitches with it.
+    Full,
+};
+
 // The camera relocation published to Aurora for one guest frame: a transform
 // from the game's recorded view space into the space the headset renders from.
 struct FirstPersonAnchor {
@@ -87,6 +100,32 @@ inline bool Normalize(Vec3& value) noexcept {
     return true;
 }
 
+// out = matrix's 3x3 * (x, y, z). Directions ignore the translation column.
+inline Vec3 TransformDirection(const Mtx34& matrix, const Vec3& v) noexcept {
+    return {
+        matrix[0] * v.x + matrix[1] * v.y + matrix[2] * v.z,
+        matrix[4] * v.x + matrix[5] * v.y + matrix[6] * v.z,
+        matrix[8] * v.x + matrix[9] * v.y + matrix[10] * v.z,
+    };
+}
+
+// Fills the three basis rows from a forward and an up that need not be exactly
+// perpendicular, in the -Z-forward convention view space uses.
+inline bool BasisFromForwardUp(const Vec3& forward_in, const Vec3& up_in, Vec3 rows[3]) noexcept {
+    Vec3 forward = forward_in;
+    if (!Normalize(forward)) {
+        return false;
+    }
+    Vec3 right = Cross(forward, up_in);
+    if (!Normalize(right)) {
+        return false;
+    }
+    rows[0] = right;
+    rows[1] = Cross(right, forward);
+    rows[2] = {-forward.x, -forward.y, -forward.z};
+    return true;
+}
+
 // out = matrix * (x, y, z, 1)
 inline Vec3 TransformPoint(const Mtx34& matrix, float x, float y, float z) noexcept {
     return {
@@ -102,14 +141,12 @@ inline Vec3 TransformPoint(const Mtx34& matrix, float x, float y, float z) noexc
 // the kart's pose (kart-local -> world), and head offsets already converted to
 // world units.
 //
-// The translation moves the camera onto the head. With level_horizon the
-// rotation keeps the recorded camera's heading but drops its pitch and roll, so
-// the headset owns pitch and roll outright; without it the recorded camera's
-// orientation is kept whole and only the eye moves. Returns false and leaves
-// `out` untouched when the inputs cannot produce an orthonormal frame.
+// The translation always moves the camera onto the head; `rotation` decides the
+// frame it looks around from. Returns false and leaves `out` untouched when the
+// inputs cannot produce an orthonormal frame.
 inline bool ComputeFirstPersonAnchor(const Mtx34& view_from_world, const Mtx34& kart_from_local,
                                      float head_right_units, float head_up_units,
-                                     float head_forward_units, bool level_horizon,
+                                     float head_forward_units, FirstPersonRotation rotation,
                                      Mtx34& out) noexcept {
     using namespace detail;
     if (!IsFiniteMtx34(view_from_world) || !IsFiniteMtx34(kart_from_local)) {
@@ -124,39 +161,55 @@ inline bool ComputeFirstPersonAnchor(const Mtx34& view_from_world, const Mtx34& 
 
     // Rows of the anchor's rotation. Identity keeps the recorded camera's own
     // orientation and moves the eye only.
+    // Every mode is the same construction from a forward and an up; they differ
+    // only in which pair they take. Pairing a forward with world up is what
+    // removes roll, since the resulting right axis is then always horizontal.
     Vec3 rows[3]{{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
-    if (level_horizon) {
-        // World +Y in view coordinates: the column of the view rotation that
-        // the world up axis selects.
-        Vec3 up{view_from_world[1], view_from_world[5], view_from_world[9]};
-        if (!Normalize(up)) {
+    // World +Y in view coordinates: the column of the view rotation that the
+    // world up axis selects.
+    Vec3 world_up{view_from_world[1], view_from_world[5], view_from_world[9]};
+    const bool world_up_valid = Normalize(world_up);
+    // Columns 2 and 1 of the kart pose are its forward and up. The pose may
+    // carry scale, so the pair is re-orthonormalized rather than trusted.
+    const Vec3 kart_forward = TransformDirection(
+        view_from_world, {kart_from_local[2], kart_from_local[6], kart_from_local[10]});
+    const Vec3 kart_up = TransformDirection(
+        view_from_world, {kart_from_local[1], kart_from_local[5], kart_from_local[9]});
+
+    if (rotation == FirstPersonRotation::YawOnly) {
+        if (!world_up_valid) {
             return false;
         }
         // Level the recorded camera's forward (-Z in its own space) onto the
         // horizon plane. Looking near-straight up or down leaves nothing to
         // project, so recover the heading from the camera's up axis instead.
         const Vec3 camera_forward{0.0f, 0.0f, -1.0f};
-        float along = Dot(camera_forward, up);
-        Vec3 forward{camera_forward.x - up.x * along, camera_forward.y - up.y * along,
-                     camera_forward.z - up.z * along};
+        float along = Dot(camera_forward, world_up);
+        Vec3 forward{camera_forward.x - world_up.x * along, camera_forward.y - world_up.y * along,
+                     camera_forward.z - world_up.z * along};
         if (!Normalize(forward)) {
             const Vec3 camera_up{0.0f, 1.0f, 0.0f};
-            along = Dot(camera_up, up);
-            forward = {camera_up.x - up.x * along, camera_up.y - up.y * along,
-                       camera_up.z - up.z * along};
+            along = Dot(camera_up, world_up);
+            forward = {camera_up.x - world_up.x * along, camera_up.y - world_up.y * along,
+                       camera_up.z - world_up.z * along};
             if (!Normalize(forward)) {
                 return false;
             }
         }
-        Vec3 right = Cross(forward, up);
-        if (!Normalize(right)) {
+        if (!BasisFromForwardUp(forward, world_up, rows)) {
             return false;
         }
-        // Re-derive up from the orthonormalized pair so a slightly non-rigid
-        // view matrix cannot leave a skewed frame behind.
-        rows[0] = right;
-        rows[1] = Cross(right, forward);
-        rows[2] = {-forward.x, -forward.y, -forward.z};
+    } else if (rotation == FirstPersonRotation::YawPitch) {
+        // The kart's heading and climb, levelled against world up so no roll
+        // survives. Pointing straight up or down leaves nothing to level
+        // against, so that frame falls back to the kart's own up.
+        if (!world_up_valid || !BasisFromForwardUp(kart_forward, world_up, rows)) {
+            if (!BasisFromForwardUp(kart_forward, kart_up, rows)) {
+                return false;
+            }
+        }
+    } else if (!BasisFromForwardUp(kart_forward, kart_up, rows)) {
+        return false;
     }
 
     Mtx34 anchor{};
@@ -181,7 +234,7 @@ inline bool ComputeFirstPersonAnchor(const Mtx34& view_from_world, const Mtx34& 
 // Enables anchor computation and sets the head offsets and world scale used to
 // convert them. Called whenever the configuration or the F10 toggle changes.
 void MkwVRFirstPersonConfigure(bool enabled, const FirstPersonHeadOffsets& offsets,
-                               float units_per_meter) noexcept;
+                               float units_per_meter, FirstPersonRotation rotation) noexcept;
 
 // While the anchor is driving the view the player's own models can be removed,
 // since the driver otherwise sits exactly where the eyes are. This uses the

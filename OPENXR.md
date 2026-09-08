@@ -36,6 +36,7 @@ first_person_head_forward_meters = 0.0
 first_person_head_right_meters = 0.0
 first_person_hide_driver = true
 first_person_hidden_model = 0
+first_person_rotation = "yaw"
 ```
 
 Set `enabled = true`, close the game completely, and start it again. These settings are read only
@@ -73,11 +74,17 @@ the renderer composes it onto every perspective draw's model-view matrix, alongs
 own per-eye delta. The kart's *physics* pose is used deliberately, not the animated model: an
 animated frame would bob and lurch the camera.
 
-Only the camera's heading is taken from the game. Its pitch and roll are dropped, so the horizon
-stays level through a chase-camera tilt or a banked corner, and the headset owns pitch, roll, and
-free look outright. The head's place in the kart is `first_person_head_up_meters` and its two
-companions, measured in the kart's own frame; the F10 sliders exist because the comfortable value
-is a matter of taste and is best judged from inside the headset.
+`first_person_rotation` decides where the view's orientation comes from, mirroring DolphinXR's
+camera-anchor modes. `"yaw"`, the default, keeps the horizon level through a chase-camera tilt or a
+banked corner. `"yaw_pitch"` adds the kart's climb, so a slope or a wheelie tips the view while a
+banked corner still never rolls it. `"full"` takes the kart's whole orientation, banking included.
+All three are the same construction from a forward and an up axis, differing only in which pair
+they take: pairing a forward with world up is what removes roll. The headset always adds free look
+on top of whichever is chosen, and only the translation onto the head is common to all three.
+
+The head's place in the kart is `first_person_head_up_meters` and its two companions, measured in
+the kart's own frame; the F10 sliders exist because the comfortable value is a matter of taste and
+is best judged from inside the headset.
 
 The mode engages only in a single-screen race, the same content that already qualifies for
 immersive stereo. Menus, split-screen, and the virtual-screen fallback are unaffected, and so is

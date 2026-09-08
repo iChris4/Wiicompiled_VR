@@ -15,6 +15,7 @@ namespace {
 
 using mkw::vr::ComputeFirstPersonAnchor;
 using mkw::vr::kIdentityMtx34;
+using mkw::vr::FirstPersonRotation;
 using mkw::vr::Mtx34;
 
 int g_failures = 0;
@@ -77,20 +78,23 @@ Mtx34 KartAt(float x, float y, float z) {
 void TestNeutralInputsProduceIdentity() {
     Mtx34 anchor{};
     Check(ComputeFirstPersonAnchor(kIdentityMtx34, kIdentityMtx34, 0.0f, 0.0f, 0.0f,
-                                   /*level_horizon=*/true, anchor),
+                                   FirstPersonRotation::YawOnly, anchor),
           "a camera already at the head must produce an anchor");
     for (size_t i = 0; i < anchor.size(); ++i) {
         CheckNear(anchor[i], kIdentityMtx34[i], "neutral inputs must produce the identity anchor");
     }
 }
 
-void TestUnlevelledAnchorIsPureTranslation() {
+void TestLevelCameraGivesPureTranslation() {
     // Camera 5 m behind and 2 m above the origin, kart at the origin, head 1 m up.
+    // A camera that is already level needs no rotation, so the anchor reduces to
+    // the translation and the head-placement math is visible on its own.
     const Mtx34 view = LevelViewAt(0.0f, 2.0f, 5.0f);
     const Mtx34 kart = KartAt(0.0f, 0.0f, 0.0f);
     Mtx34 anchor{};
-    Check(ComputeFirstPersonAnchor(view, kart, 0.0f, 1.0f, 0.0f, /*level_horizon=*/false, anchor),
-          "an unlevelled anchor must be computable");
+    Check(ComputeFirstPersonAnchor(view, kart, 0.0f, 1.0f, 0.0f, FirstPersonRotation::YawOnly,
+                                   anchor),
+          "a level camera must produce an anchor");
 
     // The head sits at (0, -1, -5) in view space, so the anchor's translation
     // is its negation.
@@ -113,7 +117,7 @@ void TestLevellingRemovesCameraPitch() {
     const Mtx34 view = PitchedViewAt(0.0f, 2.0f, 5.0f, pitch);
     const Mtx34 kart = KartAt(0.0f, 0.0f, 0.0f);
     Mtx34 anchor{};
-    Check(ComputeFirstPersonAnchor(view, kart, 0.0f, 1.0f, 0.0f, /*level_horizon=*/true, anchor),
+    Check(ComputeFirstPersonAnchor(view, kart, 0.0f, 1.0f, 0.0f, FirstPersonRotation::YawOnly, anchor),
           "a pitched camera must still produce an anchor");
 
     // The anchored camera's axes, expressed in world space: rows of A_rot times
@@ -157,7 +161,7 @@ void TestAnchorRotationStaysOrthonormal() {
         const Mtx34 view = PitchedViewAt(3.0f, 12.0f, -7.0f, pitch);
         Mtx34 anchor{};
         Check(ComputeFirstPersonAnchor(view, KartAt(3.0f, 0.0f, -20.0f), 0.1f, 1.0f, 0.2f,
-                                       /*level_horizon=*/true, anchor),
+                                       FirstPersonRotation::YawOnly, anchor),
               "every camera pitch must produce an anchor");
         for (size_t row = 0; row < 3; ++row) {
             for (size_t other = row; other < 3; ++other) {
@@ -177,7 +181,7 @@ void TestNonFiniteInputIsRejected() {
     broken[3] = std::numeric_limits<float>::infinity();
     Mtx34 anchor = kIdentityMtx34;
     anchor[3] = 1234.0f;
-    Check(!ComputeFirstPersonAnchor(broken, kIdentityMtx34, 0.0f, 1.0f, 0.0f, true, anchor),
+    Check(!ComputeFirstPersonAnchor(broken, kIdentityMtx34, 0.0f, 1.0f, 0.0f, FirstPersonRotation::YawOnly, anchor),
           "a non-finite view matrix must be rejected");
     CheckNear(anchor[3], 1234.0f, "a rejected anchor must leave the output untouched");
 }
@@ -186,17 +190,130 @@ void TestDegenerateKartPoseIsRejected() {
     Mtx34 collapsed{};
     Mtx34 anchor{};
     // A zeroed view matrix has no world up to level against.
-    Check(!ComputeFirstPersonAnchor(collapsed, kIdentityMtx34, 0.0f, 1.0f, 0.0f, true, anchor),
+    Check(!ComputeFirstPersonAnchor(collapsed, kIdentityMtx34, 0.0f, 1.0f, 0.0f, FirstPersonRotation::YawOnly, anchor),
           "a collapsed view matrix must be rejected");
+}
+
+// A kart pitched up by `pitch` and rolled by `roll`, heading toward -Z so it
+// points away from a level camera. Only columns 1 and 2 are read by the anchor.
+Mtx34 KartPitchedAndRolled(float pitch, float roll) {
+    const float cp = std::cos(pitch), sp = std::sin(pitch);
+    const float cr = std::cos(roll), sr = std::sin(roll);
+    const float forward[3]{0.0f, sp, -cp};
+    const float upUnrolled[3]{0.0f, cp, sp};
+    const float rightUnrolled[3]{1.0f, 0.0f, 0.0f};
+    Mtx34 pose{};
+    for (size_t row = 0; row < 3; ++row) {
+        pose[row * 4 + 1] = -rightUnrolled[row] * sr + upUnrolled[row] * cr;
+        pose[row * 4 + 2] = forward[row];
+    }
+    return pose;
+}
+
+void TestYawPitchKeepsClimbAndDropsRoll() {
+    const float pitch = 0.4f, roll = 0.5f;
+    const Mtx34 view = LevelViewAt(0.0f, 2.0f, 5.0f);
+    Mtx34 anchor{};
+    Check(ComputeFirstPersonAnchor(view, KartPitchedAndRolled(pitch, roll), 0.0f, 0.0f, 0.0f,
+                                   FirstPersonRotation::YawPitch, anchor),
+          "yaw+pitch must be computable");
+
+    // The climb survives: the anchor's forward is the kart's forward.
+    CheckNear(-anchor[9], std::sin(pitch), "yaw+pitch keeps the kart's climb (y)");
+    CheckNear(-anchor[10], -std::cos(pitch), "yaw+pitch keeps the kart's heading (z)");
+    // The roll does not: the right axis stays horizontal.
+    CheckNear(anchor[1], 0.0f, "yaw+pitch leaves the right axis horizontal");
+
+    // Full rotation on the same kart does keep the roll, so the two differ.
+    Mtx34 full{};
+    Check(ComputeFirstPersonAnchor(view, KartPitchedAndRolled(pitch, roll), 0.0f, 0.0f, 0.0f,
+                                   FirstPersonRotation::Full, full),
+          "full rotation must be computable");
+    Check(std::fabs(full[1]) > 0.1f, "full rotation keeps the roll yaw+pitch drops");
+
+    for (size_t row = 0; row < 3; ++row) {
+        for (size_t other = row; other < 3; ++other) {
+            float dot = 0.0f;
+            for (size_t axis = 0; axis < 3; ++axis) {
+                dot += anchor[row * 4 + axis] * anchor[other * 4 + axis];
+            }
+            CheckNear(dot, row == other ? 1.0f : 0.0f, "yaw+pitch stays orthonormal");
+        }
+    }
+}
+
+// A kart yawed by `yaw` and rolled by `roll`, as a kart-local -> world pose.
+Mtx34 KartOriented(float yaw, float roll) {
+    const float cy = std::cos(yaw), sy = std::sin(yaw);
+    const float cr = std::cos(roll), sr = std::sin(roll);
+    // Columns are the kart's right, up and forward axes in world space.
+    const float right[3]{cy * cr, sr, -sy * cr};
+    const float up[3]{-cy * sr, cr, sy * sr};
+    const float forward[3]{sy, 0.0f, cy};
+    Mtx34 pose{};
+    for (size_t row = 0; row < 3; ++row) {
+        pose[row * 4 + 0] = right[row];
+        pose[row * 4 + 1] = up[row];
+        pose[row * 4 + 2] = forward[row];
+    }
+    return pose;
+}
+
+void TestFullRotationFollowsTheKart() {
+    // A level camera, and a kart yawed and rolled away from it. Full rotation
+    // must adopt the kart's frame, not the camera's.
+    const Mtx34 view = LevelViewAt(0.0f, 2.0f, 5.0f);
+    const float yaw = 0.6f, roll = 0.4f;
+    Mtx34 anchor{};
+    Check(ComputeFirstPersonAnchor(view, KartOriented(yaw, roll), 0.0f, 0.0f, 0.0f,
+                                   FirstPersonRotation::Full, anchor),
+          "full rotation must be computable");
+
+    // With an identity view rotation the anchor rows are the kart's axes
+    // directly, so the third row is the kart's backward axis.
+    CheckNear(anchor[8], -std::sin(yaw), "full rotation takes the kart's heading (x)");
+    CheckNear(anchor[10], -std::cos(yaw), "full rotation takes the kart's heading (z)");
+    // Roll survives: the anchor's up is the kart's up, not world up.
+    CheckNear(anchor[5], std::cos(roll), "full rotation keeps the kart's roll");
+
+    for (size_t row = 0; row < 3; ++row) {
+        for (size_t other = row; other < 3; ++other) {
+            float dot = 0.0f;
+            for (size_t axis = 0; axis < 3; ++axis) {
+                dot += anchor[row * 4 + axis] * anchor[other * 4 + axis];
+            }
+            CheckNear(dot, row == other ? 1.0f : 0.0f, "full rotation stays orthonormal");
+        }
+    }
+}
+
+void TestYawOnlyIgnoresKartRoll() {
+    // The same rolled kart, but yaw-only must leave the horizon level.
+    const Mtx34 view = LevelViewAt(0.0f, 2.0f, 5.0f);
+    Mtx34 rolled{};
+    Mtx34 upright{};
+    Check(ComputeFirstPersonAnchor(view, KartOriented(0.6f, 0.4f), 0.0f, 0.0f, 0.0f,
+                                   FirstPersonRotation::YawOnly, rolled),
+          "yaw-only must be computable for a rolled kart");
+    Check(ComputeFirstPersonAnchor(view, KartOriented(0.6f, 0.0f), 0.0f, 0.0f, 0.0f,
+                                   FirstPersonRotation::YawOnly, upright),
+          "yaw-only must be computable for an upright kart");
+    for (size_t i = 0; i < 3; ++i) {
+        CheckNear(rolled[4 + i], upright[4 + i], "yaw-only ignores the kart's roll");
+    }
+    CheckNear(rolled[5], 1.0f, "yaw-only keeps the horizon level");
 }
 
 } // namespace
 
 int main() {
     TestNeutralInputsProduceIdentity();
-    TestUnlevelledAnchorIsPureTranslation();
+    TestLevelCameraGivesPureTranslation();
     TestLevellingRemovesCameraPitch();
     TestAnchorRotationStaysOrthonormal();
+    TestFullRotationFollowsTheKart();
+    TestYawPitchKeepsClimbAndDropsRoll();
+    TestYawOnlyIgnoresKartRoll();
     TestNonFiniteInputIsRejected();
     TestDegenerateKartPoseIsRejected();
     if (g_failures != 0) {

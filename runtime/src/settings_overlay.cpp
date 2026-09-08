@@ -113,6 +113,16 @@ float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMe
 float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters();
 bool g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
 int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
+constexpr std::array<const char*, 3> kVrFirstPersonRotationNames{"yaw", "yaw_pitch", "full"};
+int g_vrFirstPersonRotation = [] {
+    const std::string mode = RuntimeConfigFile::VrFirstPersonRotation();
+    for (size_t i = 0; i < kVrFirstPersonRotationNames.size(); ++i) {
+        if (mode == kVrFirstPersonRotationNames[i]) {
+            return static_cast<int>(i);
+        }
+    }
+    return 0;
+}();
 // SDL_SCANCODE_UNKNOWN means unbound, which is also what an unrecognised
 // name in the config file resolves to rather than silently picking a key.
 SDL_Scancode g_vrRecenterScancode = [] {
@@ -967,6 +977,21 @@ void DrawVrSettings() {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
     ImGui::TextDisabled("Where the head sits in the kart's own frame.");
     ImGui::PopTextWrapPos();
+    constexpr std::array<const char*, 3> kRotationLabels{"Yaw only", "Yaw + Pitch", "Full rotation"};
+    if (ImGui::Combo("View rotation", &g_vrFirstPersonRotation, kRotationLabels.data(),
+                     static_cast<int>(kRotationLabels.size()))) {
+        RuntimeConfigFile::SetVrFirstPersonRotation(
+            kVrFirstPersonRotationNames[static_cast<size_t>(g_vrFirstPersonRotation)]);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Where the view's orientation comes from. Yaw only keeps the horizon level "
+            "and is the comfortable choice. Yaw + Pitch adds the kart's climb, so slopes "
+            "and wheelies tip the view without ever rolling it. Full rotation takes the "
+            "kart's whole orientation, banking included. The headset always adds free look "
+            "on top.");
+    }
     // Two presentations of one setting: which models go, or none at all.
     // Ticking either replaces the other, and unticking both shows everything.
     const auto applyHiding = [](bool enabled, int model) {
@@ -1002,6 +1027,9 @@ void DrawVrSettings() {
         g_vrFirstPersonHeadRight = RuntimeConfigFile::kVrFirstPersonHeadRightDefault;
         g_vrFirstPersonHideDriver = RuntimeConfigFile::kVrFirstPersonHideDriverDefault;
         g_vrFirstPersonHiddenModel = RuntimeConfigFile::kVrFirstPersonHiddenModelDefault;
+        g_vrFirstPersonRotation = 0;
+        RuntimeConfigFile::SetVrFirstPersonRotation(
+            RuntimeConfigFile::kVrFirstPersonRotationDefault);
         RuntimeConfigFile::SetVrFirstPersonUnitsPerMeter(g_vrFirstPersonUnitsPerMeter);
         RuntimeConfigFile::SetVrFirstPersonHeadUpMeters(g_vrFirstPersonHeadUp);
         RuntimeConfigFile::SetVrFirstPersonHeadForwardMeters(g_vrFirstPersonHeadForward);

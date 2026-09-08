@@ -62,6 +62,7 @@ struct RuntimeUserConfig {
     std::optional<float> vrFirstPersonHeadRightMeters;
     std::optional<bool> vrFirstPersonHideDriver;
     std::optional<int32_t> vrFirstPersonHiddenModel;
+    std::optional<std::string> vrFirstPersonRotation;
     std::optional<std::string> vrRecenterKey;
     std::optional<float> vrLeanBackDegrees;
     std::optional<float> audioVolume;
@@ -148,6 +149,12 @@ inline constexpr float kVrFirstPersonHeadRightDefault = 0.0f;
 inline constexpr bool kVrFirstPersonHideDriverDefault = true;
 inline constexpr int32_t kVrFirstPersonHiddenModelDefault = 0;
 inline constexpr float kVrFirstPersonHeadOffsetLimit = 10.0f;
+// "yaw", "yaw_pitch" or "full", matching FirstPersonRotation.
+inline constexpr const char* kVrFirstPersonRotationDefault = "yaw";
+
+inline bool IsSupportedVrFirstPersonRotation(std::string_view value) {
+    return value == "yaw" || value == "yaw_pitch" || value == "full";
+}
 // SDL scancode name, spelled the way SDL_GetScancodeName produces it. An
 // empty string leaves the recenter hotkey unbound, menu button only.
 inline constexpr std::string_view kVrRecenterKeyDefault = "F9";
@@ -385,6 +392,10 @@ inline void EnsureConfigFile() {
               "# 0 is the driver, which is the usual choice. -1 hides every\n"
               "# model of your kart, the vehicle included.\n"
               "first_person_hidden_model = 0\n"
+              "# Where the view's orientation comes from: \"yaw\" levels the\n"
+              "# horizon, \"yaw_pitch\" adds the kart's climb but no roll, and\n"
+              "# \"full\" takes the kart's whole orientation so the view banks.\n"
+              "first_person_rotation = \"yaw\"\n\n"
               "# Keyboard shortcut that recenters the VR view, naming the key the\n"
               "# way SDL does (F9, Home, Keypad 5, ...). It moves the race view to\n"
               "# where you are sitting now and brings the menu screen back upright in\n"
@@ -586,6 +597,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     if (auto value = FindConfigFloat(document, "vr", "lean_back_degrees");
         value && *value >= -kVrLeanBackDegreesLimit && *value <= kVrLeanBackDegreesLimit) {
         config.vrLeanBackDegrees = static_cast<float>(*value);
+    }
+    if (auto value = FindConfigValue<std::string>(document, "vr", "first_person_rotation");
+        value && IsSupportedVrFirstPersonRotation(*value)) {
+        config.vrFirstPersonRotation = *value;
     }
     if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
         value && *value >= -1 && *value <= 31) {
@@ -878,6 +893,14 @@ inline bool SetVrLeanBackDegrees(float value) {
 inline bool SetVrFirstPersonHideDriver(bool value) {
     Mutable().vrFirstPersonHideDriver = value;
     return WriteSetting("vr", "first_person_hide_driver", value ? "true" : "false");
+}
+
+inline bool SetVrFirstPersonRotation(std::string value) {
+    if (!IsSupportedVrFirstPersonRotation(value)) {
+        return false;
+    }
+    Mutable().vrFirstPersonRotation = value;
+    return WriteSetting("vr", "first_person_rotation", FormatString(value));
 }
 
 inline bool SetVrFirstPersonHiddenModel(int32_t value) {
@@ -1178,6 +1201,11 @@ inline float VrLeanBackDegrees(float fallback = kVrLeanBackDegreesDefault) {
 
 inline bool VrFirstPersonHideDriver(bool fallback = kVrFirstPersonHideDriverDefault) {
     return Get().vrFirstPersonHideDriver.value_or(fallback);
+}
+
+inline std::string VrFirstPersonRotation(std::string fallback = kVrFirstPersonRotationDefault) {
+    const auto& value = Get().vrFirstPersonRotation;
+    return value && IsSupportedVrFirstPersonRotation(*value) ? *value : std::move(fallback);
 }
 
 inline int32_t VrFirstPersonHiddenModel(int32_t fallback = kVrFirstPersonHiddenModelDefault) {

@@ -8,6 +8,7 @@
 #include "vr/mkw_vr_policy.h"
 
 #include <mutex>
+#include <string>
 
 extern "C" void func_805A6C58(CpuContext* context);
 extern "C" void func_8056A470(CpuContext* context);
@@ -236,6 +237,7 @@ struct FirstPersonState {
     bool enabled = false;
     FirstPersonHeadOffsets offsets{};
     float units_per_meter = RuntimeConfigFile::kVrFirstPersonUnitsPerMeterDefault;
+    FirstPersonRotation rotation = FirstPersonRotation::YawOnly;
 
     uint32_t camera_address = 0;
     // Armed by the draw boundary, consumed by the frame seal.
@@ -494,10 +496,11 @@ void LogAnchorLocked(uint64_t frame, const Mtx34& anchor, const Mtx34& view_from
 } // namespace
 
 void MkwVRFirstPersonConfigure(bool enabled, const FirstPersonHeadOffsets& offsets,
-                               float units_per_meter) noexcept {
+                               float units_per_meter, FirstPersonRotation rotation) noexcept {
     std::lock_guard lock(g_mutex);
     g_state.enabled = enabled;
     g_state.offsets = offsets;
+    g_state.rotation = rotation;
     if (detail::IsFiniteFloat(&units_per_meter) && units_per_meter > 0.0f) {
         g_state.units_per_meter = units_per_meter;
     }
@@ -514,7 +517,12 @@ void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
         RuntimeConfigFile::VrFirstPersonHeadUpMeters(),
         RuntimeConfigFile::VrFirstPersonHeadForwardMeters(),
     };
-    MkwVRFirstPersonConfigure(RuntimeConfigFile::VrFirstPerson(false), offsets, units_per_meter);
+    const std::string mode = RuntimeConfigFile::VrFirstPersonRotation();
+    const FirstPersonRotation rotation = mode == "full" ? FirstPersonRotation::Full
+                                         : mode == "yaw_pitch" ? FirstPersonRotation::YawPitch
+                                                               : FirstPersonRotation::YawOnly;
+    MkwVRFirstPersonConfigure(RuntimeConfigFile::VrFirstPerson(false), offsets, units_per_meter,
+                              rotation);
     MkwVRPolicySetFirstPersonUnitsPerMeter(units_per_meter);
     {
         // Same lock the guest thread applies these under.
@@ -589,7 +597,7 @@ void MkwVRFirstPersonCommit() noexcept {
                                          g_state.offsets.right * g_state.units_per_meter,
                                          g_state.offsets.up * g_state.units_per_meter,
                                          g_state.offsets.forward * g_state.units_per_meter,
-                                         /*level_horizon=*/true, anchor)) {
+                                         g_state.rotation, anchor)) {
         failed_step = "anchor math (degenerate camera or kart frame)";
     }
 
