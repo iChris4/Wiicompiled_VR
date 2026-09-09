@@ -4,7 +4,7 @@ namespace WiiCompiled.Setup.Windows;
 
 internal static class ShellIntegration
 {
-    private const string ShortcutFileName = "wiicompiled (base) (beta).lnk";
+    private const string ShortcutFileName = "WiiCompiled OpenXR VR (base) (beta).lnk";
 
     public static void RegisterUninstaller(string installDirectory, bool retroInstalled)
     {

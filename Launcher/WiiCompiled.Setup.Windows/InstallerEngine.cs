@@ -12,6 +12,7 @@ internal sealed class InstallerEngine
     {
         var installDirectory = Path.GetFullPath(options.InstallDirectory);
         ValidateInstallDirectory(installDirectory);
+        ProductOwnership.Ensure(installDirectory, allowEmpty: true);
 
         InputValidation.ValidateExtension(options.GamePath);
         var parent = Directory.GetParent(installDirectory)?.FullName
@@ -37,6 +38,8 @@ internal sealed class InstallerEngine
 
         using var payload = PayloadArchive.OpenCurrent();
         var manifest = payload.ReadManifest();
+        if (manifest.ProductId != ProductInfo.Id || manifest.ProductVersion != ProductInfo.Version)
+            throw new InvalidDataException("This setup payload does not match WiiCompiled OpenXR VR and its version.");
         var toolkit = InstalledLayout.Toolkit(staging);
         var workspace = InstalledLayout.Workspace(staging);
 
@@ -366,6 +369,7 @@ internal sealed class InstallerEngine
             ProductVersion = manifest.ProductVersion,
             InstallDir = installDirectory,
             InstalledUtc = previousState?.InstalledUtc ?? DateTime.UtcNow,
+            ProductId = ProductInfo.Id,
             RetroRewindInstalled = previousState?.RetroRewindInstalled ?? false,
             ToolkitReleaseTag = manifest.ToolkitReleaseTag,
             DolSha256 = manifest.ExpectedDolSha256,

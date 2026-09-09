@@ -1,160 +1,65 @@
-name: Package installers
-
-# Builds the per-platform installer/setup tool (WiiCompiled-Setup.exe /
-# WiiCompiled-Setup-x86_64.AppImage) via Launcher/Build-Installer.ps1 and
-# Launcher/build-appimage.sh respectively - the same scripts a maintainer runs by hand today to
-# produce a GitHub Release asset. This does NOT build the actual translated game executable:
-# that step requires the end user's own Mario Kart Wii dump (Assets/main.dol, Assets/StaticR.rel),
-# which is proprietary and not present in this repository or in CI.
+name: Package WiiCompiled OpenXR VR
 on:
   push:
-    tags:
-      - '*'
+    tags: ['v*']
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
-  group: package-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+  group: package-vr-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   recompilation:
-    name: Recompilation test
     uses: ./.github/workflows/recomp-test.yml
-
-  linux-appimage:
-    name: Linux (AppImage, ${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            arch: x86_64
-          - runner: ubuntu-22.04-arm
-            arch: aarch64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '8.0.x'
-
-      # appimagetool ships as an AppImage itself and needs to self-mount via FUSE to run directly;
-      # GitHub's ubuntu-latest runners don't have libfuse2 preinstalled.
-      - name: Install dependencies (required by appimagetool and SDL3 build)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse2 build-essential git make \
-            pkg-config cmake ninja-build gnome-desktop-testing libasound2-dev libpulse-dev \
-            libaudio-dev libfribidi-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
-            libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
-            libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
-            libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev \
-            libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
-
-      - name: Build AppImage
-        run: bash Launcher/build-appimage.sh
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: WiiCompiled-Setup-linux-${{ matrix.arch }}
-          path: Launcher/dist/WiiCompiled-Setup-${{ matrix.arch }}.AppImage
-          if-no-files-found: error
-          archive: false
-
-  windows-installer:
-    name: Windows (installer exe)
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
-
-      - name: Build installer
+      - name: Verify release version
         shell: pwsh
-        run: ./Launcher/Build-Installer.ps1
-
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: ./Launcher/Verify-Release.ps1 -Tag $env:RELEASE_TAG
+      - name: Test translator
+        run: dotnet test translator/Translator.sln -c Release
+      - name: Build and audit setup payload
+        shell: pwsh
+        run: |
+          ./Launcher/Build-Installer.ps1
+          ./Launcher/Verify-Release.ps1 -SetupPath (Resolve-Path Launcher/dist/WiiCompiled-Setup.exe)
+          ./Launcher/dist/WiiCompiled-Setup.exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Setup self-tests failed.' }
+          $hash = (Get-FileHash Launcher/dist/WiiCompiled-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WiiCompiled-Setup.exe" | Set-Content Launcher/dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: WiiCompiled-Setup-windows-x64
-          path: Launcher/dist/WiiCompiled-Setup.exe
+          name: WiiCompiled-OpenXR-VR-windows-x64
+          path: |
+            Launcher/dist/WiiCompiled-Setup.exe
+            Launcher/dist/SHA256SUMS.txt
           if-no-files-found: error
-          archive: false
-
-  # Publishes the packaged installers as a GitHub Release whenever a v* tag is pushed. Wheel Wizard
-  # discovers updates from these releases, so the contract it relies on is enforced here: a full
-  # (non-prerelease) release whose tag is v<semver>, carrying an asset named exactly
-  # WiiCompiled-Setup.exe, produced by a setup host that reports that same version.
   release:
-    name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-appimage, windows-installer, recompilation]
-    runs-on: ubuntu-latest
+    needs: [windows, recompilation]
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # Wheel Wizard runs the downloaded setup with --version and refuses it when the reported
-      # version differs from the release tag, so a tag that was pushed without bumping every pinned
-      # version would ship an update nobody can install. Catch that before anything is published.
-      - name: Verify the tag matches the pinned setup version
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          status=0
-          check() {
-            if ! grep -Fq "$2" "$1"; then
-              echo "::error file=$1::expected '$2' for tag $TAG"
-              status=1
-            fi
-          }
-          check Launcher/WiiCompiled.Setup.Windows/Program.cs "public const string Version = \"$version\";"
-          check Launcher/WiiCompiled.Setup.Windows/WiiCompiled.Setup.Windows.csproj "<Version>$version</Version>"
-          check Launcher/Build-Installer.ps1 "ProductVersion = '$version'"
-          exit $status
-
-      # The build jobs upload with `archive: false`, which stores each installer as a raw file
-      # rather than a zip (and names the artifact after the file). Only download-artifact v8 and
-      # later understand such direct uploads; v7 tries to unzip everything and fails on them.
       - uses: actions/download-artifact@v8
         with:
+          name: WiiCompiled-OpenXR-VR-windows-x64
           path: artifacts
-          merge-multiple: true
-
-      - name: Publish release
+      - name: Publish Windows setup
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          set -euo pipefail
-          ls -lR artifacts
-          assets=()
-          for name in WiiCompiled-Setup.exe WiiCompiled-Setup-x86_64.AppImage WiiCompiled-Setup-aarch64.AppImage; do
-            found="$(find artifacts -type f -name "$name" | head -n 1)"
-            [ -n "$found" ] && [ -s "$found" ] || { echo "::error::missing release asset $name"; exit 1; }
-            assets+=("$found")
-          done
-          # A re-run of a tag whose release already exists only refreshes the assets.
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$TAG" "${assets[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$TAG" \
-              --verify-tag \
-              --generate-notes
-          fi
+          gh release create $env:TAG artifacts/WiiCompiled-Setup.exe artifacts/SHA256SUMS.txt --repo $env:REPOSITORY --verify-tag --title "WiiCompiled OpenXR VR $env:TAG (beta)" --notes "Windows x64 OpenXR beta. Install through WheelWizard VR. Requires your own clean PAL RMCP01 disc image; game code and assets are compiled locally."
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }

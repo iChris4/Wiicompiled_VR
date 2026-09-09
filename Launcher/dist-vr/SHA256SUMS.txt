@@ -1,0 +1,2 @@
+64fdd492f6ce71fd223b49f493e0809d9a7f9ed45ebaa3605f626eb77282dbe4  WiiCompiled-Setup.exe
+b319b86d46bea6ebfa52965c65706976d6004abc01914ff82a2b73c71de84def  WheelWizardVRWindows.exe

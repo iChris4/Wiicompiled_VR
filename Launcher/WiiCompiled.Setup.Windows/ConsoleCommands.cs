@@ -19,12 +19,22 @@ internal static class ConsoleCommands
         Console.Out.WriteLine("  --launch-retro | --launch-base");
         Console.Out.WriteLine("  --uninstall --install-dir <dir>");
         Console.Out.WriteLine("  --version");
+        Console.Out.WriteLine("  --info-json");
         return 0;
     }
 
     public static int Version()
     {
         Console.Out.WriteLine(ProductInfo.Version);
+        return 0;
+    }
+
+    public static int InfoJson()
+    {
+        Console.Out.WriteLine(JsonSerializer.Serialize(new
+        {
+            productId = ProductInfo.Id, version = ProductInfo.Version, openxrD3D12 = true
+        }));
         return 0;
     }
 

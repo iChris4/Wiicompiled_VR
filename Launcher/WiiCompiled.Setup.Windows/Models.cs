@@ -35,6 +35,7 @@ internal sealed class InstallOptions
 
 internal sealed class PayloadManifest
 {
+    public string ProductId { get; set; } = "";
     public int SchemaVersion { get; set; }
     public string ProductVersion { get; set; } = "";
     public string ExpectedGameId { get; set; } = "RMCP01";
@@ -72,6 +73,7 @@ internal sealed class DiscHeader
 
 internal sealed class InstallState
 {
+    public string ProductId { get; set; } = "";
     [JsonRequired]
     public int SchemaVersion { get; set; } = 1;
 

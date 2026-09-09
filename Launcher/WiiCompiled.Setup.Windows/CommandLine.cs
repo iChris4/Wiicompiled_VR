@@ -14,6 +14,7 @@ internal enum AppMode
     CheckProducts,
     RepairProducts,
     Version,
+    InfoJson,
     EmitPayloadIdentities
 }
 
@@ -58,6 +59,7 @@ internal sealed class CommandLine
             switch (args[i].ToLowerInvariant())
             {
                 case "--version": result.Mode = AppMode.Version; break;
+                case "--info-json": result.Mode = AppMode.InfoJson; break;
                 case "--silent": result.Mode = AppMode.SilentInstall; break;
                 case "--verify-inputs": result.Mode = AppMode.VerifyInputs; break;
                 case "--uninstall": result.Mode = AppMode.Uninstall; break;

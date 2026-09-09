@@ -15,6 +15,7 @@ Set-StrictMode -Version 3.0
 . (Join-Path $PSScriptRoot 'NativeBuildFlags.ps1')
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$releaseVersion = ([xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Directory.Build.props') -Raw)).Project.PropertyGroup.Version
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
 $portableTools = [IO.Path]::GetFullPath((Join-Path $repoRoot $PortableToolsDirectory))
 $dependencySources = [IO.Path]::GetFullPath((Join-Path $repoRoot $DependencySourceDirectory))
@@ -282,7 +283,8 @@ foreach ($required in @('ToolkitFingerprint','TranslationFingerprint','NativeToo
 
 $manifest = [ordered]@{
     SchemaVersion = 2
-    ProductVersion = '0.2.31'
+    ProductVersion = $releaseVersion
+    ProductId = 'wiicompiled-openxr-vr'
     ExpectedGameId = $pins.GameId
     ExpectedDolSha256 = $pins.DolSha256
     ExpectedRelSha256 = $pins.RelSha256

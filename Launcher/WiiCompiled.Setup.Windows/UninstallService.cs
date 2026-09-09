@@ -28,6 +28,9 @@ internal static class UninstallService
     public static int RunWorker(string installDirectory, bool quiet)
     {
         installDirectory = Path.GetFullPath(installDirectory);
+        ProductOwnership.Ensure(installDirectory);
+        using var operation = InstallOperationLock.Acquire(installDirectory);
+        RunningProductGuard.EnsureProductsNotRunning(installDirectory);
         Thread.Sleep(750);
         TryCleanup("remove shortcuts", quiet, ShellIntegration.RemoveShortcuts);
 

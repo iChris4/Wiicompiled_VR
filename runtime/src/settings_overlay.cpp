@@ -907,6 +907,11 @@ void DrawGraphicsSettings() {
 // group, and keeping them out of Graphics stops that menu from running off the
 // bottom of the screen.
 void DrawVrSettings() {
+    const auto xrError = mkw::vr::OpenXRLastError();
+    if (!xrError.empty()) {
+        ImGui::TextWrapped("OpenXR unavailable: %s", xrError.c_str());
+        ImGui::TextWrapped("Playing on the desktop. Check your headset and active OpenXR runtime, then restart.");
+    }
     if (ImGui::Checkbox("Enable OpenXR VR", &g_vrEnabled)) {
         RuntimeConfigFile::SetVrEnabled(g_vrEnabled);
     }
@@ -1420,6 +1425,29 @@ void Draw() noexcept {
     // Wait for the frame worker's DONE phase: it has replayed the previous frame's ImGui draw lists
     // and started the next ImGui frame, so all overlay callers can now safely issue ImGui commands.
     aurora_wait_for_frame_worker();
+    // Explain fallback without interrupting gameplay or capturing input.
+    static std::string shownXrError;
+    static double xrNoticeUntil = 0.0;
+    const auto xrError = mkw::vr::OpenXRLastError();
+    if (!xrError.empty() && xrError != shownXrError) {
+        shownXrError = xrError;
+        xrNoticeUntil = ImGui::GetTime() + 15.0;
+    }
+    if (!shownXrError.empty() && ImGui::GetTime() < xrNoticeUntil) {
+        ImGui::SetNextWindowPos(ImVec2(16.0f, 60.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.9f);
+        if (ImGui::Begin("OpenXR desktop fallback", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing)) {
+            ImGui::PushTextWrapPos(440.0f);
+            ImGui::TextUnformatted("OpenXR unavailable - playing on the desktop.");
+            ImGui::TextUnformatted(shownXrError.c_str());
+            ImGui::TextUnformatted("Check your headset and active OpenXR runtime, then restart. Details: F10 > VR.");
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::End();
+    }
     // Also drive the Wii Remote rescan from here: PADRead runs it too, but this
     // runs once per presented frame whatever the game is doing (e.g. sitting in
     // its "communications interrupted" prompt without polling pads). Same guest

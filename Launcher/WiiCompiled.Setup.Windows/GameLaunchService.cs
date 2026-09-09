@@ -7,6 +7,7 @@ internal static class GameLaunchService
     public static Task<int> LaunchAsync(BuildProfile profile)
     {
         var installation = new Installation(AppContext.BaseDirectory);
+        ProductOwnership.Ensure(installation.Root);
         using var operation = InstallOperationLock.Acquire(installation.Root);
         // A portable installation the user moved is reconciled before anything is read from its
         // recorded location. Launch never needs the discarded native build tree.

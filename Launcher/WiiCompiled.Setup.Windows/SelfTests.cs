@@ -6,9 +6,36 @@ namespace WiiCompiled.Setup.Windows;
 
 internal static class SelfTests
 {
+    private static void TestVrOwnership()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "WiiCompiled-VR-ownership-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            ProductOwnership.Ensure(root, allowEmpty: true);
+            var statePath = Path.Combine(root, InstalledLayout.InstallStateFileName);
+            File.WriteAllText(statePath, "{\"SetupVersion\":\"0.2.32\"}");
+            var original = File.ReadAllText(statePath);
+            try { ProductOwnership.Ensure(root, allowEmpty: true); throw new Exception("Accepted an unidentified install."); }
+            catch (InvalidDataException) { }
+            if (File.ReadAllText(statePath) != original) throw new Exception("Normal state was changed by rejection.");
+            File.WriteAllText(statePath, "{\"ProductId\":\"wiicompiled\"}");
+            try { ProductOwnership.Ensure(root); throw new Exception("Accepted a normal install."); }
+            catch (InvalidDataException) { }
+            JsonState.Write(statePath, new InstallState { ProductId = ProductInfo.Id, InstallDir = root });
+            ProductOwnership.Ensure(root);
+            if (RuntimeConfiguration.ApplicationDataConfigPath.Contains("WiiCompiled\\Config.toml", StringComparison.Ordinal))
+                throw new Exception("The VR setup still uses normal application data.");
+            if (!ProductInfo.UninstallKey.EndsWith("WiiCompiledOpenXRVR", StringComparison.Ordinal))
+                throw new Exception("The VR uninstall identity is not isolated.");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     public static int Run()
     {
         var failures = new List<string>();
+        Test("VR installation ownership", TestVrOwnership, failures);
         Test("ISO extension", () => TestAcceptedExtension(".iso"), failures);
         Test("GCM extension", () => TestAcceptedExtension(".gcm"), failures);
         Test("GCZ extension", () => TestAcceptedExtension(".gcz"), failures);
@@ -1291,7 +1318,7 @@ internal static class SelfTests
                     RetroWfcPayloadMode = "skipped" });
             JsonState.Write(installation.InstallStatePath, new InstallState
             {
-                InstallDir = root, RetroRewindInstalled = true,
+                ProductId = ProductInfo.Id, InstallDir = root, RetroRewindInstalled = true,
                 DolSha256 = dolSha, RelSha256 = relSha,
                 RetroRewindCodePulSha256 = inputsA.CodePulSha256,
                 RetroRewindCompileInputsSha256 = inputsA.CompileInputsSha256,

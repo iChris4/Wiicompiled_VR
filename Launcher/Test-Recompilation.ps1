@@ -45,13 +45,14 @@ foreach ($relative in $sourceFiles | Sort-Object -Unique) {
 }
 
 # One synthetic text section: li r3,40; addi r3,r3,2; nop; blr.
-# Native HLE wrappers also call these eight guest symbols directly. Give each
+# Native HLE and VR wrappers also call these guest symbols directly. Give each
 # its own generated blr function so the real product can link without game code.
 # Keep this list explicit: a new unresolved guest dependency must fail the test.
 [uint32]$entry = 0x80001000L
 [uint32[]]$guestCallbacks = @(
     0x8012B830L, 0x801A0620L, 0x801A1ED8L, 0x801A961CL,
-    0x801AADE0L, 0x801D8D30L, 0x801D9E94L, 0x8055531CL
+    0x801AADE0L, 0x801D8D30L, 0x801D9E94L, 0x8055531CL,
+    0x8056A470L, 0x8056A580L, 0x805A6C58L
 )
 $textSize = [int]($guestCallbacks[-1] - $entry + 4)
 $dataOffset = 0x100 + $textSize
@@ -135,7 +136,7 @@ try {
         -Ninja $ninja -CCompiler (Join-Path $compilerBin 'x86_64-w64-mingw32-clang.exe') `
         -CxxCompiler (Join-Path $compilerBin 'x86_64-w64-mingw32-clang++.exe') `
         -ResourceCompiler (Join-Path $compilerBin 'x86_64-w64-mingw32-windres.exe') `
-        -DependenciesDirectory $dependencies -AdditionalArguments @('-DMKW_BUILD_PRODUCTS=ON')
+        -DependenciesDirectory $dependencies -AdditionalArguments @('-DMKW_BUILD_PRODUCTS=ON', '-DMKW_ENABLE_OPENXR=ON')
     Invoke-Checked $cmake $configure 'Configuring the production Windows runtime' `
         -WaitForProcessTree $false
     Invoke-Checked $cmake @('--build', $nativeBuild, '--target', 'WiiCompiled', '--parallel', "$Parallel") `

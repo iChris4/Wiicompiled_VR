@@ -390,7 +390,7 @@ try {
             -SourceDirectory (Join-Path $Workspace 'runtime') -BuildDirectory $build `
             -Ninja $ninja -CCompiler $cc -CxxCompiler $cxx -ResourceCompiler $windres `
             -DependenciesDirectory $dependencies -NativePrebuiltDirectory $nativePrebuilt `
-            -AdditionalArguments @("-DMKW_TRANSLATED_COMPILE_JOBS=$translatedJobs")
+            -AdditionalArguments @("-DMKW_TRANSLATED_COMPILE_JOBS=$translatedJobs", '-DMKW_ENABLE_OPENXR=ON')
         Invoke-Checked $cmake $configure 'Configuring the bundled native toolchain' -StepId 'configure-native'
         if (-not [string]::IsNullOrWhiteSpace($NativeToolchainFingerprint)) {
             [ordered]@{ SchemaVersion = 1; NativeToolchainFingerprint = $NativeToolchainFingerprint } |

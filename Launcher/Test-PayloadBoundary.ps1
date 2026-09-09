@@ -9,9 +9,11 @@ $forbiddenNames = @(
     'WiiCompiled.exe', 'RetroRewind.exe', 'mkw_recompiled.exe',
     'main.dol', 'StaticR.rel', 'Code.pul', 'base_translation_sources.bin',
     'data_sections_init.cpp', 'data_sections_init_blobs.S', 'mkwii_base_manifest.json',
-    'generated_func_aliases.cpp', 'translated_function_decls.h'
+    'generated_func_aliases.cpp', 'translated_function_decls.h',
+    'rksys.dat', 'RFL_DB.dat', 'Config.toml', 'config-vr.json', 'install-state.json'
 )
-$forbiddenExtensions = @('.iso', '.gcm', '.gcz', '.ciso', '.wbfs', '.wia', '.rvz', '.dol', '.rel', '.pul')
+$forbiddenExtensions = @('.iso', '.gcm', '.gcz', '.ciso', '.wbfs', '.wia', '.rvz', '.dol', '.rel', '.pul',
+    '.szs', '.brres', '.thp', '.brsar', '.rkg')
 $forbiddenSegments = @(
     '\BuildWorkspace\generated\', '\BuildWorkspace\runtime\build\', '\GameAssets\', '\BuildWorkspace\Assets\',
     '\BuildWorkspace\PulsarPacks\', '\BuildWorkspace\build\base\', '\BuildWorkspace\build\mods\'

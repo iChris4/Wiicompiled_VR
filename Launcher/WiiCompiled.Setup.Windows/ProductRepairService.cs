@@ -77,6 +77,7 @@ internal sealed class ProductRepairService
         RetroWfcPayloadMode requestedPayloadMode, ReconcileOptions options,
         CancellationToken cancellationToken)
     {
+        ProductOwnership.Ensure(_installation.Root);
         if (!_installation.IsPresent)
             throw new InvalidOperationException("WiiCompiled is not installed here.");
         if (!_installation.HasToolkit)

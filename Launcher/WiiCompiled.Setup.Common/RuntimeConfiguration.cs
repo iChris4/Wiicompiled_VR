@@ -26,7 +26,7 @@ public static class RuntimeConfiguration
     /// <summary>The per-user configuration an ordinary (non-portable) installation shares.</summary>
     public static string ApplicationDataConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "WiiCompiled", ConfigFileName);
+        OperatingSystem.IsWindows() ? "WiiCompiledOpenXRVR" : "WiiCompiled", ConfigFileName);
 
     /// <summary>
     /// The configuration file that governs <paramref name="installDirectory"/>. This mirrors

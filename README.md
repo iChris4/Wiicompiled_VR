@@ -1,5 +1,5 @@
 
-# WiiCompiled
+# WiiCompiled OpenXR VR
 
 A native PC port of Mario Kart Wii, made with static recompilation.
 
@@ -12,7 +12,7 @@ anywhere at runtime.
 > toolchain, the translation runs on your machine against your disc image, and nothing ever gets
 > uploaded.
 
-[What is a github, I just want to play](https://github.com/TeamWheelWizard/WheelWizard/releases/latest)
+[Download WheelWizard VR](https://github.com/iChris4/WheelWizard_VR/releases/latest)
 
 ---
 
@@ -96,8 +96,7 @@ Known limitations of the Wii Remote path:
 - GPU: GTX 1650 / RX 6400 / Arc A310 or higher
 - CPU: Intel Core i5-8400 / AMD Ryzen 5 2600 (4c/6c, ~3.5GHz+) or higher
 - About 20 GB of free disk space during installation (Final game size ~5 GB)
-- macOS 14 (Sonoma) or later on Apple Silicon
-- On macOS, Apple Xcode Command Line Tools (Setup opens Apple's installer when they are missing)
+- This fork's packaged release supports Windows x64. Other platforms are not release targets.
 - A clean, unmodified **PAL `RMCP01`** disc image of Mario Kart Wii, dumped by you. ISO, GCM,
   GCZ, CISO, WBFS, WIA and RVZ are accepted.
 
@@ -113,15 +112,26 @@ regions, patched executables) is rejected outright.
 
 ## Installing
 
-For an easy experience, use [Wheel Wizard](https://github.com/TeamWheelWizard/WheelWizard). Pick your clean PAL `RMCP01`
-image under Settings, turn on **WiiCompiled (beta)**, and hit install from the Home page.
-Wheel Wizard downloads the setup tool from this repo and walks you through install, updates and
-launching. The backend itself is deliberately command-line only, Wheel Wizard is a wrapper around it.
+Use [WheelWizard VR](https://github.com/iChris4/WheelWizard_VR/releases/latest). Select your clean PAL
+`RMCP01` image in Settings, then open **Settings → Other → WiiCompiled (beta)** and enable
+**Enable WiiCompiled OpenXR VR (beta)**. Press Install on Home. Installation builds both Base game
+and Retro Rewind locally using the bundled toolchain; a developer toolchain is not required.
+
+Home lets you choose **Base game** or **Retro Rewind**. The normal WiiCompiled switch selects the
+original backend; turning both switches off selects Dolphin. Only one recompilation switch can
+be enabled at a time. VR uses a separate `RecompVR` installation beside the normal `Recomp` folder.
+Saves and Miis use the normal installation's effective NAND; Retro Rewind retains its separate
+XML-directed saves and ghosts. Graphics, VR preferences, caches, and compiled binaries stay separate.
+Uninstalling either backend in WheelWizard VR preserves configuration and shared progress.
+
+Managed VR launches enable OpenXR with D3D12. If the runtime or headset is unavailable, the game
+continues on the desktop and displays the failure briefly; **F10 → VR** retains the explanation.
+See [OpenXR configuration](OPENXR.md) and [distribution and validation](DISTRIBUTION.md).
 
 
 > [!CAUTION]
 > Only take builds from this repository's
-> [Releases](https://github.com/patchzyy/Wiicompiled/releases) page. If someone's sharing an
+> [Releases](https://github.com/iChris4/Wiicompiled_VR/releases) page. If someone's sharing an
 > installer through Discord or some random download site, don't touch it!!
 
 ## A note on related projects

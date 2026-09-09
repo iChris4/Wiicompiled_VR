@@ -15,8 +15,14 @@ This is an experimental renderer, not yet a release-ready VR mode.
 - A build made with `MKW_ENABLE_OPENXR=ON`, which defaults on for Windows and off elsewhere while
   the Vulkan bridge remains capability-gated.
 
-OpenXR remains disabled until requested in `Config.toml`. The file is next to the installed game
-configuration and is created with the following defaults:
+For managed installation, use [WheelWizard VR](https://github.com/iChris4/WheelWizard_VR/releases/latest)
+and enable **Settings → Other → WiiCompiled (beta) → Enable WiiCompiled OpenXR VR (beta)**.
+The launcher sets `vr.enabled=true`, `vr.required=false`, and `video.graphics_api="d3d12"` before
+each VR launch, preserving other preferences. Its portable configuration lives at
+`RecompVR/UserData/Config.toml` beneath WheelWizard's data folder. Normal graphics settings remain
+in `Recomp/UserData/Config.toml`. Both backends use the normal installation's effective NAND.
+
+Standalone launches remain opt-in. `Config.toml` is created with the following defaults:
 
 ```toml
 [vr]
@@ -46,7 +52,8 @@ at launch. The in-game F10 settings bar also exposes the enable switch, but a re
 required.
 
 `required = false` is the safe default: an absent runtime, disconnected headset, unsupported GPU,
-or graphics-binding failure is logged and the game continues in ordinary desktop mode. Set it to
+or graphics-binding failure is logged and the game continues in ordinary desktop mode. A temporary
+notification explains the failure; the message remains available under **F10 → VR**. Set it to
 `true` only when a failed VR startup should stop the game with an error.
 
 `mirror_view` chooses what the desktop window shows while the headset is running: `"normal"`

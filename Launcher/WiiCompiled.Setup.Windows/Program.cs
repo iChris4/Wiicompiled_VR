@@ -16,7 +16,7 @@ internal static class Program
             {
                 Console.Out.WriteLine(
                     "Mario Kart WiiCompiled is installed through Wheel Wizard - download it from " +
-                    "https://github.com/TeamWheelWizard/WheelWizard");
+                    "https://github.com/iChris4/WheelWizard_VR");
                 Console.ReadKey(intercept: true);
                 return 0;
             }
@@ -37,6 +37,8 @@ internal static class Program
 
             if (command.Mode == AppMode.Version)
                 return ConsoleCommands.Version();
+            if (command.Mode == AppMode.InfoJson)
+                return ConsoleCommands.InfoJson();
 
             if (command.Mode == AppMode.Help)
                 return ConsoleCommands.Help();
@@ -120,8 +122,9 @@ internal static class PlatformChecks
 
 internal static class ProductInfo
 {
-    public const string Name = "WiiCompiled";
-    public const string Version = "0.2.31";
+    public const string Name = "WiiCompiled OpenXR VR";
+    public const string Id = "wiicompiled-openxr-vr";
+    public static string Version => typeof(ProductInfo).Assembly.GetName().Version!.ToString(3);
 
     /// <summary>
     /// The setup executable is copied into the installation under this name. It is the launcher and
@@ -129,8 +132,8 @@ internal static class ProductInfo
     /// </summary>
     public const string SetupCopyName = "WiiCompiled-Setup.exe";
 
-    public const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\WiiCompiled";
+    public const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\WiiCompiledOpenXRVR";
     public static string DefaultInstallDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Programs", "WiiCompiled");
+            "Programs", "WiiCompiledOpenXRVR");
 }
