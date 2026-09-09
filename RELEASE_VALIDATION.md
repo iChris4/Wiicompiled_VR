@@ -8,10 +8,12 @@ acceptance is not complete.
 | Product | Version | Local artifact | SHA-256 |
 | --- | --- | --- | --- |
 | WiiCompiled OpenXR VR setup | 0.2.32 | `Launcher/dist-vr/WiiCompiled-Setup.exe` | `64fdd492f6ce71fd223b49f493e0809d9a7f9ed45ebaa3605f626eb77282dbe4` |
-| WheelWizard VR | 2.5.5 | `Launcher/dist-vr/WheelWizardVRWindows.exe` | `b319b86d46bea6ebfa52965c65706976d6004abc01914ff82a2b73c71de84def` |
+| WheelWizard VR | 2.5.5 | `Launcher/dist-vr/about-update/WheelWizardVRWindows.exe` | `946bb530c9deea52f397689d637a4e0c10070d9c1980d7d02c4acc78f8fb7e5d` |
 
-The launcher artifact is also in the launcher checkout at `artifacts/WheelWizardVRWindows.exe`.
-`Launcher/dist-vr/SHA256SUMS.txt` contains both checksums. Only these executables and their checksums
+The launcher artifact is also in the launcher checkout at `artifacts/about-update/WheelWizardVRWindows.exe`.
+The updated launcher checksum is in `Launcher/dist-vr/about-update/SHA256SUMS.txt`. Earlier launcher
+copies were retained with their original checksums to avoid replacing running executables;
+use the `about-update` copy for the latest UI, VR settings, and About credit. Only these executables and their checksums
 are intended for distribution. The setup contains the toolkit and source payload, not a compiled
 game. All extracted assets, normal installation copies, compiled games, and test NANDs remain in
 ignored local validation directories.
@@ -24,10 +26,19 @@ and must agree with the single version source in each product's `Directory.Build
 
 ## Passed
 
-- WheelWizard suite: **255 tests**, including backend selection/migration, configuration isolation,
+- WheelWizard suite: **259 tests**, including backend selection/migration, configuration isolation,
   all four backend/game launch command paths, same-version wrong-product rejection, separate
   release routing, exact self-update asset selection, shared NAND configuration, Mii edit blocking,
   and uninstall preservation of both backends' configuration, NAND, and ghosts.
+- Launcher UI follow-up: rendered Home with active wheel artwork and the OpenXR settings page at
+  the default 656×876 layout. The window title, game selector, game title and backend subtitle fit;
+  artwork is clipped below the selector. Exercised the actual OpenXR checkbox with isolated
+  preferences and verified it writes the configuration. Regression tests cover explicit OpenXR-off
+  preservation during launch preparation and VR preference persistence/reset across backend changes.
+  OpenXR now defaults on for managed installations while preserving an explicit desktop choice.
+- About-page follow-up: added "OpenXR VR by iChris4" immediately below Translator Team with a
+  native vector headset icon. Credits scroll independently of version information. Built the Windows
+  executable, checked its release identity, and inspected the rendered About page at 656×876.
 - Retro Rewind transaction tests: staged replacement, cancellation, preservation of saves/ghosts
   and XML save directories, current distribution ZIP layout, archive path validation, interrupted
   publication recovery, and a real Windows locked-file failure after one directory was published.
