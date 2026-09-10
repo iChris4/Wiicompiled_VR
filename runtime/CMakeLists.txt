@@ -345,6 +345,12 @@ target_include_directories(mkw_vr_first_person_tests PRIVATE "${CMAKE_CURRENT_LI
 target_compile_features(mkw_vr_first_person_tests PRIVATE cxx_std_17)
 add_test(NAME mkw_vr_first_person_tests COMMAND mkw_vr_first_person_tests)
 
+# Resolve the real local-kart pointer walk against synthetic offline/online rosters.
+add_executable(mkw_vr_player_tests "${CMAKE_CURRENT_LIST_DIR}/tests/vr_player_tests.cpp")
+target_include_directories(mkw_vr_player_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
+target_compile_features(mkw_vr_player_tests PRIVATE cxx_std_17)
+add_test(NAME mkw_vr_player_tests COMMAND mkw_vr_player_tests)
+
 if(MKW_ENABLE_OPENXR AND MKW_PLATFORM_WINDOWS)
     add_executable(mkw_openxr_replay_tests
         tests/openxr_d3d12_replay_tests.cpp src/vr/openxr_d3d12.cpp)

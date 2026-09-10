@@ -6,6 +6,7 @@
 #include "runtime_config.h"
 #include "runtime_log.h"
 #include "vr/mkw_vr_policy.h"
+#include "vr/mkw_vr_player.h"
 
 #include <mutex>
 #include <string>
@@ -50,19 +51,9 @@ constexpr uint32_t kG3DCameraMtxStateAddress = 0x802BBAB4u;
 constexpr uint32_t kG3DCameraMtxBankOffset = 0x2u;
 constexpr uint32_t kG3DCameraMtxOffset = 52u;
 
-// Kart::Manager's instance pointer. Its CreateInstance (0x8058FAA8) resolves
-// the slot as 0x809C0000 + 6392 in the generated translation. Read directly
-// rather than observed from Kart::Manager::Update's r3, so enabling the camera
-// needs no change to the translated output: an entry observer only exists in a
-// build whose translation was regenerated for it, and its absence is silent.
-// This mirrors how the race scene's instance slot is reached in
-// mkw_vr_instrumentation.cpp.
-constexpr uint32_t kKartManagerInstanceAddress = 0x809C18F8u;
-// Kart::Manager::GetKartPlayer (0x80590100): `lwz r3,0x20(r3)` then indexes.
-constexpr uint32_t kKartManagerPlayersOffset = 0x20u;
 // Kart::Link::GetKartPosition (0x8059020C) walks proxy -> accessor -> body ->
-// physics -> dynamics; the first three links are shared by every kart accessor.
-constexpr uint32_t kKartProxyAccessorOffset = 0x00u;
+// physics -> dynamics. The local racer and its accessor are resolved by
+// ReadLocalPlayerKart, shared with driver visibility.
 constexpr uint32_t kKartAccessorBodyOffset = 0x08u;
 constexpr uint32_t kKartBodyPhysicsOffset = 0x90u;
 // KartPhysics::pose (Kart::Link::GetMtx 0x80590264). This is the physics-driven
@@ -95,10 +86,6 @@ constexpr uint32_t kModelsVisibilityHolderOffset = 0x14u;
 constexpr uint32_t kModelHolderArrayOffset = 0xD8u;
 constexpr uint32_t kModelHolderCountOffset = 0xF0u;
 constexpr uint32_t kMaxPlayerModels = 32;
-
-// Offline Mario Kart Wii puts the local racer first, and immersive
-// presentation already requires exactly one on-screen player.
-constexpr uint32_t kLocalPlayerIndex = 0;
 
 // Frames the last good anchor survives a failed read before the camera returns
 // to the game's own. Rides out a transient null during a respawn or transition
@@ -184,27 +171,17 @@ bool ReadRaceCameraViewMatrix(const CpuContext* context, uint32_t camera_address
 // The pointer walk, kept inspectable: on failure `failed_step` names the link
 // that broke and the resolved pointers before it are still filled in. One log
 // line then says exactly which offset needs revisiting.
-struct KartPoseRead {
-    const char* failed_step = nullptr;
-    uint32_t manager = 0;
-    uint32_t players = 0;
-    uint32_t proxy = 0;
-    uint32_t accessor = 0;
+struct KartPoseRead : detail::LocalPlayerKartRead {
     uint32_t body = 0;
     uint32_t physics = 0;
 };
 
-KartPoseRead ReadPlayerKartPose(Mtx34& out) noexcept {
-    KartPoseRead read{};
-    if (!ReadGuestPointer(kKartManagerInstanceAddress, read.manager)) {
-        read.failed_step = "Kart::Manager instance";
-    } else if (!ReadGuestPointer(read.manager + kKartManagerPlayersOffset, read.players)) {
-        read.failed_step = "Kart::Manager players array";
-    } else if (!ReadGuestPointer(read.players + kLocalPlayerIndex * 4u, read.proxy)) {
-        read.failed_step = "player kart object";
-    } else if (!ReadGuestPointer(read.proxy + kKartProxyAccessorOffset, read.accessor)) {
-        read.failed_step = "kart accessor";
-    } else if (!ReadGuestPointer(read.accessor + kKartAccessorBodyOffset, read.body)) {
+KartPoseRead ReadPlayerKartPose(const detail::LocalPlayerKartRead& player, Mtx34& out) noexcept {
+    KartPoseRead read{player};
+    if (read.failed_step != nullptr) {
+        return read;
+    }
+    if (!ReadGuestPointer(read.accessor + kKartAccessorBodyOffset, read.body)) {
         read.failed_step = "kart body";
     } else if (!ReadGuestPointer(read.body + kKartBodyPhysicsOffset, read.physics)) {
         read.failed_step = "kart physics";
@@ -240,6 +217,7 @@ struct FirstPersonState {
     FirstPersonRotation rotation = FirstPersonRotation::YawOnly;
 
     uint32_t camera_address = 0;
+    detail::LocalPlayerKartRead player_kart{};
     // Armed by the draw boundary, consumed by the frame seal.
     bool armed = false;
     uint64_t armed_frame = 0;
@@ -260,16 +238,9 @@ FirstPersonState g_state;
 ModelVisibilityState g_visibility;
 
 // Walks to the player's ModelsVisibility, or zero when the race is not up.
-uint32_t ResolveModelsVisibility() noexcept {
-    uint32_t manager = 0;
-    uint32_t players = 0;
-    uint32_t proxy = 0;
-    uint32_t accessor = 0;
+uint32_t ResolveModelsVisibility(uint32_t accessor) noexcept {
     uint32_t visibility = 0;
-    if (!ReadGuestPointer(kKartManagerInstanceAddress, manager) ||
-        !ReadGuestPointer(manager + kKartManagerPlayersOffset, players) ||
-        !ReadGuestPointer(players + kLocalPlayerIndex * 4u, proxy) ||
-        !ReadGuestPointer(proxy + kKartProxyAccessorOffset, accessor) ||
+    if (accessor == 0 ||
         !ReadGuestPointer(accessor + kKartAccessorModelsVisibilityOffset, visibility)) {
         return 0;
     }
@@ -362,7 +333,7 @@ void ApplyModelVisibilityLocked() noexcept {
         RestoreModelVisibilityLocked();
         return;
     }
-    const uint32_t visibility = ResolveModelsVisibility();
+    const uint32_t visibility = ResolveModelsVisibility(g_state.player_kart.accessor);
     if (visibility == 0 ||
         !Memory::Contains(visibility + kModelsVisibilityDrawOffset, 1)) {
         return;
@@ -442,6 +413,7 @@ void LogAnchorLocked(uint64_t frame, const Mtx34& anchor, const Mtx34& view_from
     // little below the chase camera, and well in front of it.
     RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] first-person anchor: frame=" << frame << ", camera=0x"
                            << std::hex << g_state.camera_address << std::dec
+                           << ", local racer=" << kart.player_index
                            << ", head from camera (right, up, forward)=(" << -anchor[3] << ", "
                            << -anchor[7] << ", " << anchor[11] << ") units" << std::endl;
     RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] first-person view: rows=(" << view_from_world[0] << ", "
@@ -541,6 +513,7 @@ void MkwVRFirstPersonReset() noexcept {
     g_state.armed = false;
     g_state.armed_view_valid = false;
     g_state.camera_address = 0;
+    g_state.player_kart = {};
     g_state.anchor = {};
     g_state.hold_frames = 0;
     g_state.ever_valid_this_race = false;
@@ -558,6 +531,15 @@ void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_add
         RestoreModelVisibilityLocked();
         return;
     }
+    const auto player = detail::ReadLocalPlayerKart<Memory>();
+    if (player.failed_step != nullptr || player.accessor != g_state.player_kart.accessor) {
+        // Do not carry a held anchor or hidden models across an ownership
+        // change, including entering spectator mode or an online roster reset.
+        RestoreModelVisibilityLocked();
+        g_state.anchor = {};
+        g_state.hold_frames = 0;
+    }
+    g_state.player_kart = player;
     g_state.armed = true;
     g_state.armed_frame = guest_frame_index;
     g_state.armed_view_valid = ReadSceneViewMatrix(g_state.armed_view);
@@ -591,7 +573,8 @@ void MkwVRFirstPersonCommit() noexcept {
         !(g_state.camera_address != 0 &&
           ReadRaceCameraViewMatrix(TryGetCpuContext(), g_state.camera_address, view_from_world))) {
         failed_step = "scene view matrix";
-    } else if (kart = ReadPlayerKartPose(kart_from_local); kart.failed_step != nullptr) {
+    } else if (kart = ReadPlayerKartPose(g_state.player_kart, kart_from_local);
+               kart.failed_step != nullptr) {
         failed_step = kart.failed_step;
     } else if (!ComputeFirstPersonAnchor(view_from_world, kart_from_local,
                                          g_state.offsets.right * g_state.units_per_meter,
@@ -621,7 +604,9 @@ void MkwVRFirstPersonCommit() noexcept {
         RT_LOG(RT_TAG_RUNTIME)
             << "[mkw-vr] first-person camera is enabled but could not resolve the "
             << failed_step << "; staying on the game's own camera (camera=0x" << std::hex
-            << g_state.camera_address << ", manager=0x" << kart.manager << ", players=0x"
+            << g_state.camera_address << ", race data=0x" << kart.race_data
+            << ", local racer=" << std::dec << kart.player_index << std::hex
+            << ", manager=0x" << kart.manager << ", players=0x"
             << kart.players << ", kart=0x" << kart.proxy << ", accessor=0x" << kart.accessor
             << ", body=0x" << kart.body << ", physics=0x" << kart.physics << std::dec << ")"
             << std::endl;

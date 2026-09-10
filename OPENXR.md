@@ -89,9 +89,13 @@ four are live and are also exposed in the F10 settings bar.
 
 By default the headset sits where Mario Kart's own chase camera sits, and `world_units_per_meter`
 of 500 presents the race as a small diorama on a table. Turning on `first_person` moves the camera
-to the Player 1 driver's head instead, and switches the world scale to
+to the local driver's head instead, and switches the world scale to
 `first_person_units_per_meter`, whose default of 30 is what makes the race read life-size from the
 seat. It is a matter of taste rather than a property of the game, so the F10 bar exposes it.
+
+The kart is selected through the game's local-screen-to-racer mapping, including online races
+where your racer is not slot zero. First person requires a locally controlled racer; spectating
+another racer keeps the game's own camera.
 
 The game's own transforms are never modified. Each guest frame the runtime reads the race camera's
 view matrix and the player kart's physics pose and derives one affine transform from the recorded
