@@ -296,8 +296,29 @@ static void recycle_render_passes(std::vector<RenderPass>& passes) noexcept {
   passes.clear();
 }
 
+struct LateStereoUniform {
+  gx::UniformReplayLayout layout;
+  Viewport viewport;
+  Range current;
+  Range previous;
+  std::array<Range, AURORA_STEREO_EYE_COUNT> eyes;
+};
+struct LateStereoData {
+  std::vector<LateStereoUniform> uniforms;
+  std::vector<uint8_t> sources;
+  std::vector<uint8_t> uploadBytes;
+  ClipRect displayRegion{};
+  stereo_replay::HudScreen hudScreen{};
+  uint64_t generation = 0;
+  uint32_t uploadOffset = 0;
+  uint32_t uploadSize = 0;
+};
+// Advanced for every upload, including synchronous mid-frame EFB readbacks.
+static std::atomic_uint64_t g_replayBufferGeneration{0};
+static LateStereoData g_pendingLateStereo;
 struct SealedFrameData {
   std::vector<RenderPass> passes;
+  LateStereoData stereo;
 };
 
 SealedFrame::SealedFrame() : m_data(std::make_unique<SealedFrameData>()) {}
@@ -1274,7 +1295,79 @@ static stereo_replay::HudScreen stereo_hud_screen() noexcept {
   };
 }
 
-static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame) noexcept {
+// Shared by the normal seal and headset-deadline replay. Head transforms are
+// composed after scene interpolation, so free look never inherits its delay.
+static void write_stereo_uniform(std::span<uint8_t> uniform, const gx::UniformReplayLayout& layout,
+                                 const StereoReplayEye& eye, const Mat4x4<float>& gameProjection,
+                                 const Viewport& drawViewport, ClipRect displayRegion,
+                                 const stereo_replay::HudScreen& hudScreen) noexcept {
+  if (layout.perspective) {
+    const auto projection = stereo_replay::compose_projection(eye.projection, gameProjection);
+    std::memcpy(uniform.data() + layout.projectionOffset, &projection, sizeof(projection));
+
+    for (uint32_t matrix = 0; matrix < layout.positionMatrixCount; ++matrix) {
+      if ((layout.positionMatrixMask & (1u << matrix)) == 0) {
+        continue;
+      }
+      const size_t offset = layout.positionOffset + matrix * sizeof(Mat3x4<float>);
+      Mat3x4<float> source;
+      std::memcpy(&source, uniform.data() + offset, sizeof(source));
+      const auto transformed = stereo_replay::compose_affine(eye.viewFromScene, source);
+      std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
+    }
+    for (uint32_t matrix = 0; matrix < layout.normalMatrixCount; ++matrix) {
+      const size_t offset = layout.normalOffset + matrix * sizeof(Mat3x4<float>);
+      Mat3x4<float> source;
+      std::memcpy(&source, uniform.data() + offset, sizeof(source));
+      const auto transformed = stereo_replay::compose_normal(eye.viewFromScene, source);
+      std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
+    }
+  } else {
+    // 2D content reaches the eye entirely through its projection: the
+    // draw's own position matrices lay the element out in screen space.
+    // The screen rectangle is built in the VR-neutral view space, so this
+    // path uses viewFromCenter, not viewFromScene: folding the anchor in
+    // would leave the screen behind at the camera the anchor replaced.
+    // First lift viewport-local NDC into displayed-frame NDC; replay will
+    // use a full-eye viewport so sub-pane elements are not transformed by
+    // the recorded viewport a second time.
+    const auto ndcRemap = stereo_replay::make_hud_ndc_remap(
+        drawViewport.left, drawViewport.top, drawViewport.width, drawViewport.height,
+        static_cast<float>(displayRegion.x), static_cast<float>(displayRegion.y),
+        static_cast<float>(displayRegion.width), static_cast<float>(displayRegion.height));
+    const auto projection = stereo_replay::compose_hud_screen_projection(eye.projection, eye.viewFromCenter, hudScreen,
+                                                                         gameProjection, ndcRemap);
+    std::memcpy(uniform.data() + layout.projectionOffset, &projection, sizeof(projection));
+  }
+
+  if (displayRegion.width > 0 && displayRegion.height > 0) {
+    float renderSize[2];
+    float logicalSize[2];
+    std::memcpy(renderSize, uniform.data() + 8, sizeof(renderSize));
+    std::memcpy(logicalSize, uniform.data() + 16, sizeof(logicalSize));
+    if (layout.perspective) {
+      renderSize[0] *= static_cast<float>(eye.target.size.width) / static_cast<float>(displayRegion.width);
+      renderSize[1] *= static_cast<float>(eye.target.size.height) / static_cast<float>(displayRegion.height);
+    } else {
+      // Point/line expansion and GX's pixel-center correction now operate
+      // in the full eye viewport. Recover the complete logical frame size
+      // from this draw's logical-to-render scale.
+      if (renderSize[0] != 0.0f) {
+        logicalSize[0] *= static_cast<float>(displayRegion.width) / renderSize[0];
+      }
+      if (renderSize[1] != 0.0f) {
+        logicalSize[1] *= static_cast<float>(displayRegion.height) / renderSize[1];
+      }
+      renderSize[0] = static_cast<float>(eye.target.size.width);
+      renderSize[1] = static_cast<float>(eye.target.size.height);
+      std::memcpy(uniform.data() + 16, logicalSize, sizeof(logicalSize));
+    }
+    std::memcpy(uniform.data() + 8, renderSize, sizeof(renderSize));
+  }
+}
+
+static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
+                                           LateStereoData* history = nullptr) noexcept {
   const StereoDisplaySource displaySource = stereo_display_source(g_renderPasses);
   const ClipRect displayRegion = displaySource.region;
   // This is the producer-side preparation path; eye replay can query the pure
@@ -1345,6 +1438,14 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
     return false;
   }
 
+  if (history != nullptr) {
+    history->uniforms.reserve(replayPerspectiveDrawCount + replayHudScreenDrawCount);
+    history->sources.reserve(requiredBytes);
+    history->displayRegion = displayRegion;
+    history->hudScreen = hudScreen;
+    history->uploadOffset =
+        static_cast<uint32_t>(AURORA_ALIGN(g_uniforms.size(), g_cachedLimits.minUniformBufferOffsetAlignment));
+  }
   Viewport drawViewport{
       .left = static_cast<float>(displayRegion.x),
       .top = static_cast<float>(displayRegion.y),
@@ -1353,6 +1454,10 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
       .znear = 0.0f,
       .zfar = 1.0f,
   };
+  // D3D12 upload heaps can be write-combined. Read each source once, and do
+  // all read/modify/write operations in cached CPU memory before uploading.
+  std::array<uint8_t, gx::MaxUniformSize> sourceUniform;
+  std::array<uint8_t, gx::MaxUniformSize> eyeUniform;
   for (auto& pass : g_renderPasses) {
     if (!pass.efbTarget) {
       continue;
@@ -1368,9 +1473,9 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
       }
       auto& draw = command.data.draw.gx;
       const auto& layout = draw.uniformReplayLayout;
+      std::memcpy(sourceUniform.data(), g_uniforms.data() + draw.uniformRange.offset, draw.uniformRange.size);
       Mat4x4<float> gameProjection;
-      std::memcpy(&gameProjection, g_uniforms.data() + draw.uniformRange.offset + layout.projectionOffset,
-                  sizeof(gameProjection));
+      std::memcpy(&gameProjection, sourceUniform.data() + layout.projectionOffset, sizeof(gameProjection));
       // Only a genuinely affine projection carries its NDC position in its clip
       // position, which is what the virtual screen reprojection consumes. GX
       // tracks the projection type separately from the matrix, so a 2D draw
@@ -1379,76 +1484,40 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame)
       if (!layout.perspective && !stereo_replay::is_orthographic_projection(gameProjection)) {
         continue;
       }
+      LateStereoUniform* saved = nullptr;
+      if (history != nullptr) {
+        saved = &history->uniforms.emplace_back();
+        saved->layout = layout;
+        saved->viewport = drawViewport;
+        const auto save = [&](const uint8_t* source, uint32_t size) -> Range {
+          if (size == 0)
+            return {};
+          const Range copy{static_cast<uint32_t>(history->sources.size()), size};
+          history->sources.insert(history->sources.end(), source, source + size);
+          return copy;
+        };
+        saved->current = save(sourceUniform.data(), draw.uniformRange.size);
+        saved->previous = save(g_uniforms.data() + draw.previousUniformRange.offset, draw.previousUniformRange.size);
+      }
       for (uint32_t eyeIndex = 0; eyeIndex < AURORA_STEREO_EYE_COUNT; ++eyeIndex) {
-        auto [uniform, range] = copy_uniform(draw.uniformRange);
+        auto [uniform, range] = map_uniform(draw.uniformRange.size);
         draw.stereoUniformRanges[eyeIndex] = range;
+        if (saved != nullptr) {
+          // The late replay uploads these ranges at the actual display time.
+          // Preparing another eye pair here would immediately be overwritten.
+          saved->eyes[eyeIndex] = range;
+          continue;
+        }
         const auto& eye = stereoFrame.eyes[eyeIndex];
-
-        if (layout.perspective) {
-          const auto projection = stereo_replay::compose_projection(eye.projection, gameProjection);
-          std::memcpy(uniform.data() + layout.projectionOffset, &projection, sizeof(projection));
-
-          for (uint32_t matrix = 0; matrix < layout.positionMatrixCount; ++matrix) {
-            if ((layout.positionMatrixMask & (1u << matrix)) == 0) {
-              continue;
-            }
-            const size_t offset = layout.positionOffset + matrix * sizeof(Mat3x4<float>);
-            Mat3x4<float> source;
-            std::memcpy(&source, uniform.data() + offset, sizeof(source));
-            const auto transformed = stereo_replay::compose_affine(eye.viewFromScene, source);
-            std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
-          }
-          for (uint32_t matrix = 0; matrix < layout.normalMatrixCount; ++matrix) {
-            const size_t offset = layout.normalOffset + matrix * sizeof(Mat3x4<float>);
-            Mat3x4<float> source;
-            std::memcpy(&source, uniform.data() + offset, sizeof(source));
-            const auto transformed = stereo_replay::compose_normal(eye.viewFromScene, source);
-            std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
-          }
-        } else {
-          // 2D content reaches the eye entirely through its projection: the
-          // draw's own position matrices lay the element out in screen space.
-          // The screen rectangle is built in the VR-neutral view space, so this
-          // path uses viewFromCenter, not viewFromScene: folding the anchor in
-          // would leave the screen behind at the camera the anchor replaced.
-          // First lift viewport-local NDC into displayed-frame NDC; replay will
-          // use a full-eye viewport so sub-pane elements are not transformed by
-          // the recorded viewport a second time.
-          const auto ndcRemap = stereo_replay::make_hud_ndc_remap(
-              drawViewport.left, drawViewport.top, drawViewport.width, drawViewport.height,
-              static_cast<float>(displayRegion.x), static_cast<float>(displayRegion.y),
-              static_cast<float>(displayRegion.width), static_cast<float>(displayRegion.height));
-          const auto projection = stereo_replay::compose_hud_screen_projection(
-              eye.projection, eye.viewFromCenter, hudScreen, gameProjection, ndcRemap);
-          std::memcpy(uniform.data() + layout.projectionOffset, &projection, sizeof(projection));
-        }
-
-        if (displayRegion.width > 0 && displayRegion.height > 0) {
-          float renderSize[2];
-          float logicalSize[2];
-          std::memcpy(renderSize, uniform.data() + 8, sizeof(renderSize));
-          std::memcpy(logicalSize, uniform.data() + 16, sizeof(logicalSize));
-          if (layout.perspective) {
-            renderSize[0] *= static_cast<float>(eye.target.size.width) / static_cast<float>(displayRegion.width);
-            renderSize[1] *= static_cast<float>(eye.target.size.height) / static_cast<float>(displayRegion.height);
-          } else {
-            // Point/line expansion and GX's pixel-center correction now operate
-            // in the full eye viewport. Recover the complete logical frame size
-            // from this draw's logical-to-render scale.
-            if (renderSize[0] != 0.0f) {
-              logicalSize[0] *= static_cast<float>(displayRegion.width) / renderSize[0];
-            }
-            if (renderSize[1] != 0.0f) {
-              logicalSize[1] *= static_cast<float>(displayRegion.height) / renderSize[1];
-            }
-            renderSize[0] = static_cast<float>(eye.target.size.width);
-            renderSize[1] = static_cast<float>(eye.target.size.height);
-            std::memcpy(uniform.data() + 16, logicalSize, sizeof(logicalSize));
-          }
-          std::memcpy(uniform.data() + 8, renderSize, sizeof(renderSize));
-        }
+        std::memcpy(eyeUniform.data(), sourceUniform.data(), range.size);
+        write_stereo_uniform({eyeUniform.data(), range.size}, layout, eye, gameProjection, drawViewport, displayRegion,
+                             hudScreen);
+        std::memcpy(uniform.data(), eyeUniform.data(), range.size);
       }
     }
+  }
+  if (history != nullptr) {
+    history->uploadSize = static_cast<uint32_t>(g_uniforms.size()) - history->uploadOffset;
   }
   return true;
 }
@@ -1464,7 +1533,19 @@ static bool end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame,
     // interpolation tasks pointing into it would dangle. Tie the clear to the rotation itself.
     gx::drop_pending_frame_interpolation_uniforms();
   }
-  const bool stereoPrepared = stereoFrame == nullptr || prepare_stereo_replay_uniforms(*stereoFrame);
+  g_pendingLateStereo = {};
+  ++g_replayBufferGeneration;
+  const bool captureStereo =
+      advanceFrame && gx::stereo_frame_interpolation_active() && gx::frame_interpolation_replay_safe();
+  const StereoReplayFrame placeholder{};
+  const bool stereoPrepared = (stereoFrame == nullptr && !captureStereo) ||
+                              prepare_stereo_replay_uniforms(stereoFrame != nullptr ? *stereoFrame : placeholder,
+                                                             captureStereo ? &g_pendingLateStereo : nullptr);
+  if (captureStereo && stereoPrepared) {
+    g_pendingLateStereo.generation = g_replayBufferGeneration.load(std::memory_order_acquire);
+  } else {
+    g_pendingLateStereo = {};
+  }
   g_uniforms.append_zeroes(gx::MaxUniformSize); // Pad the end of the buffer
   uint64_t bufferOffset = 0;
   const auto writeBuffer = [&](ByteBuffer& buf, wgpu::Buffer& out, uint64_t size, std::string_view label) {
@@ -1735,6 +1816,7 @@ void seal_frame(SealedFrame& out) noexcept {
   // The encode that could still have been holding these has completed: the
   // producer joins the worker's DONE phase before it seals another frame.
   g_retiredBindGroups.clear();
+  out.data().stereo = std::move(g_pendingLateStereo);
   auto& passes = out.data().passes;
   // The previous cycle already recycled these, so this normally just hands the empty vector, its
   // capacity included, back to the producer.
@@ -1750,6 +1832,80 @@ void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedF
                   .finalize = finalize,
                   .encodeTextureBakes = interpolatedFrame < 0,
               });
+}
+
+bool has_late_stereo_replay(const SealedFrame& frame) noexcept {
+  const auto& data = frame.data().stereo;
+  return data.generation != 0 && data.generation == g_replayBufferGeneration.load(std::memory_order_acquire) &&
+         !data.uniforms.empty();
+}
+
+bool prepare_late_stereo_replay(SealedFrame& frame, wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame,
+                                float weight) {
+  if (!has_late_stereo_replay(frame))
+    return false;
+  auto& data = frame.data().stereo;
+  data.uploadBytes.resize(data.uploadSize);
+  auto* bytes = data.uploadBytes.data();
+  weight = std::clamp(weight, 0.0f, 1.0f);
+  for (const auto& saved : data.uniforms) {
+    // Interpolate once; both eyes share exactly the same scene sample.
+    std::span<uint8_t> uniform{bytes + saved.eyes[0].offset - data.uploadOffset, saved.current.size};
+    std::memcpy(uniform.data(), data.sources.data() + saved.current.offset, uniform.size());
+    const auto& layout = saved.layout;
+    if (layout.perspective && saved.previous.size == saved.current.size && weight < 1.0f) {
+      const auto* previous = data.sources.data() + saved.previous.offset;
+      const auto interpolateMatrices = [&](uint32_t offset, uint32_t count, uint32_t mask) {
+        for (uint32_t matrix = 0; matrix < count; ++matrix) {
+          if ((mask & (1u << matrix)) == 0)
+            continue;
+          const size_t at = offset + matrix * sizeof(Mat3x4<float>);
+          Mat3x4<float> before, current, result;
+          std::memcpy(&before, previous + at, sizeof(before));
+          std::memcpy(&current, uniform.data() + at, sizeof(current));
+          const bool valid = layout.indexedMatrices ? gx::interpolate_indexed_transform(before, current, weight, result)
+                                                    : gx::interpolate_transform(before, current, weight, result);
+          if (valid)
+            std::memcpy(uniform.data() + at, &result, sizeof(result));
+        }
+      };
+      interpolateMatrices(layout.positionOffset, layout.positionMatrixCount, layout.positionMatrixMask);
+      interpolateMatrices(layout.normalOffset, layout.normalMatrixCount, layout.positionMatrixMask);
+      // Interpolate the game depth mapping before applying the HMD frustum.
+      for (size_t component = 0; component < 16; ++component) {
+        const size_t at = layout.projectionOffset + component * sizeof(float);
+        float before, current;
+        std::memcpy(&before, previous + at, sizeof(float));
+        std::memcpy(&current, uniform.data() + at, sizeof(float));
+        const float value = before + (current - before) * weight;
+        std::memcpy(uniform.data() + at, &value, sizeof(float));
+      }
+    }
+    Mat4x4<float> projection;
+    std::memcpy(&projection, uniform.data() + layout.projectionOffset, sizeof(projection));
+    for (uint32_t eye = 1; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+      std::memcpy(bytes + saved.eyes[eye].offset - data.uploadOffset, uniform.data(), uniform.size());
+    }
+    for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+      write_stereo_uniform({bytes + saved.eyes[eye].offset - data.uploadOffset, saved.current.size}, layout,
+                           stereoFrame.eyes[eye], projection, saved.viewport, data.displayRegion, data.hudScreen);
+    }
+  }
+  // Never interpolate in mapped upload memory: write-combined pages make CPU
+  // reads expensive even for values that were just written there.
+  const wgpu::BufferDescriptor descriptor{
+      .label = "Headset interpolation uniforms",
+      .usage = wgpu::BufferUsage::CopySrc,
+      .size = data.uploadSize,
+      .mappedAtCreation = true,
+  };
+  auto upload = g_device.CreateBuffer(&descriptor);
+  std::memcpy(upload.GetMappedRange(), bytes, data.uploadSize);
+  upload.Unmap();
+  // Command-buffer ordering keeps these writes after the preceding eye pair,
+  // without mutating any producer staging memory or desktop uniforms.
+  cmd.CopyBufferToBuffer(upload, 0, g_uniformBuffer, data.uploadOffset, data.uploadSize);
+  return true;
 }
 
 void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame,

@@ -2313,6 +2313,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
       .uniformRange = uniformRanges.current,
       .interpolatedUniformRanges = uniformRanges.interpolated,
       .stereoUniformRanges = {},
+      .previousUniformRange = uniformRanges.previous,
       .uniformReplayLayout = uniformRanges.replayLayout,
       .vtxCount = vtxCount,
       .indexCount = numIndices,

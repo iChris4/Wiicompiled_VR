@@ -1,6 +1,14 @@
 include(FetchContent)
 include(GoogleTest)
 
+option(AURORA_GPU_SMOKE_TESTS "Build opt-in tests requiring a desktop GPU" OFF)
+if (AURORA_GPU_SMOKE_TESTS AND AURORA_ENABLE_GX AND WIN32)
+  add_executable(stereo_frame_worker_smoke stereo_frame_worker_smoke.cpp)
+  target_include_directories(stereo_frame_worker_smoke PRIVATE ../lib)
+  target_link_libraries(stereo_frame_worker_smoke PRIVATE aurora::core aurora::gx aurora::main aurora::vi
+                        dawn::dawncpp_headers)
+endif ()
+
 if (NOT TARGET gtest)
   FetchContent_Declare(googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz
@@ -18,6 +26,7 @@ if (AURORA_ENABLE_GX)
     gx_fifo_test.cpp
     gx_test_stubs.cpp
     stereo_replay_test.cpp
+    stereo_interpolation_test.cpp
     stereo_mirror_test.cpp
     texture_bind_group_cache_key_test.cpp
     ../lib/gfx/efb_ram_encoder.cpp

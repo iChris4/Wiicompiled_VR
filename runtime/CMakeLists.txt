@@ -333,6 +333,11 @@ set_target_properties(mkw_platform PROPERTIES UNITY_BUILD OFF)
 # Keep these independent from Aurora's BUILD_TESTING option: they validate the
 # project's host-platform contracts, not Aurora's third-party test suite.
 enable_testing()
+add_executable(mkw_frame_interpolation_pacing_tests tests/frame_interpolation_pacing_tests.cpp)
+target_include_directories(mkw_frame_interpolation_pacing_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
+target_link_libraries(mkw_frame_interpolation_pacing_tests PRIVATE mkw::toml11)
+target_compile_features(mkw_frame_interpolation_pacing_tests PRIVATE cxx_std_20)
+add_test(NAME mkw_frame_interpolation_pacing_tests COMMAND mkw_frame_interpolation_pacing_tests)
 add_executable(mkw_platform_paths_tests "${CMAKE_CURRENT_LIST_DIR}/tests/platform_paths_tests.cpp")
 target_link_libraries(mkw_platform_paths_tests PRIVATE mkw_platform)
 target_compile_features(mkw_platform_paths_tests PRIVATE cxx_std_17)

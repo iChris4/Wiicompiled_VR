@@ -39,13 +39,19 @@ namespace detail {
 // Defined in frame_interpolation.cpp, exposed so the early-outs below stay inline: the shipped
 // build compiles shards without LTO, so a cross-TU call would land on every draw in the frame.
 extern std::atomic_uint32_t g_frameInterpolationFps;
+extern std::atomic_bool g_stereoFrameInterpolation;
 } // namespace detail
 
 // 0 when interpolation is disabled; otherwise the configured target (120/180/240).
 inline uint32_t frame_interpolation_fps() noexcept {
   return detail::g_frameInterpolationFps.load(std::memory_order_acquire);
 }
-inline bool frame_interpolation_active() noexcept { return frame_interpolation_fps() != 0; }
+inline bool stereo_frame_interpolation_active() noexcept {
+  return detail::g_stereoFrameInterpolation.load(std::memory_order_acquire);
+}
+inline bool frame_interpolation_active() noexcept {
+  return frame_interpolation_fps() != 0 || stereo_frame_interpolation_active();
+}
 
 void set_frame_interpolation_fps(uint32_t targetFps) noexcept;
 
@@ -67,9 +73,11 @@ bool frame_interpolation_replay_safe() noexcept;
 
 // Records one perspective draw and maps its intermediate uniform copies, returning the mapped
 // range per slot (empty when the draw has no counterpart). Called by build_uniform.
-std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(
-    const FrameInterpolationDrawIdentity& identity, const Mat4x4<float>& projection,
-    uint16_t usedPnMtxMask, const InterpolatedUniformLayout& uniformLayout) noexcept;
+std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(const FrameInterpolationDrawIdentity& identity,
+                                                                        const Mat4x4<float>& projection,
+                                                                        uint16_t usedPnMtxMask,
+                                                                        const InterpolatedUniformLayout& uniformLayout,
+                                                                        gfx::Range* previousUniform = nullptr) noexcept;
 
 // Folds a merged draw back into the snapshot of the draw it joined. aurora renders merged
 // primitives through the first one's uniform block, so without this the merged-in bones tear.

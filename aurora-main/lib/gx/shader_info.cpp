@@ -767,10 +767,11 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
       .positionMatrixCount = layout.postexCount,
       .normalMatrixCount = layout.nrmCount,
       .perspective = perspective,
+      .indexedMatrices = info.indexAttr.test(GX_VA_PNMTXIDX),
       .nativeEfbEffect = !perspective && samplesRecentEfbCopy && (samplesReducedEfbCopy || blends),
   };
 
-  if (!perspective || frame_interpolation_fps() == 0) {
+  if (!perspective || !frame_interpolation_active()) {
     g_gxState.stateDirty = false;
     return {
         .current = range,
@@ -779,6 +780,7 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
     };
   }
 
+  gfx::Range previousUniform{};
   const auto interpolatedRanges = record_interpolation_draw(
       drawIdentity, effectiveProj, usedPnMtxMask,
       InterpolatedUniformLayout{
@@ -790,11 +792,13 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
           // A compacted position region holds the current matrix at slot 0.
           .currentMatrix = layout.absolutePosRegion ? std::min<size_t>(g_gxState.currentPnMtx, MaxPnMtx - 1) : 0,
           .indexedMatrices = info.indexAttr.test(GX_VA_PNMTXIDX),
-      });
+      },
+      &previousUniform);
   g_gxState.stateDirty = false;
   return {
       .current = range,
       .interpolated = interpolatedRanges,
+      .previous = previousUniform,
       .replayLayout = replayLayout,
   };
 }

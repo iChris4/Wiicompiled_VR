@@ -200,6 +200,48 @@ static u32 read_be32_at(const std::vector<u8>& bytes, size_t offset) {
          (static_cast<u32>(bytes[offset + 2]) << 8) | static_cast<u32>(bytes[offset + 3]);
 }
 
+TEST_F(GXFifoTest, VrKeepsMatchedEndpointsWithDesktopInterpolationOff) {
+  struct Reset {
+    ~Reset() {
+      aurora::gx::detail::g_stereoFrameInterpolation.store(false);
+      aurora::gx::set_frame_interpolation_fps(0);
+      aurora::gx::begin_frame_interpolation();
+    }
+  } reset;
+  aurora::gx::set_frame_interpolation_fps(0);
+  aurora::gx::detail::g_stereoFrameInterpolation.store(true);
+  const auto info = aurora::gx::build_shader_info({});
+  gxState().currentPnMtx = 0;
+  gxState().pnMtx[0].pos = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, -50}};
+  gxState().pnMtx[0].nrm = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}};
+  const auto build = [&](float x, aurora::HashType identity, bool split = false) {
+    aurora::gx::begin_frame_interpolation();
+    aurora::gfx::testing::reset_uniform_allocations();
+    gxState().pnMtx[0].pos.m0[3] = x;
+    if (split)
+      aurora::gx::mark_frame_interpolation_replay_unsafe();
+    const auto result = aurora::gx::build_uniform(info, 0, {}, {identity, identity, 7}, true);
+    aurora::gx::finalize_frame_interpolation();
+    return result;
+  };
+  EXPECT_EQ(build(10, 100).previous.size, 0u); // Warm-up.
+  auto uniforms = build(20, 100);
+  ASSERT_NE(uniforms.previous.size, 0u);
+  const auto readX = [&](aurora::gfx::Range range) {
+    const auto& bytes = aurora::gfx::testing::uniform_allocation(range.offset);
+    float x;
+    std::memcpy(&x, bytes.data() + uniforms.replayLayout.positionOffset + 3 * sizeof(float), sizeof(x));
+    return x;
+  };
+  EXPECT_FLOAT_EQ(readX(uniforms.previous), 10);
+  EXPECT_FLOAT_EQ(readX(uniforms.current), 20);
+  EXPECT_EQ(aurora::gx::interpolated_frame_count(), 0u); // Desktop remains off.
+  EXPECT_TRUE(std::all_of(uniforms.interpolated.begin(), uniforms.interpolated.end(),
+                          [](auto range) { return range.size == 0; }));
+  EXPECT_EQ(build(30, 200).previous.size, 0u);       // Unmatched draws use current transforms.
+  EXPECT_EQ(build(40, 200, true).previous.size, 0u); // Readback split invalidates replay.
+}
+
 TEST(FrameInterpolationContract, RequiresStablePerspectiveDrawSequence) {
   const auto resetInterpolation = [] {
     aurora::gx::set_frame_interpolation_fps(0);
@@ -473,8 +515,13 @@ TEST(FrameInterpolationContract, IndexedPaletteHistoryKeepsAbsoluteVertexSlots) 
   std::array<uint8_t, uniformSize> changedSource{};
   aurora::gx::begin_frame_interpolation();
   const auto changedRanges = recordFrame(changedTopology, 91.0f, 9.0f, changedSource);
-  EXPECT_EQ(changedRanges[0].size, 0u);
   aurora::gx::finalize_frame_interpolation();
+  // Palette borrowing may reserve a range before matching is resolved. The
+  // safety contract is that a changed topology never reuses the old transforms.
+  if (changedRanges[0].size != 0) {
+    const auto& unchanged = aurora::gfx::testing::uniform_allocation(changedRanges[0].offset);
+    EXPECT_EQ(std::memcmp(unchanged.data(), changedSource.data(), uniformSize), 0);
+  }
 
   aurora::gx::set_frame_interpolation_fps(0);
   aurora::gx::begin_frame_interpolation();

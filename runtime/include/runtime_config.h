@@ -20,6 +20,7 @@
 #include <vector>
 #include <toml.hpp>
 #include "platform/host_platform.h"
+#include "vr/frame_interpolation_pacing.h"
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -57,7 +58,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrStopAtDisplayCopy;
     std::optional<bool> vrSkipCopyClears;
     std::optional<std::string> vrMirrorView;
-    std::optional<bool> vrEagerFrameHeartbeat;
+    std::optional<uint32_t> vrFrameInterpolationFps;
     std::optional<bool> vrFirstPerson;
     std::optional<float> vrFirstPersonUnitsPerMeter;
     std::optional<float> vrFirstPersonHeadUpMeters;
@@ -380,8 +381,8 @@ inline void EnsureConfigFile() {
               "# \"right\" mirror the headset's eyes, and \"none\" blacks the window\n"
               "# out. Changeable live from the F10 menu.\n"
               "mirror_view = \"normal\"\n"
-              "# Repeat at headset cadence (true), or only during stalls (false). Live.\n"
-              "eager_frame_heartbeat = false\n"
+              "# VR interpolation: 0 = Off, 1 = Auto, or 72/90/120 FPS. Live.\n"
+              "frame_interpolation_fps = 0\n"
               "render_scale = 1.0\n"
               "world_units_per_meter = 500.0\n"
               "hud_distance_meters = 2.0\n"
@@ -642,7 +643,12 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         value && IsSupportedVrMirrorView(*value)) {
         config.vrMirrorView = *value;
     }
-    config.vrEagerFrameHeartbeat = FindConfigValue<bool>(document, "vr", "eager_frame_heartbeat");
+    config.vrFrameInterpolationFps = FindConfigValue<uint32_t>(document, "vr", "frame_interpolation_fps");
+    if (!config.vrFrameInterpolationFps) {
+        // Migrate the initial experimental checkbox to Auto.
+        if (const auto legacy = FindConfigValue<bool>(document, "vr", "frame_interpolation"))
+            config.vrFrameInterpolationFps = *legacy ? 1u : 0u;
+    }
     if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
         value && *value >= -1 && *value <= 31) {
         config.vrFirstPersonHiddenModel = static_cast<int32_t>(*value);
@@ -944,9 +950,10 @@ inline bool SetVrMirrorView(std::string value) {
     return WriteSetting("vr", "mirror_view", FormatString(value));
 }
 
-inline bool SetVrEagerFrameHeartbeat(bool value) {
-    Mutable().vrEagerFrameHeartbeat = value;
-    return WriteSetting("vr", "eager_frame_heartbeat", value ? "true" : "false");
+inline bool SetVrFrameInterpolationFps(uint32_t value) {
+    value = mkw::vr::NormalizeFrameInterpolationFps(value);
+    Mutable().vrFrameInterpolationFps = value;
+    return WriteSetting("vr", "frame_interpolation_fps", std::to_string(value));
 }
 
 inline bool SetVrFirstPersonRotation(std::string value) {
@@ -1281,8 +1288,8 @@ inline std::string VrMirrorView(std::string fallback = kVrMirrorViewDefault) {
     return value && IsSupportedVrMirrorView(*value) ? *value : std::move(fallback);
 }
 
-inline bool VrEagerFrameHeartbeat() {
-    return Get().vrEagerFrameHeartbeat.value_or(false);
+inline uint32_t VrFrameInterpolationFps() {
+    return mkw::vr::NormalizeFrameInterpolationFps(Get().vrFrameInterpolationFps.value_or(0));
 }
 
 inline std::string VrFirstPersonRotation(std::string fallback = kVrFirstPersonRotationDefault) {

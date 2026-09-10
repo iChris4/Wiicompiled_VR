@@ -72,6 +72,11 @@ void aurora_get_frame_interpolation_diagnostics(AuroraFrameInterpolationDiagnost
 void aurora_set_frame_interpolation_fps(uint32_t targetFps);
 uint32_t aurora_get_frame_interpolation_fps();
 
+// Independent from desktop interpolation: replay captured race transforms at
+// each headset deadline, leaving guest simulation and VI timing at 60 Hz.
+void aurora_set_stereo_frame_interpolation(bool enabled);
+bool aurora_get_stereo_frame_interpolation();
+
 // Newly encountered GX pipelines compile on the bounded worker queue. Draws whose pipeline is not
 // ready are skipped rather than stalling submission, and pick it up once compilation finishes.
 void aurora_set_skip_unready_pipelines(bool enabled);

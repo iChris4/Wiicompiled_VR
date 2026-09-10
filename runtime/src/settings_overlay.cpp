@@ -117,7 +117,13 @@ float g_vrFirstPersonHeadUp = RuntimeConfigFile::VrFirstPersonHeadUpMeters();
 float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMeters();
 float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters();
 bool g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
-bool g_vrEagerFrameHeartbeat = RuntimeConfigFile::VrEagerFrameHeartbeat();
+constexpr std::array<uint32_t, 5> kVrInterpolationFps{0, 1, 72, 90, 120};
+constexpr std::array<const char*, 5> kVrInterpolationLabels{"Off", "Auto", "72", "90", "120"};
+int g_vrFrameInterpolationMode = [] {
+    const auto value = RuntimeConfigFile::VrFrameInterpolationFps();
+    return static_cast<int>(std::find(kVrInterpolationFps.begin(), kVrInterpolationFps.end(), value) -
+                            kVrInterpolationFps.begin());
+}();
 int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
 // Config spellings and menu labels for the desktop mirror, index-matched to
 // AuroraStereoMirrorView so the combo selection converts to either directly.
@@ -931,15 +937,25 @@ void DrawVrSettings() {
             "same desktop image, so the eye choices only differ from Normal during a race.");
     }
 
-    if (ImGui::Checkbox("Eager Frame Heartbeat", &g_vrEagerFrameHeartbeat)) {
-        mkw::vr::OpenXRSetEagerFrameHeartbeat(g_vrEagerFrameHeartbeat);
-        RuntimeConfigFile::SetVrEagerFrameHeartbeat(g_vrEagerFrameHeartbeat);
+    if (ImGui::Combo("VR frame interpolation (experimental)", &g_vrFrameInterpolationMode,
+                     kVrInterpolationLabels.data(), static_cast<int>(kVrInterpolationLabels.size()))) {
+        const auto target = kVrInterpolationFps[static_cast<size_t>(g_vrFrameInterpolationMode)];
+        mkw::vr::OpenXRSetFrameInterpolationFps(target);
+        RuntimeConfigFile::SetVrFrameInterpolationFps(target);
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "On: repeat the last frame at headset refresh rate while waiting for the game. "
-            "Off (default): follow the game's frame rate, with repeats during stalls. "
-            "Compare both during a race to check headset smoothness. Applies immediately.");
+            "Auto matches the headset refresh rate. 72, 90 and 120 cap the scene rendering rate; "
+            "set the headset's refresh rate in Virtual Desktop or your VR runtime. "
+            "The game stays at 60 Hz. Adds one game frame of scene latency; head tracking stays current. "
+            "Needs GPU headroom and may show interpolation artifacts. Applies immediately.");
+    }
+    const auto xrTiming = mkw::vr::OpenXRGetFrameTiming();
+    if (mkw::vr::OpenXRIsRunning()) {
+        ImGui::TextDisabled("Headset: %.1f Hz | New VR frames: %.1f FPS", xrTiming.headset_hz, xrTiming.rendered_fps);
+        if (g_vrFrameInterpolationMode != 0 && !mkw::vr::OpenXRFrameInterpolationAvailable()) {
+            ImGui::TextWrapped("The OpenXR runtime does not provide the clock conversion needed for interpolation.");
+        }
     }
 
     // Like the mirror above and unlike the enable toggle, these two apply to the

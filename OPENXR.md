@@ -29,7 +29,7 @@ Standalone launches remain opt-in. `Config.toml` is created with the following d
 enabled = false
 required = false
 mirror_view = "normal"
-eager_frame_heartbeat = false
+frame_interpolation_fps = 0
 render_scale = 1.0
 world_units_per_meter = 500.0
 hud_distance_meters = 2.0
@@ -66,12 +66,27 @@ image is chosen, so the setting can always be changed back.
 Eye mirror modes retain the last eye image when a desktop frame has no new XR packet, so they
 do not alternate with the normal camera. `"none"` also stays black between XR packets.
 
-`eager_frame_heartbeat` is live in **F10 > VR > Eager Frame Heartbeat** and defaults to `false`.
-With it off, the XR thread waits for new game frames and repeats the last valid image during
-stalls, with a 50 ms keep-alive interval. With it on, the thread repeats at headset display
-deadlines while waiting for new rendering, matching the eager behavior. Compare both settings
-during the same race to check smoothness with your OpenXR runtime. Both retain the protection
-against black frames during pauses and window dragging.
+**F10 > VR > VR frame interpolation (experimental)** offers **Off, Auto, 72, 90, 120** and
+applies immediately. `frame_interpolation_fps` stores `0` for Off (the default), `1` for Auto,
+or the selected rate. The earlier `frame_interpolation = true` checkbox migrates to Auto.
+Auto renders at the headset's display deadlines; the numbered choices cap the rate of new
+stereo frames. They do not change the headset's physical refresh setting. For VDXR with Virtual
+Desktop set to 90 Hz, select Auto or 90. The menu shows both the detected headset rate and the
+rate of newly rendered VR frames, excluding repeated images. Menus and other virtual-screen
+scenes continue at the game's rate; assess interpolation during an immersive race.
+
+VR interpolation is independent of **Graphics > Race frame interpolation**. The simulation,
+physics, audio and VI remain at 60 Hz. Scene motion is delayed by one game frame (about 16.7 ms)
+to interpolate between known transforms; each rendered eye pair uses a fresh predicted head
+pose. This needs enough GPU headroom to render both eyes at the target rate, and carries the
+desktop interpolator's experimental artifacts, especially for unmatched or changing geometry.
+
+Refresh detection uses `XR_FB_display_refresh_rate` when available and the OpenXR predicted
+display period otherwise. Interpolation requires `XR_KHR_win32_convert_performance_counter_time`
+to relate those display deadlines to the game's clock; the menu reports if it is unavailable.
+The old Eager Frame Heartbeat option has been removed and existing `eager_frame_heartbeat`
+settings are ignored. Completed rendering wakes the XR thread immediately. A 50 ms keep-alive
+still protects pauses and window dragging without eager repeats during rendering.
 
 `render_scale` scales the per-eye size recommended by the OpenXR runtime.
 `world_units_per_meter` controls the scale of headset translation in the game world.
@@ -158,8 +173,16 @@ short-lived immutable stereo packet. Each sealed GX frame and immersive packet c
 policy-generation tag; a mismatch is rendered in mono and the acquired XR frame is canceled, so an
 asynchronous menu/race transition cannot replay race transforms over unsafe content.
 
+With VR interpolation enabled, Aurora retains each sealed race's command stream and matched
+previous/current transform uniforms. New OpenXR packets wake the frame worker between game
+frames. It interpolates at the requested display time, then applies that packet's head pose and
+the scene anchor to both eyes. Native offscreen effects and the 2D HUD retain their game-frame
+updates. A mid-frame EFB readback invalidates retained GPU data; a policy-tag mismatch rejects
+the replay. Missing matches use current transforms, and stalls clamp at the last known pose
+instead of extrapolating. The ordinary desktop interpolation settings remain independent.
+
 The D3D12 pacing thread retains the last completed projection or virtual-screen layer and
-resubmits it during stalls (or missed display deadlines with eager heartbeat enabled), including while moving the desktop window,
+resubmits it during stalls, including while moving the desktop window,
 pausing, or minimizing. The scene freezes until rendering resumes; the compositor can still
 reproject the retained image for head movement. Repeated layers keep their original render poses
 and field of view, paired with the new compositor display time. Two pairs of eye swapchains keep
@@ -214,6 +237,31 @@ ended up; its original viewport is folded into the projection instead.
 The Vulkan path intentionally does not create an unrelated Vulkan device or use a CPU readback as
 a workaround. It accepts a future explicit Dawn native context, including external queue locking,
 so it can be enabled once Aurora exposes those handles safely.
+
+### Interpolation validation
+
+The GX tests cover retained transform endpoints with desktop interpolation off and continuous
+sampling at 72/90/120 Hz. `mkw_frame_interpolation_pacing_tests` covers fixed-rate scheduling,
+live changes, stalls and configuration migration; `mkw_openxr_replay_tests` exercises swapchain
+ownership and retained-layer submission without a headset.
+
+For a Windows GPU check, configure Aurora with its tests enabled and
+`AURORA_GPU_SMOKE_TESTS=ON`, then build/run `stereo_frame_worker_smoke`. This feeds the actual
+renderer a 60 Hz GX stream and an independent 90 Hz stereo provider. The development check
+produced 359 new stereo submissions in 4 seconds (89.7 FPS). This verifies submission cadence,
+not full-race performance or visual quality on a headset. Pass a draw count, for example
+`stereo_frame_worker_smoke 2000`, to stress uniform preparation and renderer/producer overlap;
+`stereo_frame_worker_smoke 2000 0` checks native stereo with interpolation Off.
+The test checks that the producer stays above 55 FPS as well as checking headset submissions;
+replaying an old scene more often must not hide a slowed simulation. Validate actual races in VDXR at 90 Hz with
+Auto/90 selected, including race entry/exit, first person, recentering and pauses.
+
+Stereo uniform calculations use cached CPU memory, followed by a single write into the upload
+buffer. Reading or modifying matrices directly in D3D12 upload memory can be extremely slow,
+especially with many character draws; see Microsoft's [Map guidance](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12resource-map).
+Retained interpolation reserves eye ranges at seal time and fills them once at the headset sample
+time. VR interpolation also releases the producer after sealing so eye encoding can overlap the
+next game frame, as it does with desktop interpolation.
 
 ## Current limitations
 

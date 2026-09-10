@@ -127,6 +127,9 @@ typedef struct {
   // Appended to preserve the frameToken/eyes prefix used by older providers.
   AuroraStereoFrameMode mode;
   uint64_t contentTag;
+  // Predicted display time converted to std::chrono::steady_clock nanoseconds.
+  // Zero disables temporal interpolation for this packet.
+  uint64_t displayTimeNanos;
 } AuroraStereoFrame;
 
 /**
@@ -135,6 +138,10 @@ typedef struct {
  * be non-blocking and must not call back into Aurora.
  */
 typedef bool (*AuroraStereoFrameProvider)(uint32_t logicalFrame, AuroraStereoFrame* frame, void* userdata);
+
+// Wake retained stereo replay after publishing a packet. The provider remains
+// non-blocking, and all OpenXR calls stay on the application's pacing thread.
+void aurora_notify_stereo_frame();
 
 typedef struct {
   const char* appName;

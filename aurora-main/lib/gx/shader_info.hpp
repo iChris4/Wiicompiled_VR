@@ -13,6 +13,7 @@ struct UniformReplayLayout {
   uint8_t positionMatrixCount = 0;
   uint8_t normalMatrixCount = 0;
   bool perspective = false;
+  bool indexedMatrices = false;
   // A 2D draw compositing the framebuffer back over itself: bloom, blur and the
   // rest of the native post-processing chain. It belongs to the rendered image,
   // not to the game's 2D layer, so it must stay where the game aimed it.
@@ -22,6 +23,7 @@ struct UniformReplayLayout {
 struct UniformRanges {
   gfx::Range current;
   std::array<gfx::Range, MaxInterpolatedFrames> interpolated;
+  gfx::Range previous;
   UniformReplayLayout replayLayout;
 };
 

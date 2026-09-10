@@ -11,6 +11,7 @@
 #include "vr/mkw_vr_first_person.h"
 #include "vr/mkw_vr_policy.h"
 #include "vr/mkw_vr_instrumentation.h"
+#include <aurora/gfx.h>
 
 #include <algorithm>
 #include <array>
@@ -267,11 +268,21 @@ public:
         config.engine_name = "Aurora";
         config.resolution_scale = RuntimeConfigFile::VrRenderScale(1.0f);
         config.required_extensions = {"XR_KHR_D3D12_enable"};
+        config.optional_extensions = {"XR_KHR_win32_convert_performance_counter_time", "XR_FB_display_refresh_rate"};
         if (!runtime_->Initialize(config)) {
             SetError("OpenXR instance initialization failed: " + runtime_->LastError().message);
             ResetPreparedObjects();
             return OpenXRStartupResult::Unavailable;
         }
+        const auto& extensions = runtime_->EnabledExtensions();
+        if (std::find(extensions.begin(), extensions.end(),
+                      "XR_KHR_win32_convert_performance_counter_time") != extensions.end()) {
+            runtime_->LoadFunction("xrConvertTimeToWin32PerformanceCounterKHR", &convert_display_time_);
+        }
+        if (std::find(extensions.begin(), extensions.end(), "XR_FB_display_refresh_rate") != extensions.end()) {
+            runtime_->LoadFunction("xrGetDisplayRefreshRateFB", &get_display_refresh_rate_);
+        }
+        interpolation_available_.store(convert_display_time_ != nullptr, std::memory_order_release);
         if (!backend_->QueryGraphicsRequirements(*runtime_)) {
             SetError(backend_->LastError());
             ResetPreparedObjects();
@@ -304,6 +315,10 @@ public:
         }
 
         stop_.store(false, std::memory_order_release);
+        {
+            std::lock_guard lock(interpolation_mutex_);
+            interpolation_stopping_ = false;
+        }
         teardown_requested_.store(false, std::memory_order_release);
         WithdrawPublishedFrame();
         aurora_set_stereo_frame_provider(&OpenXRIntegration::ProvideStereoFrame, this);
@@ -325,6 +340,12 @@ public:
 
     void Shutdown() noexcept {
         teardown_requested_.store(false, std::memory_order_release);
+        // Stop idle replays before draining; no new worker job may race provider removal.
+        {
+            std::lock_guard lock(interpolation_mutex_);
+            interpolation_stopping_ = true;
+            aurora_set_stereo_frame_interpolation(false);
+        }
         if (pacing_thread_.joinable()) {
             // Registration changes are only safe while no sealed frame is in
             // flight. The caller invokes us before Aurora teardown.
@@ -354,6 +375,11 @@ public:
         backend_.reset();
         runtime_.reset();
         prepared_ = false;
+        convert_display_time_ = nullptr;
+        get_display_refresh_rate_ = nullptr;
+        headset_hz_.store(0, std::memory_order_relaxed);
+        rendered_fps_.store(0, std::memory_order_relaxed);
+        interpolation_available_.store(false, std::memory_order_release);
         ResetTrackingOrigin();
         applied_session_run_serial_ = 0;
         session_was_active_ = false;
@@ -365,8 +391,16 @@ public:
         recenter_requested_.store(true, std::memory_order_release);
     }
 
-    void SetEagerFrameHeartbeat(bool enabled) noexcept {
-        eager_frame_heartbeat_.store(enabled, std::memory_order_relaxed);
+    void SetFrameInterpolationFps(uint32_t target) noexcept {
+        frame_interpolation_fps_.store(NormalizeFrameInterpolationFps(target), std::memory_order_relaxed);
+    }
+
+    OpenXRFrameTiming FrameTiming() const noexcept {
+        return {headset_hz_.load(std::memory_order_relaxed), rendered_fps_.load(std::memory_order_relaxed)};
+    }
+
+    bool FrameInterpolationAvailable() const noexcept {
+        return interpolation_available_.load(std::memory_order_acquire);
     }
 
     void SetLeanBackDegrees(float degrees) noexcept {
@@ -463,6 +497,9 @@ private:
                 break;
             }
             if (!session_active) {
+                SetInterpolationActive(false);
+                interpolation_pacing_.Reset();
+                rendered_fps_.store(0, std::memory_order_relaxed);
                 WaitForStopOrDelay(std::chrono::milliseconds(5));
                 continue;
             }
@@ -495,6 +532,11 @@ private:
             presentation.quad_distance_meters = policy.config.hud_distance_meters;
             presentation.quad_width_meters = policy.config.hud_width_meters;
 
+            // Updating this on the owner thread also confines retained replay to
+            // validated race content. The provider checks policy tags again.
+            const uint32_t interpolation_target = frame_interpolation_fps_.load(std::memory_order_relaxed);
+            SetInterpolationActive(immersive && FrameInterpolationAvailable() && interpolation_target != 0);
+
             OpenXRD3D12Frame frame{};
             const OpenXRD3D12BeginStatus begin = backend_->BeginFrame(presentation, frame);
             if (begin == OpenXRD3D12BeginStatus::SessionNotRunning) {
@@ -511,6 +553,7 @@ private:
                 break;
             }
 
+            UpdateFrameTiming(frame.xr_frame);
             // Both of these read this frame's located head pose and must run
             // before FinishFrame submits a layer built from it.
             ServiceRecenterRequest();
@@ -518,6 +561,15 @@ private:
 
             if (!frame.expects_gpu_submission) {
                 if (!backend_->FinishFrame(frame, false)) {
+                    SetError(backend_->LastError());
+                    fatal = true;
+                }
+                continue;
+            }
+
+            if (aurora_get_stereo_frame_interpolation() &&
+                !interpolation_pacing_.ShouldRender(frame.xr_frame.predicted_display_time, interpolation_target)) {
+                if (!backend_->TryCancelPendingFrame(frame) || !backend_->FinishFrame(frame, false)) {
                     SetError(backend_->LastError());
                     fatal = true;
                 }
@@ -534,6 +586,7 @@ private:
                                     policy.content_tag);
                 published_.store(&published_frame_, std::memory_order_release);
             }
+            aurora_notify_stereo_frame();
 
             OpenXRD3D12SubmissionStatus submission = OpenXRD3D12SubmissionStatus::Timeout;
             bool canceled_before_encode = false;
@@ -541,15 +594,9 @@ private:
                 std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
             while (!stop_.load(std::memory_order_acquire) &&
                    submission == OpenXRD3D12SubmissionStatus::Timeout) {
-                // Eager mode fills missed headset slots. With it off, completion
-                // wakes us immediately at the game's cadence, while a 50 ms
-                // keep-alive still protects pauses and window drags from black.
-                // Read each iteration so the toggle also works during a stall.
-                const auto wait_ms = eager_frame_heartbeat_.load(std::memory_order_relaxed)
-                    ? static_cast<uint32_t>(std::clamp<XrDuration>(
-                          frame.xr_frame.predicted_display_period / 1'000'000 - 4, 0, 12))
-                    : 50u;
-                submission = backend_->WaitForSubmission(frame, wait_ms);
+                // Fresh rendering wakes us immediately. A 50 ms keep-alive
+                // protects stalls without issuing eager repeats during GPU work.
+                submission = backend_->WaitForSubmission(frame, 50);
                 if (submission == OpenXRD3D12SubmissionStatus::Timeout) {
                     // A pause, minimized window, or guest stall may leave no GX
                     // frame to consume this packet. Withdraw it, then cancel the
@@ -592,7 +639,10 @@ private:
             } else if (!submit) {
                 SetError("Aurora's D3D12 stereo copy failed; continuing on the desktop mirror");
                 fatal = true;
-            } else if (immersive && !immersive_submission_logged) {
+            } else {
+                ++timing_submissions_;
+            }
+            if (submit && !fatal && immersive && !immersive_submission_logged) {
                 immersive_submission_logged = true;
                 RT_LOG(RT_TAG_RUNTIME)
                     << "[mkw-vr] first immersive packet consumed and submitted as "
@@ -601,6 +651,7 @@ private:
             }
         }
 
+        SetInterpolationActive(false);
         running_.store(false, std::memory_order_release);
         MkwVRPolicySetSessionActive(false);
         if (!stop_.load(std::memory_order_acquire)) {
@@ -621,6 +672,7 @@ private:
         destination = {};
         destination.frameToken = source.xr_frame.serial;
         destination.contentTag = content_tag;
+        destination.displayTimeNanos = DisplayTimeNanos(source.xr_frame.predicted_display_time);
         destination.mode = immersive ? AURORA_STEREO_FRAME_IMMERSIVE_REPLAY
                                       : AURORA_STEREO_FRAME_VIRTUAL_SCREEN;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
@@ -701,6 +753,42 @@ private:
         virtual_screen_pose_valid_ = false;
     }
 
+    void SetInterpolationActive(bool active) noexcept {
+        std::lock_guard lock(interpolation_mutex_);
+        aurora_set_stereo_frame_interpolation(active && !interpolation_stopping_);
+    }
+
+    void UpdateFrameTiming(const OpenXRFrame& frame) noexcept {
+        float hz = 0;
+        if (get_display_refresh_rate_ == nullptr ||
+            XR_FAILED(get_display_refresh_rate_(runtime_->Session(), &hz)) || !(hz > 0)) {
+            if (frame.predicted_display_period > 0)
+                hz = static_cast<float>(1.0e9 / static_cast<double>(frame.predicted_display_period));
+        }
+        headset_hz_.store(hz, std::memory_order_relaxed);
+        const auto now = std::chrono::steady_clock::now();
+        const float elapsed = std::chrono::duration<float>(now - timing_start_).count();
+        if (elapsed >= 1.0f) {
+            rendered_fps_.store(static_cast<float>(timing_submissions_) / elapsed, std::memory_order_relaxed);
+            timing_start_ = now;
+            timing_submissions_ = 0;
+        }
+    }
+
+    uint64_t DisplayTimeNanos(XrTime display_time) noexcept {
+        if (convert_display_time_ == nullptr) return 0;
+        LARGE_INTEGER display_counter{}, counter{}, frequency{};
+        if (XR_FAILED(convert_display_time_(runtime_->Instance(), display_time, &display_counter)) ||
+            !QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0 ||
+            !QueryPerformanceCounter(&counter)) return 0;
+        const auto now = std::chrono::steady_clock::now();
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        const auto delta = static_cast<int64_t>(
+            (static_cast<double>(display_counter.QuadPart) - static_cast<double>(counter.QuadPart)) *
+            1.0e9 / static_cast<double>(frequency.QuadPart));
+        return now_ns + delta > 0 ? static_cast<uint64_t>(now_ns + delta) : 0;
+    }
+
     void WaitForStopOrDelay(std::chrono::milliseconds delay) {
         std::unique_lock lock(stop_mutex_);
         stop_cv_.wait_for(lock, delay,
@@ -729,7 +817,18 @@ private:
     std::atomic_bool teardown_requested_{false};
     std::atomic_bool recenter_requested_{false};
     std::atomic<float> lean_back_degrees_{RuntimeConfigFile::VrLeanBackDegrees()};
-    std::atomic_bool eager_frame_heartbeat_{RuntimeConfigFile::VrEagerFrameHeartbeat()};
+    std::atomic_uint32_t frame_interpolation_fps_{RuntimeConfigFile::VrFrameInterpolationFps()};
+    std::atomic_bool interpolation_available_{false};
+    std::mutex interpolation_mutex_;
+    bool interpolation_stopping_ = true;
+    FrameInterpolationPacing interpolation_pacing_;
+    std::atomic<float> headset_hz_{0};
+    std::atomic<float> rendered_fps_{0};
+    std::chrono::steady_clock::time_point timing_start_ = std::chrono::steady_clock::now();
+    uint32_t timing_submissions_ = 0;
+    PFN_xrGetDisplayRefreshRateFB get_display_refresh_rate_ = nullptr;
+    using ConvertDisplayTime = XrResult (XRAPI_PTR*)(XrInstance, XrTime, LARGE_INTEGER*);
+    ConvertDisplayTime convert_display_time_ = nullptr;
     std::atomic<PublishedFrame*> published_{nullptr};
     PublishedFrame published_frame_{};
     std::mutex published_mutex_;
@@ -818,11 +917,27 @@ void OpenXRSetLeanBackDegrees(float degrees) noexcept {
 #endif
 }
 
-void OpenXRSetEagerFrameHeartbeat(bool enabled) noexcept {
+void OpenXRSetFrameInterpolationFps(uint32_t target) noexcept {
 #if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
-    OpenXRIntegration::Get().SetEagerFrameHeartbeat(enabled);
+    OpenXRIntegration::Get().SetFrameInterpolationFps(target);
 #else
-    (void)enabled;
+    (void)target;
+#endif
+}
+
+OpenXRFrameTiming OpenXRGetFrameTiming() noexcept {
+#if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
+    return OpenXRIntegration::Get().FrameTiming();
+#else
+    return {};
+#endif
+}
+
+bool OpenXRFrameInterpolationAvailable() noexcept {
+#if defined(MKW_ENABLE_OPENXR) && defined(_WIN32)
+    return OpenXRIntegration::Get().FrameInterpolationAvailable();
+#else
+    return false;
 #endif
 }
 

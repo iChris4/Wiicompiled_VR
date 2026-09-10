@@ -343,6 +343,12 @@ private:
 // called with the renderer GPU mutex held; see SealedFrame.
 void seal_frame(SealedFrame& out) noexcept;
 
+// Retained replay owns CPU transform endpoints and reserved eye-uniform ranges.
+// Call with the renderer mutex held: a mid-frame EFB submission invalidates it.
+bool has_late_stereo_replay(const SealedFrame& frame) noexcept;
+bool prepare_late_stereo_replay(SealedFrame& frame, wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame,
+                                float weight);
+
 // Encode a sealed frame. Never touches the producer-visible recording state,
 // so this may run concurrently with the producer's FIFO drains.
 void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedFrame = -1, bool finalize = true);

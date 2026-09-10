@@ -26,6 +26,7 @@
 namespace aurora::gx {
 namespace detail {
 std::atomic_uint32_t g_frameInterpolationFps{0};
+std::atomic_bool g_stereoFrameInterpolation{false};
 } // namespace detail
 
 namespace {
@@ -790,9 +791,12 @@ void report_producer_paced(bool paced) noexcept {
 
 void begin_frame_interpolation() noexcept {
   const uint32_t targetFps = frame_interpolation_fps();
-  if (targetFps != s_previousInterpolationFps) {
+  static bool previousStereo = false;
+  const bool stereo = stereo_frame_interpolation_active();
+  if (targetFps != s_previousInterpolationFps || stereo != previousStereo) {
     recycle_transform_entries(s_previousFrameTransforms);
     s_previousInterpolationFps = targetFps;
+    previousStereo = stereo;
   }
   // Latch the slot count for the frame starting here; see s_activeInterpolationSamples
   // for why it cannot move again until the seal.
@@ -825,8 +829,11 @@ void begin_frame_interpolation() noexcept {
 void finalize_frame_interpolation() noexcept {
   // A frame reported late seals without inserted slots, so the encode phase renders
   // the native frame only. Its transforms still seed the next frame's matching.
-  if (s_dropInterpolationAtSeal.exchange(false, std::memory_order_acq_rel)) {
+  const bool late = s_dropInterpolationAtSeal.exchange(false, std::memory_order_acq_rel);
+  if (late) {
     s_diagLateSealDrops.fetch_add(1, std::memory_order_relaxed);
+  }
+  if (late && !stereo_frame_interpolation_active()) {
     s_hasInterpolatedFrame.store(false, std::memory_order_release);
     s_pendingUniformInterpolations.clear();
     retire_frame_transforms();
@@ -1078,7 +1085,7 @@ void finalize_frame_interpolation() noexcept {
       [](size_t previousIndex) { return previousIndex != SIZE_MAX; }));
   // Interpolation never pauses on match quality: an unmatched draw just renders its
   // end-frame state, while a ratio gate flapped the whole output cadence instead.
-  const bool eligible = frame_interpolation_fps() != 0;
+  const bool eligible = frame_interpolation_fps() != 0 && !late;
 
   // Overlay observability: the live match ratio, and how often the scene sits in
   // low-match territory where inserted slots mostly duplicate draws.
@@ -1127,7 +1134,7 @@ void finalize_frame_interpolation() noexcept {
     }
   }
 
-  if (eligible) {
+  if (eligible || stereo_frame_interpolation_active()) {
     // Prepare each matched pair once: every sample of a draw shares the same
     // previous/current matrices. A flat vector keeps the sample tasks parallel.
     std::vector<PreparedTransformInterpolation> preparedTransforms(s_currentFrameTransforms.size());
@@ -1445,9 +1452,14 @@ void extend_interpolation_draw(uint16_t usedPnMtxMask) noexcept {
   snapshot.usedMatrixMask |= addedSlots;
 }
 
-std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(
-    const FrameInterpolationDrawIdentity& identity, const Mat4x4<float>& projection,
-    uint16_t usedPnMtxMask, const InterpolatedUniformLayout& uniformLayout) noexcept {
+std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(const FrameInterpolationDrawIdentity& identity,
+                                                                        const Mat4x4<float>& projection,
+                                                                        uint16_t usedPnMtxMask,
+                                                                        const InterpolatedUniformLayout& uniformLayout,
+                                                                        gfx::Range* previousUniform) noexcept {
+  if (previousUniform != nullptr) {
+    *previousUniform = {};
+  }
   FrameTransformSnapshot snapshot{
       .projection = projection,
       .usedMatrixMask = usedPnMtxMask,
@@ -1516,6 +1528,26 @@ std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(
           .indexedMatrices = uniformLayout.indexedMatrices,
       });
       interpolatedRanges[sample] = interpolatedRange;
+    }
+    // Keep the matched previous endpoint, in the current palette's layout, for
+    // arbitrary headset display times. It shares desktop matching and cut guards.
+    if (previousUniform != nullptr && stereo_frame_interpolation_active()) {
+      auto [buffer, range] = gfx::map_uniform(uniformLayout.uniformSize);
+      std::memcpy(buffer.data(), uniformLayout.sourceUniformData, uniformLayout.uniformSize);
+      s_pendingUniformInterpolations.push_back({
+          .currentTransformIndex = currentTransformIndex,
+          .sourceUniformData = uniformLayout.sourceUniformData,
+          .uniformData = buffer.data(),
+          .uniformSize = uniformLayout.uniformSize,
+          .projectionOffset = uniformLayout.projectionOffset,
+          .positionOffset = uniformLayout.positionOffset,
+          .normalOffset = uniformLayout.normalOffset,
+          .currentMatrix = uniformLayout.currentMatrix,
+          .numerator = 0,
+          .denominator = 1,
+          .indexedMatrices = uniformLayout.indexedMatrices,
+      });
+      *previousUniform = range;
     }
   }
   return interpolatedRanges;

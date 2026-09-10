@@ -53,8 +53,14 @@ void OpenXRRequestRecenter() noexcept;
 // once per published frame.
 void OpenXRSetLeanBackDegrees(float degrees) noexcept;
 
-// Live pacing choice. Disabled: submit fresh frames promptly and repeat during
-// stalls. Enabled: repeat at each headset display deadline while waiting.
-void OpenXRSetEagerFrameHeartbeat(bool enabled) noexcept;
+// Live scene interpolation at the headset's own display deadlines.
+// 0 = Off, 1 = Auto, otherwise 72/90/120 as a rendering-rate ceiling.
+void OpenXRSetFrameInterpolationFps(uint32_t target) noexcept;
+bool OpenXRFrameInterpolationAvailable() noexcept;
+struct OpenXRFrameTiming {
+    float headset_hz = 0;
+    float rendered_fps = 0; // Newly rendered pairs; excludes retained-layer repeats.
+};
+OpenXRFrameTiming OpenXRGetFrameTiming() noexcept;
 
 } // namespace mkw::vr
