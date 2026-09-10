@@ -4,6 +4,7 @@
 #include "hle_stubs.h"
 #include "host_context.h"
 #include "runtime_log.h"
+#include "system_bridge.h"
 
 // Defined in hle/os/os_sleep.cpp; the sleep-timer table is file-local there.
 
@@ -13,6 +14,7 @@
 #include <iostream>
 #include <iomanip>
 #include <sstream>
+#include <string_view>
 
 namespace Fiber {
 
@@ -525,6 +527,44 @@ void GuestFiberManager::ProcessTimerEvents(CpuContext* cpu) {
     }
 }
 
+namespace {
+
+// Windows cannot unwind an exception out of a fiber entry point. Past
+// FiberProc there is only RtlUserFiberStart, which terminates the frame chain
+// without a handler, so RtlUnwindEx fails and raises STATUS_BAD_FUNCTION_TABLE
+// (0xC00000FF) - a noncontinuable exception that kills the process and reports
+// the fiber's entry symbol instead of the fault that actually happened. main()
+// already guards the primary guest thread with the same catch set; a guest
+// OSThread runs on its own fiber and needs the boundary here rather than there.
+[[noreturn]] void ReportFatalGuestThreadException(uint32_t guestThreadAddr,
+                                                  uint32_t entryPoint,
+                                                  const CpuContext* cpu,
+                                                  std::string_view category,
+                                                  std::string_view details) noexcept
+{
+    std::ostringstream message;
+    message << "guest thread 0x" << std::hex << std::uppercase << guestThreadAddr
+            << " (entry 0x" << entryPoint << ")" << std::dec << std::nouppercase
+            << " stopped with an unhandled " << category << ".\n" << details;
+    const std::string text = message.str();
+
+    RT_LOG(RT_TAG_OS) << "unhandled " << category << " on guest thread 0x" << std::hex
+              << std::uppercase << guestThreadAddr << " (entry 0x" << entryPoint << ")"
+              << std::dec << std::nouppercase << ": " << details << std::endl;
+    SystemBridge::DumpCpuState(cpu);
+    std::cerr.flush();
+
+    // Same artifact set as main()'s handler: MarkFatalErrorReported stops the
+    // atexit reporter, so the crash log has to be written here.
+    RuntimeCrash::WriteCrashArtifacts("guest_thread_exception", text);
+    SetRuntimeExitCode(EXIT_FAILURE);
+    ShowRuntimeFatalPopup(category, text);
+    MarkFatalErrorReported();
+    std::exit(EXIT_FAILURE);
+}
+
+} // namespace
+
 #if defined(_WIN32)
 void CALLBACK GuestFiberManager::FiberProc(void* param)
 #else
@@ -583,84 +623,105 @@ void GuestFiberManager::FiberProc(void* param)
     // Create a CpuContextScope for this fiber
     CpuContextScope scope(cpu);
     
-    int startDeferAttempts = 0;
-    while (entryPoint == 0x8024373c) { // EGG::Thread::start
-        uint32_t vtable = 0;
-        uint32_t startFn = 0;
-        try {
-            vtable = Memory::Read32(entryArg);
-            if (vtable >= 0x80000000u) {
-                startFn = Memory::Read32(vtable + 0x0Cu);
-            }
-        } catch (const Memory::AccessViolation&) {
-            vtable = 0;
-            startFn = 0;
-        }
-
-
-        if (vtable >= 0x80000000u && startFn >= 0x80000000u) {
-            break;
-        }
-
-        if (startDeferAttempts++ > 50) {
-            RT_LOG(RT_TAG_OS) << "EGG::Thread::start target still invalid (vtable=0x" << std::hex << vtable
-                      << ", fn=0x" << startFn << ") after retries; continuing anyway." << std::dec << std::endl;
-            break;
-        }
-        HostContext::Switch(s_schedulerFiber);
-    }
-
-    // The deferral loop above yields to the scheduler and therefore can resume
-    // with registers from a different guest fiber in the shared CpuContext.
-    cpu->gpr[3] = entryArg;
-    cpu->pc = entryPoint;
-    cpu->srr0 = entryPoint;
-
-    
-    // Call the translated thread entry function
-    const auto* info = TranslatedFunctionRegistry::FindByAddressPtr(entryPoint);
-    if (info) {
-        InvokeIndirectCpu(entryPoint, cpu);
-    } else {
-        RT_LOG(RT_TAG_OS) << "Thread entry 0x" << std::hex << entryPoint
-                  << " not found in registry!" << std::dec << std::endl;
-    }
-    
-    // Thread entry functions normally return into OSExitThread on hardware.
-    // Our host fiber call boundary observes the return directly, so complete the
-    // guest OSThread lifecycle here before handing control back to the scheduler.
-
+    // A fault anywhere in this guest thread - translated code, an HLE hook or a
+    // guest callback - must be reported here. See
+    // ReportFatalGuestThreadException: unwinding past a fiber entry is not
+    // representable on Windows and destroys the diagnostic.
     try {
-        RemoveGuestThreadFromQueue(guestThreadAddr);
-        const uint16_t attributes = Memory::Read16(guestThreadAddr + kThreadAttrOffset);
-        const bool detached = (attributes & 1u) != 0;
-        const uint16_t finalState = detached ? 0u : static_cast<uint16_t>(ThreadState::MORIBUND);
-        if (!detached) {
-            Memory::Write32(guestThreadAddr + kThreadExitValueOffset, 0);
+        int startDeferAttempts = 0;
+        while (entryPoint == 0x8024373c) { // EGG::Thread::start
+            uint32_t vtable = 0;
+            uint32_t startFn = 0;
+            try {
+                vtable = Memory::Read32(entryArg);
+                if (vtable >= 0x80000000u) {
+                    startFn = Memory::Read32(vtable + 0x0Cu);
+                }
+            } catch (const Memory::AccessViolation&) {
+                vtable = 0;
+                startFn = 0;
+            }
+
+
+            if (vtable >= 0x80000000u && startFn >= 0x80000000u) {
+                break;
+            }
+
+            if (startDeferAttempts++ > 50) {
+                RT_LOG(RT_TAG_OS) << "EGG::Thread::start target still invalid (vtable=0x" << std::hex << vtable
+                          << ", fn=0x" << startFn << ") after retries; continuing anyway." << std::dec << std::endl;
+                break;
+            }
+            HostContext::Switch(s_schedulerFiber);
         }
-        Memory::Write16(guestThreadAddr + kThreadStateOffset, finalState);
-        WakeGuestThreadsOnQueueNoSwitch(guestThreadAddr + kThreadJoinQueueOffset);
-        if (Memory::Read32(kOSRunningContextAddr) == guestThreadAddr) {
-            Memory::Write32(kOSRunningContextAddr, 0);
-        }
-        if (Memory::Read32(kOSCurrentContextAddr) == guestThreadAddr) {
-            Memory::Write32(kOSCurrentContextAddr, 0);
-        }
-        Memory::Write32(kSchedulerReschedCounterAddr, 1);
-    } catch (const Memory::AccessViolation& e) {
-        RT_LOG(RT_TAG_OS) << "Thread return cleanup failed for 0x" << std::hex
-                  << guestThreadAddr << " at 0x" << e.address() << std::dec
-                  << " (" << e.reason() << ")" << std::endl;
-    }
+
+        // The deferral loop above yields to the scheduler and therefore can resume
+        // with registers from a different guest fiber in the shared CpuContext.
+        cpu->gpr[3] = entryArg;
+        cpu->pc = entryPoint;
+        cpu->srr0 = entryPoint;
+
     
-    {
-        std::lock_guard<std::mutex> lock(s_mutex);
-        auto it = s_fibers.find(guestThreadAddr);
-        if (it != s_fibers.end()) {
-            it->second.terminated = true;
-            it->second.state = ThreadState::MORIBUND;
+        // Call the translated thread entry function
+        const auto* info = TranslatedFunctionRegistry::FindByAddressPtr(entryPoint);
+        if (info) {
+            InvokeIndirectCpu(entryPoint, cpu);
+        } else {
+            RT_LOG(RT_TAG_OS) << "Thread entry 0x" << std::hex << entryPoint
+                      << " not found in registry!" << std::dec << std::endl;
         }
-        s_currentGuestThread = 0;
+    
+        // Thread entry functions normally return into OSExitThread on hardware.
+        // Our host fiber call boundary observes the return directly, so complete the
+        // guest OSThread lifecycle here before handing control back to the scheduler.
+
+        try {
+            RemoveGuestThreadFromQueue(guestThreadAddr);
+            const uint16_t attributes = Memory::Read16(guestThreadAddr + kThreadAttrOffset);
+            const bool detached = (attributes & 1u) != 0;
+            const uint16_t finalState = detached ? 0u : static_cast<uint16_t>(ThreadState::MORIBUND);
+            if (!detached) {
+                Memory::Write32(guestThreadAddr + kThreadExitValueOffset, 0);
+            }
+            Memory::Write16(guestThreadAddr + kThreadStateOffset, finalState);
+            WakeGuestThreadsOnQueueNoSwitch(guestThreadAddr + kThreadJoinQueueOffset);
+            if (Memory::Read32(kOSRunningContextAddr) == guestThreadAddr) {
+                Memory::Write32(kOSRunningContextAddr, 0);
+            }
+            if (Memory::Read32(kOSCurrentContextAddr) == guestThreadAddr) {
+                Memory::Write32(kOSCurrentContextAddr, 0);
+            }
+            Memory::Write32(kSchedulerReschedCounterAddr, 1);
+        } catch (const Memory::AccessViolation& e) {
+            RT_LOG(RT_TAG_OS) << "Thread return cleanup failed for 0x" << std::hex
+                      << guestThreadAddr << " at 0x" << e.address() << std::dec
+                      << " (" << e.reason() << ")" << std::endl;
+        }
+    
+        {
+            std::lock_guard<std::mutex> lock(s_mutex);
+            auto it = s_fibers.find(guestThreadAddr);
+            if (it != s_fibers.end()) {
+                it->second.terminated = true;
+                it->second.state = ThreadState::MORIBUND;
+            }
+            s_currentGuestThread = 0;
+        }
+    } catch (const Memory::AccessViolation& ex) {
+        std::ostringstream details;
+        details << "addr=0x" << std::hex << std::uppercase << ex.address()
+                << " len=0x" << ex.length() << std::dec << std::nouppercase
+                << " reason=" << ex.reason();
+        ReportFatalGuestThreadException(guestThreadAddr, entryPoint, cpu,
+                                        "a guest memory access was out of bounds",
+                                        details.str());
+    } catch (const std::exception& ex) {
+        ReportFatalGuestThreadException(guestThreadAddr, entryPoint, cpu,
+                                        "a runtime exception occurred", ex.what());
+    } catch (...) {
+        ReportFatalGuestThreadException(guestThreadAddr, entryPoint, cpu,
+                                        "a runtime exception occurred",
+                                        "the exception carried no details");
     }
     
     // Return to scheduler

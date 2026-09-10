@@ -130,11 +130,20 @@ inline std::array<uint8_t, 20> Sha1(const uint8_t* data, size_t size) {
 
 using CryptoEcdsa = CryptoPP::ECDSA<CryptoPP::EC2N, CryptoPP::SHA1>;
 
+// ng_priv is a raw 233-bit field and the sect233r1 subgroup order is itself 233
+// bits wide, so a genuine keys.bin dump can hold a scalar numerically above the
+// order. IOS does not reject those, and Dolphin reduces the key with a single
+// conditional subtraction before using it (Common::ec::Sign, the bn_sub_modulus
+// on its kk copy), so rejecting one here refuses to build the ES device
+// certificate and takes the whole online login down with it. Reduce instead.
+// The certificate is unaffected: G has order n, so k*G == (k mod n)*G and the
+// published public key is the same point Dolphin derives from the raw scalar.
 inline CryptoEcdsa::PrivateKey MakePrivateKey(const uint8_t* key) {
     CryptoPP::DL_GroupParameters_EC<CryptoPP::EC2N> parameters(CryptoPP::ASN1::sect233r1());
-    const CryptoPP::Integer exponent(key, 30);
-    if (exponent <= CryptoPP::Integer::Zero() || exponent >= parameters.GetSubgroupOrder()) {
-        throw std::invalid_argument("Wii ES private key is outside the sect233r1 subgroup");
+    CryptoPP::Integer exponent(key, 30);
+    exponent %= parameters.GetSubgroupOrder();
+    if (exponent <= CryptoPP::Integer::Zero()) {
+        throw std::invalid_argument("Wii ES private key is zero modulo the sect233r1 subgroup order");
     }
 
     CryptoEcdsa::PrivateKey privateKey;
