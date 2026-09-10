@@ -559,14 +559,22 @@ constexpr u16 kEfbHeight = 528;
 constexpr size_t kStagedUniformBytes = 96 + sizeof(Mat4x4<float>) + sizeof(Mat3x4<float>) * (MaxPostexMtx + MaxPnMtx);
 
 // The host viewport always receives the normalized GX depth window (render_pass_impl clamps to minDepth <= maxDepth).
+//
+// Folds the near/far depth correction the vertex shader used to apply per-vertex directly into the
+// projection matrix instead (matching upstream aurora commit 1dde08fa, "Move depth correction to
+// projection matrix") - valid because the correction is a linear combination of the z/w rows, so
+// applying it once here to the row is equivalent to applying it once per-vertex to the dot product,
+// and it must be applied exactly once: doing it here AND in the shader (the previous bug) canceled
+// the negation out for `flip`, silently making "reversed" Z behave identically to forward Z.
+// `flip` decides which of the two single-application forms this draw needs: true bakes in the
+// reversed-Z inversion (z' = -z), false bakes in the forward-Z near/far combination (z' = z + w) -
+// exactly one always applies, never both, and never neither.
 static Mat4x4<float> effective_projection() noexcept {
   const auto& vp = g_gxState.renderViewport;
   const bool flip = (vp.znear <= vp.zfar) == UseReversedZ;
   Mat4x4<float> proj = g_gxState.proj;
-  if (flip) {
-    for (size_t i = 0; i < 4; ++i) {
-      proj.m2.m[i] = -(proj.m2.m[i] + proj.m3.m[i]);
-    }
+  for (size_t i = 0; i < 4; ++i) {
+    proj.m2.m[i] = flip ? -proj.m2.m[i] : (proj.m2.m[i] + proj.m3.m[i]);
   }
   return proj;
 }
@@ -597,8 +605,17 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
 
   const Mat4x4<float> effectiveProj = effective_projection();
   const auto& viewport = g_gxState.renderViewport;
-  const float depthNear = std::clamp(std::min(viewport.znear, viewport.zfar), 0.0f, 1.0f);
-  const float depthFar = std::clamp(std::max(viewport.znear, viewport.zfar), 0.0f, 1.0f);
+  // The host depth window this draw's viewport applies. Must stay byte-for-byte the same mapping as
+  // the SetViewport remap in gfx/common.cpp, because the exact-screen-depth path writes frag_depth
+  // directly and has to reproduce the window the fixed viewport transform would have applied. Under
+  // UseReversedZ the guest's GX-distance (near, far) pair is remapped through 1-x, then ordered and
+  // clamped for the [0,1] host range. A full guest window lands on [0,1] either way; a *restricted*
+  // one (how the game forces an element to draw in front of everything) is the case that differs,
+  // and those restricted windows are 2D/HUD draws - exactly the ones the VR virtual screen carries.
+  const float remappedNear = UseReversedZ ? 1.0f - viewport.zfar : viewport.znear;
+  const float remappedFar = UseReversedZ ? 1.0f - viewport.znear : viewport.zfar;
+  const float depthNear = std::clamp(std::min(remappedNear, remappedFar), 0.0f, 1.0f);
+  const float depthFar = std::clamp(std::max(remappedNear, remappedFar), 0.0f, 1.0f);
 
   stage_u32(vtxStart);
   // With a compacted position region the live matrix is uploaded to slot 0, so every `postex_mtx[in_pnmtxidx]` /

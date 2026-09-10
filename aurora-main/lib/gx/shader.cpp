@@ -990,19 +990,27 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
         "\n    let clip_base = select(clip_a, clip_b, use_b);"
         "\n    out.pos = vec4f(clip_base.xy + offset_ndc * clip_base.w, clip_base.zw);";
   }
+  // The near/far depth correction used to be applied here per-vertex (out.pos.z = -out.pos.z for
+  // reversed, or += out.pos.w for forward), redundantly on top of the same correction already
+  // folded into ubuf.proj by effective_projection() (shader_info.cpp) - applying it twice canceled
+  // out for the common case (any draw where effective_projection() decides to flip), silently
+  // making "reversed" Z behave identically to forward Z. It is now applied exactly once, in the
+  // projection matrix alone (matching upstream aurora commit 1dde08fa: "Move depth correction to
+  // projection matrix"), so nothing needs to happen to out.pos.z here.
   if (config.exactScreenDepth) {
     vtxOutAttrs += fmt::format("\n    @location({}) @interpolate(flat) exact_screen_depth: f32,", vtxOutIdx++);
     // Virtual-screen composition stores the original backend-convention NDC
     // depth in the otherwise replaceable projection Z row. Capture it before
     // parking raster depth at midrange; this avoids growing every GX uniform.
+    //
+    // The parked value is written directly as +0.5 * w now that the per-vertex
+    // depth correction above is gone. It used to be -0.5 * w specifically so the
+    // `out.pos.z = -out.pos.z` that followed would land it at +0.5 * w; with
+    // that negation removed, keeping the minus sign would park the virtual
+    // screen at NDC -0.5, outside the clip volume, and discard every 2D draw.
     vtxXfrAttrsPre +=
         "\n    out.exact_screen_depth = clamp(out.pos.z, 0.0, 1.0);"
-        "\n    out.pos.z = -0.5 * out.pos.w;";
-  }
-  if constexpr (UseReversedZ) {
-    vtxXfrAttrsPre += "\n    out.pos.z = -out.pos.z;";
-  } else {
-    vtxXfrAttrsPre += "\n    out.pos.z += out.pos.w;";
+        "\n    out.pos.z = 0.5 * out.pos.w;";
   }
   // GX rasterizes at a 7/12 pixel center when antialiasing is disabled, while WebGPU rasterizes at 1/2.
   vtxXfrAttrsPre +=
@@ -1469,8 +1477,18 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
                     textureDependency.texMapId, uvIn);
   }
 
-  std::string fogDepthExpr = UseReversedZ ? "in.pos.z" : "(1.0 - in.pos.z)";
-  std::string fogZCoordExpr = fmt::format("u32(round(clamp({}, 0.0, 1.0) * 16777216.0))", fogDepthExpr);
+
+  // in.pos.z is the host NDC z (forward: 0=near/1=far; reversed: 1=near/0=far post-fix), but this
+  // expression needs to produce GX's own native distance term (always 0=near/1=far, matching how
+  // g_gxState.clearDepth/clear_depth_value() are interpreted before their own UseReversedZ
+  // inversion) - forward already matches directly; reversed needs the same 1-x flip everything
+  // else reversed-Z-aware uses. This was backwards (verified directly against upstream aurora's
+  // identical expression in build_shader_source), which fed both fog density and the GX_ZT_ADD
+  // z-texture path the wrong distance value.
+  std::string fogDepthExpr = UseReversedZ ? "(1.0 - in.pos.z)" : "in.pos.z";
+  std::string fogZCoordExpr =
+      fmt::format("u32(round(clamp({}, 0.0, 1.0) * 16777216.0))", fogDepthExpr);
+
   if (usesZTextureDepth) {
     const u32 zTexBias = config.zTexture & 0x00FFFFFFu;
     const u32 zTexFmt = (config.zTexture >> 24) & 0x3u;
@@ -1501,7 +1519,7 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
       fragmentFn += fmt::format(
           "\n    let oldZ = u32(round(clamp({0}, 0.0, 1.0) * 16777216.0));"
           "\n    ztexCoord = (ztexCoord + oldZ) & 0x00ffffffu;",
-          UseReversedZ ? "in.pos.z" : "(1.0 - in.pos.z)");
+          UseReversedZ ? "(1.0 - in.pos.z)" : "in.pos.z");
     }
     fragmentFn += "\n    let ztexDepth = f32(ztexCoord) / 16777216.0;";
     fogZCoordExpr = "ztexCoord";
@@ -1645,12 +1663,22 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
 
     if (config.exactScreenDepth) {
       // Fragment depth is already in window coordinates. Reapply the recorded
-      // viewport's clamped depth window exactly as the fixed pipeline did.
+      // viewport's clamped depth window exactly as the fixed pipeline did. This
+      // value never passed through the per-vertex depth correction upstream
+      // removed, so it needs no reversed-Z adjustment of its own - the recorded
+      // range it is rebuilt from is already reversed-Z-aware (see the SetViewport
+      // remap in gfx/common.cpp).
       fragmentFn +=
           "\n    let fragDepth = ubuf.exact_screen_depth_range.x + "
           "in.exact_screen_depth * ubuf.exact_screen_depth_range.y;";
     } else {
-      fragmentFn += fmt::format("\n    let fragDepth = {}ztexDepth;", UseReversedZ ? "" : "1.0 - ");
+      // ztexDepth is in GX's native distance terms (0=near/1=far, see fogDepthExpr's comment
+      // above), but frag_depth must be written in the same host NDC-z convention in.pos.z itself
+      // uses - forward matches directly (no change), reversed needs the same 1-x flip. This was
+      // backwards the same way fogDepthExpr was (verified by the same derivation, since aurora
+      // upstream has no directly equivalent line here to cross-check against - this
+      // z-texture-depth-output path appears to be specific to this fork).
+      fragmentFn += fmt::format("\n    let fragDepth = {}ztexDepth;", UseReversedZ ? "1.0 - " : "");
     }
     fragmentReturnType = "FragmentOutput";
     fragmentReturn =

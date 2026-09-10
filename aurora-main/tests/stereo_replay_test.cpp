@@ -107,8 +107,7 @@ TEST(StereoReplayTest, HudScreenProjectionMatchesTheChainItComposes) {
   viewFromCenter.m2 = {-s, 0.0f, c, 7.0f};
 
   const HudScreen screen{.halfWidth = 600.0f, .halfHeight = 337.5f, .distance = 1000.0f};
-  const auto composed = compose_hud_screen_projection(eyeFrustum, viewFromCenter, screen, game, true);
-  const auto exactDepth = backend_ndc_depth_row(game, true);
+  const auto composed = compose_hud_screen_projection(eyeFrustum, viewFromCenter, screen, game);
 
   for (const auto& v : kVertices) {
     // The same chain, one step at a time: game NDC, a point on the screen
@@ -124,7 +123,12 @@ TEST(StereoReplayTest, HudScreenProjectionMatchesTheChainItComposes) {
     EXPECT_NEAR(dot4(composed.m1, v), eyeFrustum.m1[1] * eyeY + eyeFrustum.m1[2] * eyeZ, 1e-2f);
     const float clipW = -eyeZ;
     EXPECT_NEAR(dot4(composed.m3, v), clipW, 1e-2f);
-    EXPECT_NEAR(dot4(composed.m2, v), dot4(exactDepth, v), 1e-6f);
+    // The virtual screen must carry the depth the unmodified draw would have
+    // written. Since the reverse-Z fix moved the near/far correction wholly into
+    // the projection, that is the staged Z row applied directly - no further
+    // inversion. Comparing against `game.m2` rather than the helper's own output
+    // is what makes this catch a re-introduced double correction.
+    EXPECT_NEAR(dot4(composed.m2, v), dot4(game.m2, v), 1e-6f);
   }
 }
 
@@ -142,16 +146,19 @@ TEST(StereoReplayTest, HudScreenParksRasterDepthAtMidrangeUnderHeadMotion) {
   moved.m2 = {-s, 0.0f, c, 13.0f};
 
   const HudScreen screen{.halfWidth = 600.0f, .halfHeight = 337.5f, .distance = 1000.0f};
-  const auto composed = compose_hud_screen_projection(eyeFrustum, moved, screen, game, true);
+  const auto composed = compose_hud_screen_projection(eyeFrustum, moved, screen, game);
 
-  // The exact-depth shader captures composed Z, then parks clip Z at -0.5W.
-  // Aurora's following reversed-depth conversion negates that to +0.5W, so
+  // The exact-depth shader captures composed Z, then parks clip Z at +0.5W, so
   // rasterization stays stable even though W varies across the rotated screen.
+  // It writes +0.5W directly: the reverse-Z fix removed the per-vertex depth
+  // negation that used to follow, which is why the shader no longer pre-negates
+  // to -0.5W. What this test pins is the invariant that survived that change -
+  // the parked value must land at NDC 0.5 for every vertex, whatever W does.
   for (const auto& v : kVertices) {
     const float w = dot4(composed.m3, v);
     ASSERT_GT(w, 0.0f);
-    const float parkedClipZ = -0.5f * w;
-    EXPECT_NEAR(-parkedClipZ / w, 0.5f, 1e-5f);
+    const float parkedClipZ = 0.5f * w;
+    EXPECT_NEAR(parkedClipZ / w, 0.5f, 1e-5f);
   }
 }
 

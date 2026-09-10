@@ -4192,7 +4192,14 @@ TEST_F(GXFifoTest, CopyTexClearTruePassesScratchRectAndUpdateMasksToResolve) {
   EXPECT_NEAR(resolve.clearColorValue.y(), 128.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(resolve.clearColorValue.z(), 192.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(resolve.clearColorValue.w(), 32.f / 255.f, 1.f / 255.f);
-  EXPECT_NEAR(resolve.clearDepthValue, 0x123456 / 16777216.f, 1.f / 16777216.f);
+  // clear_depth_value() maps the guest's GX-distance clear depth into the host depth-buffer
+  // convention, so under reversed Z the stored value is the 1-x mirror of the guest's normalized
+  // depth. Expressed through UseReversedZ rather than hardcoded, so this expectation follows the
+  // convention instead of pinning one side of it.
+  const float expectedNormalizedClearDepth = 0x123456 / 16777216.f;
+  EXPECT_NEAR(resolve.clearDepthValue,
+              aurora::gx::UseReversedZ ? 1.f - expectedNormalizedClearDepth : expectedNormalizedClearDepth,
+              1.f / 16777216.f);
   EXPECT_EQ(resolve.resolveFormat, GX_TF_RGBA8);
   EXPECT_FALSE(resolve.halfScale);
   EXPECT_FALSE(resolve.forceOpaqueAlpha);

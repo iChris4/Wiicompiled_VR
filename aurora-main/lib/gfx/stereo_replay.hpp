@@ -107,17 +107,24 @@ inline bool is_orthographic_projection(const Mat4x4<float>& projection) noexcept
   return projection.m3[0] == 0.0f && projection.m3[1] == 0.0f && projection.m3[2] == 0.0f && projection.m3[3] == 1.0f;
 }
 
-// The stored GX projection has not yet passed through Aurora's final clip-depth
-// conversion. Turn its Z row into the 0..1 backend NDC value that the original
-// orthographic draw would have produced. The virtual-screen shader captures
-// this row before replacing raster depth with a stable midrange value.
-inline Vec4<float> backend_ndc_depth_row(const Mat4x4<float>& projection, bool reversedDepth) noexcept {
-  Vec4<float> row{};
-  for (size_t i = 0; i < 4; ++i) {
-    row[i] = reversedDepth ? -projection.m2[i] : projection.m2[i] + projection.m3[i];
-  }
-  return row;
-}
+// The Z row that reproduces the backend NDC depth the original orthographic draw
+// would have produced. The virtual-screen shader captures it before replacing
+// raster depth with a stable midrange value.
+//
+// This is a straight pass-through of the stored Z row, and deliberately does not
+// depend on the reversed-Z setting. The projection reaching here is the one staged
+// into the draw's own uniform, i.e. effective_projection()'s output, which since
+// the reverse-Z fix carries the near/far depth correction already applied - exactly
+// once, in the matrix - and the vertex shader now adds nothing on top of it. So
+// dot(v, projection.m2) IS the depth the unmodified draw would have written.
+//
+// It previously re-applied a correction here (negating the row under reversed Z, or
+// folding m3 in under forward Z). That was correct only while the vertex shader
+// still applied its own redundant per-vertex correction for this one to cancel
+// against. With that per-vertex step gone, any correction here is a double
+// application: it would invert the virtual screen's depth ordering, so the 2D
+// layers meant to sit on top would lose the depth test to the ones behind them.
+inline Vec4<float> backend_ndc_depth_row(const Mat4x4<float>& projection) noexcept { return projection.m2; }
 
 // Replaces an orthographic draw's projection so its 2D output lands on the
 // fixed virtual screen instead of being stretched across the whole eye.
@@ -142,7 +149,7 @@ inline Vec4<float> backend_ndc_depth_row(const Mat4x4<float>& projection, bool r
 // equal-depth 2D layers deterministic under head rotation and translation.
 inline Mat4x4<float> compose_hud_screen_projection(const Mat4x4<float>& eyeFrustum, const Mat3x4<float>& viewFromCenter,
                                                    const HudScreen& screen, const Mat4x4<float>& gameProjection,
-                                                   bool reversedDepth, const HudNdcRemap& ndcRemap = {}) noexcept {
+                                                   const HudNdcRemap& ndcRemap = {}) noexcept {
   const Mat4x4<float> frameProjection = remap_hud_ndc(gameProjection, ndcRemap);
   // The screen point's three coordinates, each as a functional of (mv_pos, 1).
   Mat3x4<float> screenPoint{};
@@ -166,7 +173,7 @@ inline Mat4x4<float> compose_hud_screen_projection(const Mat4x4<float>& eyeFrust
     dst[3] += view[3];
   }
 
-  const Vec4<float> exactDepthRow = backend_ndc_depth_row(gameProjection, reversedDepth);
+  const Vec4<float> exactDepthRow = backend_ndc_depth_row(gameProjection);
   Mat4x4<float> out{};
   for (size_t i = 0; i < 4; ++i) {
     out.m0[i] = eyeFrustum.m0[0] * eyePoint.m0[i] + eyeFrustum.m0[2] * eyePoint.m2[i];
