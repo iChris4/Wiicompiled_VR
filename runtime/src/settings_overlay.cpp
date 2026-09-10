@@ -163,7 +163,7 @@ SDL_Scancode g_vrRecenterScancode = [] {
 }();
 bool g_vrRecenterRebinding = false;
 float g_vrLeanBackDegrees = RuntimeConfigFile::VrLeanBackDegrees();
-uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
+uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths();
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
     indices.fill(std::numeric_limits<int32_t>::min());
@@ -825,7 +825,7 @@ void DrawGraphicsSettings() {
         uint32_t flag;
     };
     static constexpr std::array<EffectFlag, 1> kEffectFlags = {{
-        {"Disable bloom", 0x10u},
+        {"Disable bloom", RuntimeConfigFile::kPostProcessingBloomPath},
     }};
 
     for (const auto& effect : kEffectFlags) {

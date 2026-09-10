@@ -149,6 +149,13 @@ inline constexpr const char* kPortableUserDataDirectoryName = "UserData";
 // installation.
 inline constexpr int kPortableSearchDepth = 4;
 
+// Post-processing paths the game is allowed to skip, as a mask of the engine's
+// own path bits. Bloom is the only one exposed, and it starts off: its bright
+// bleed is the effect that reads worst in a headset, and the F10 bar's tick box
+// is the way back to it.
+inline constexpr uint32_t kPostProcessingBloomPath = 0x10u;
+inline constexpr uint32_t kDisabledPostProcessingPathsDefault = kPostProcessingBloomPath;
+
 // First-person camera defaults and the range its head offsets accept, in one
 // place: the config getters, the on-disk template and the F10 bar's reset all
 // read them from here, so they cannot drift apart again.
@@ -581,8 +588,8 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
     config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
     if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths");
-        value && (*value & ~0x10u) == 0) {
-        config.disabledPostProcessingPaths = *value & 0x10u;
+        value && (*value & ~kPostProcessingBloomPath) == 0) {
+        config.disabledPostProcessingPaths = *value & kPostProcessingBloomPath;
     }
 
     config.vrEnabled = FindConfigValue<bool>(document, "vr", "enabled");
@@ -1207,8 +1214,10 @@ inline bool TextureDumps(bool fallback = false) {
     return Get().textureDumps.value_or(fallback);
 }
 
-inline uint32_t DisabledPostProcessingPaths(uint32_t fallback = 0) {
-    return Get().disabledPostProcessingPaths.value_or(fallback) & 0x10u;
+// An absent setting means the default mask, not "nothing disabled": a fresh
+// install has no [video] section at all and still starts without bloom.
+inline uint32_t DisabledPostProcessingPaths(uint32_t fallback = kDisabledPostProcessingPathsDefault) {
+    return Get().disabledPostProcessingPaths.value_or(fallback) & kPostProcessingBloomPath;
 }
 
 inline bool VrEnabled(bool fallback = false) {
