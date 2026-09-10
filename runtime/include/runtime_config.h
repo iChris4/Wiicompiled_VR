@@ -153,7 +153,7 @@ inline constexpr int kPortableSearchDepth = 4;
 // place: the config getters, the on-disk template and the F10 bar's reset all
 // read them from here, so they cannot drift apart again.
 inline constexpr float kVrFirstPersonUnitsPerMeterDefault = 50.0f;
-inline constexpr float kVrFirstPersonHeadUpDefault = 1.75f;
+inline constexpr float kVrFirstPersonHeadUpDefault = 1.50f;
 inline constexpr float kVrFirstPersonHeadForwardDefault = 0.0f;
 inline constexpr float kVrFirstPersonHeadRightDefault = 0.0f;
 inline constexpr bool kVrFirstPersonHideDriverDefault = true;
