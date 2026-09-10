@@ -1302,7 +1302,16 @@ static void write_stereo_uniform(std::span<uint8_t> uniform, const gx::UniformRe
                                  const Viewport& drawViewport, ClipRect displayRegion,
                                  const stereo_replay::HudScreen& hudScreen) noexcept {
   if (layout.perspective) {
-    const auto projection = stereo_replay::compose_projection(eye.projection, gameProjection);
+    // A projection that flips X (mirror mode) keeps its flip: the eye frustum
+    // replaces the X scale's magnitude, and the reflection moves onto the eye
+    // transform's half of the composition, where it reverses the winding the
+    // draw's own cull mode already expects.
+    const bool mirrored = stereo_replay::projection_mirrors_x(gameProjection);
+    auto projection = stereo_replay::compose_projection(eye.projection, gameProjection);
+    if (mirrored) {
+      projection = stereo_replay::mirror_projection_x(projection);
+    }
+    const auto& viewFromScene = mirrored ? eye.viewFromSceneMirrored : eye.viewFromScene;
     std::memcpy(uniform.data() + layout.projectionOffset, &projection, sizeof(projection));
 
     for (uint32_t matrix = 0; matrix < layout.positionMatrixCount; ++matrix) {
@@ -1312,14 +1321,14 @@ static void write_stereo_uniform(std::span<uint8_t> uniform, const gx::UniformRe
       const size_t offset = layout.positionOffset + matrix * sizeof(Mat3x4<float>);
       Mat3x4<float> source;
       std::memcpy(&source, uniform.data() + offset, sizeof(source));
-      const auto transformed = stereo_replay::compose_affine(eye.viewFromScene, source);
+      const auto transformed = stereo_replay::compose_affine(viewFromScene, source);
       std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
     }
     for (uint32_t matrix = 0; matrix < layout.normalMatrixCount; ++matrix) {
       const size_t offset = layout.normalOffset + matrix * sizeof(Mat3x4<float>);
       Mat3x4<float> source;
       std::memcpy(&source, uniform.data() + offset, sizeof(source));
-      const auto transformed = stereo_replay::compose_normal(eye.viewFromScene, source);
+      const auto transformed = stereo_replay::compose_normal(viewFromScene, source);
       std::memcpy(uniform.data() + offset, &transformed, sizeof(transformed));
     }
   } else {
@@ -1483,6 +1492,13 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
       // folded onto the screen from a shape the composition cannot represent.
       if (!layout.perspective && !stereo_replay::is_orthographic_projection(gameProjection)) {
         continue;
+      }
+      // Producer-side and one-shot, so a mirror-mode race can be confirmed from
+      // the log without instrumenting a build.
+      static bool mirroredProjectionLogged = false;
+      if (layout.perspective && !mirroredProjectionLogged && stereo_replay::projection_mirrors_x(gameProjection)) {
+        mirroredProjectionLogged = true;
+        Log.info("Immersive replay: perspective draws flip X (mirror mode); mirroring the eye transform to match");
       }
       LateStereoUniform* saved = nullptr;
       if (history != nullptr) {

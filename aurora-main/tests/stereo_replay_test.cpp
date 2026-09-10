@@ -258,5 +258,111 @@ TEST(StereoReplayTest, VirtualScreenStaysAheadOfTheAnchoredCamera) {
   EXPECT_NEAR(placed.m2[3], centreZ, 1e-3f);
 }
 
+// A GX perspective projection with a positive X scale, plus the asymmetric
+// frustum offset an OpenXR eye contributes.
+Mat4x4<float> eye_frustum(float offsetX) {
+  Mat4x4<float> m{};
+  m.m0 = {1.3f, 0.0f, offsetX, 0.0f};
+  m.m1 = {0.0f, 1.7f, 0.04f, 0.0f};
+  m.m2 = {0.0f, 0.0f, -1.0001f, -0.2f};
+  m.m3 = {0.0f, 0.0f, -1.0f, 0.0f};
+  return m;
+}
+
+Vec4<float> clip_of(const Mat4x4<float>& projection, const Mat3x4<float>& viewFromScene,
+                    const Mat3x4<float>& objectToCenter, const Vec4<float>& object) {
+  const auto placed = compose_affine(viewFromScene, objectToCenter);
+  const Vec4<float> view{dot4(placed.m0, object), dot4(placed.m1, object), dot4(placed.m2, object), 1.0f};
+  return {dot4(projection.m0, view), dot4(projection.m1, view), dot4(projection.m2, view), dot4(projection.m3, view)};
+}
+
+TEST(StereoReplayTest, MirrorModeIsRecognizedByANegativeProjectionXScale) {
+  const auto game = eye_frustum(0.0f);
+  EXPECT_FALSE(projection_mirrors_x(game));
+
+  auto mirrored = game;
+  mirrored.m0[0] = -mirrored.m0[0];
+  EXPECT_TRUE(projection_mirrors_x(mirrored));
+}
+
+TEST(StereoReplayTest, MirroredHalvesComposeIntoOneReflectionOfTheScene) {
+  // The pair must reproduce exactly P . V . S . A: a world reflected about the
+  // anchored camera's X plane, with the eyes placed in the reflected world.
+  const std::array<float, 3> a{40.0f, -12.0f, -260.0f};
+  auto anchor = identity3x4();
+  anchor.m0[3] = -a[0];
+  anchor.m1[3] = -a[1];
+  anchor.m2[3] = -a[2];
+  const auto viewFromCenter = head_tracking_delta();
+  const auto viewFromScene = compose_affine(viewFromCenter, anchor);
+  const auto viewFromSceneMirrored = compose_affine(mirror_view_delta_x(viewFromCenter), anchor);
+
+  auto game = eye_frustum(0.0f);
+  game.m0[0] = -game.m0[0]; // Mirror mode's flip, as the game submits it.
+  const auto eye = eye_frustum(0.11f);
+  const auto projection = mirror_projection_x(compose_projection(eye, game));
+  // compose_projection takes the X scale from the eye, so this is the ordinary
+  // unmirrored eye projection P.
+  const auto reference = compose_projection(eye, game);
+
+  // The reference route: reflect in the anchored camera's space by folding S into
+  // the anchor, then compose the eye delta over it exactly as an unmirrored draw
+  // would. This is the ordering the fix has to reproduce - S sits between the eye
+  // delta and the anchor, not between the anchor and the world.
+  auto reflectedAnchor = anchor;
+  reflectedAnchor.m0[0] = -reflectedAnchor.m0[0];
+  reflectedAnchor.m0[1] = -reflectedAnchor.m0[1];
+  reflectedAnchor.m0[2] = -reflectedAnchor.m0[2];
+  reflectedAnchor.m0[3] = -reflectedAnchor.m0[3];
+  const auto viewFromSceneReference = compose_affine(viewFromCenter, reflectedAnchor);
+  // Anchor ordering has to matter, or the test would pass either way.
+  EXPECT_NE(viewFromSceneReference, viewFromScene);
+
+  Mat3x4<float> objectToCenter{};
+  objectToCenter.m0 = {1.0f, 0.0f, 0.0f, 130.0f};
+  objectToCenter.m1 = {0.0f, 1.0f, 0.0f, 55.0f};
+  objectToCenter.m2 = {0.0f, 0.0f, 1.0f, -900.0f};
+
+  for (const auto& v : kVertices) {
+    const auto mirroredClip = clip_of(projection, viewFromSceneMirrored, objectToCenter, v);
+    const auto expected = clip_of(reference, viewFromSceneReference, objectToCenter, v);
+    for (size_t component = 0; component < 4; ++component) {
+      EXPECT_NEAR(mirroredClip[component], expected[component], 1e-3f);
+    }
+  }
+}
+
+TEST(StereoReplayTest, MirroringKeepsEachEyeOnItsOwnSide) {
+  // The v6 failure this guards against: reflecting the finished clip position
+  // mirrors every eye about its own axis, which swaps the stereo pair. With the
+  // reflection taken before the eye delta, an object straight ahead must still
+  // sit right of centre for the left eye and left of centre for the right.
+  const float ipd = 3.2f; // Half-IPD in game units.
+  const auto eyeDelta = [&](float sign) {
+    auto m = identity3x4();
+    m.m0[3] = -sign * ipd; // The eye moves by +sign*ipd, so the world moves back.
+    return m;
+  };
+  auto game = eye_frustum(0.0f);
+  game.m0[0] = -game.m0[0];
+
+  Mat3x4<float> objectToCenter = identity3x4();
+  objectToCenter.m2[3] = -500.0f; // Straight ahead of the camera.
+  const Vec4<float> object{0.0f, 0.0f, 0.0f, 1.0f};
+
+  std::array<float, 2> ndcX{};
+  for (size_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+    const float sign = eyeIndex == 0 ? -1.0f : 1.0f;
+    const auto eye = eye_frustum(0.0f);
+    const auto projection = mirror_projection_x(compose_projection(eye, game));
+    const auto view = mirror_view_delta_x(eyeDelta(sign));
+    const auto clip = clip_of(projection, view, objectToCenter, object);
+    ASSERT_GT(clip[3], 0.0f);
+    ndcX[eyeIndex] = clip[0] / clip[3];
+  }
+  EXPECT_GT(ndcX[0], 0.0f);
+  EXPECT_LT(ndcX[1], 0.0f);
+}
+
 } // namespace
 } // namespace aurora::gfx::stereo_replay

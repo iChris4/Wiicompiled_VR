@@ -698,6 +698,12 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, 
     view.viewFromScene = sceneAnchor.active
                              ? gfx::stereo_replay::compose_affine(view.viewFromCenter, anchorFromScene)
                              : view.viewFromCenter;
+    // A mirror-mode draw takes the same route from the mirrored eye delta, so the
+    // reflection its projection carries is taken in the anchored camera's space.
+    const auto mirroredFromCenter = gfx::stereo_replay::mirror_view_delta_x(view.viewFromCenter);
+    view.viewFromSceneMirrored = sceneAnchor.active
+                                     ? gfx::stereo_replay::compose_affine(mirroredFromCenter, anchorFromScene)
+                                     : mirroredFromCenter;
   }
   return replay;
 }

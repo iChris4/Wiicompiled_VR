@@ -19,6 +19,58 @@ inline Mat4x4<float> compose_projection(const Mat4x4<float>& eyeFrustum, const M
   return out;
 }
 
+// Mario Kart Wii's mirror mode negates the X scale of its projection matrix and
+// reverses its cull mode to match the winding that flip produces. compose_projection
+// replaces that coefficient with the headset frustum's always-positive X scale, so
+// the eye would draw normal winding against a reversed cull mode: every surface
+// inside out.
+//
+// The flip has to survive, but it cannot simply be re-applied to the eye's clip
+// position. The eyes are placed by the per-eye view delta, so a reflection taken
+// after it mirrors each eye about its own axis and swaps the stereo pair. The
+// reflection S = diag(-1, 1, 1) belongs between the delta and the game camera, i.e.
+// in the anchored camera's space, which the two helpers below reach by splitting it
+// in half around the delta V:
+//
+//   clip = (P . S) . (S . V . S) . A . p  =  P . V . S . A . p
+//
+// mirror_projection_x supplies (P . S), mirror_view_delta_x supplies (S . V . S), and
+// S . S cancels. Keeping the reflection out of the staged position and normal
+// matrices leaves lighting in the game's own unmirrored view space, which is the
+// space its light positions are already expressed in.
+inline bool projection_mirrors_x(const Mat4x4<float>& gameProjection) noexcept {
+  return gameProjection.m0[0] < 0.0f;
+}
+
+// P . S: post-multiplying by the reflection negates the matrix's X column, which is
+// every coefficient the clip position picks up from the vertex's X.
+inline Mat4x4<float> mirror_projection_x(const Mat4x4<float>& projection) noexcept {
+  Mat4x4<float> out = projection;
+  out.m0[0] = -out.m0[0];
+  out.m1[0] = -out.m1[0];
+  out.m2[0] = -out.m2[0];
+  out.m3[0] = -out.m3[0];
+  return out;
+}
+
+// S . V . S: the mirror image of the headset's eye delta, i.e. the pose the eye
+// would have if it were reflected along with the world. Conjugating by a reflection
+// negates exactly the entries with one X index: the X offset (half the IPD, plus any
+// head translation) and the yaw and roll terms that couple X to the other axes, while
+// pitch and the Y/Z offsets are left alone. Rendering an eye from this reflected pose
+// and flipping the result horizontally - which is what mirror_projection_x does - is
+// what that eye should see of the mirrored world, with the stereo pair the right way
+// round and head tracking still unmirrored.
+inline Mat3x4<float> mirror_view_delta_x(const Mat3x4<float>& viewFromCenter) noexcept {
+  Mat3x4<float> out = viewFromCenter;
+  out.m0[1] = -out.m0[1];
+  out.m0[2] = -out.m0[2];
+  out.m0[3] = -out.m0[3];
+  out.m1[0] = -out.m1[0];
+  out.m2[0] = -out.m2[0];
+  return out;
+}
+
 // Aurora stores the GX 3x4 matrices row-major. The vertex shader consumes
 // them as vec4 * mat3x4, which is equivalent to the original column-vector
 // affine transform. Applying an eye-space delta therefore composes delta *

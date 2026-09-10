@@ -304,6 +304,11 @@ struct StereoReplayEye {
   // camera in their position matrices and therefore need this one. It equals
   // viewFromCenter whenever the anchor is identity.
   Mat3x4<float> viewFromScene;
+  // The same transform for a draw whose projection mirrors X (Mario Kart Wii's
+  // mirror mode), built from the mirrored eye delta so the reflection lands in
+  // the anchored camera's space rather than in each eye's own. Pairs with
+  // stereo_replay::mirror_projection_x; see the comment on those helpers.
+  Mat3x4<float> viewFromSceneMirrored;
 };
 
 struct StereoReplayFrame {
