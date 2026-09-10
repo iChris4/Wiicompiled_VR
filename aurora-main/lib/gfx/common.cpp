@@ -120,6 +120,12 @@ static absl::flat_hash_map<SamplerRef, wgpu::Sampler> g_cachedSamplers;
 
 static ByteBuffer g_verts;
 static ByteBuffer g_uniforms;
+// Interpolation reads uniforms again while matching and retaining a scene.
+// Keep those reads in cached CPU memory, not a write-combined upload heap.
+// The destination is latched per batch so live setting changes cannot switch
+// its backing storage before pending interpolation tasks have completed.
+static std::vector<uint8_t> g_cpuUniforms;
+static uint8_t* g_uniformUploadDestination = nullptr;
 static ByteBuffer g_indices;
 static ByteBuffer g_storage;
 static ByteBuffer g_textureUpload;
@@ -1048,6 +1054,10 @@ void shutdown() {
   texture_replacement::shutdown();
   gx::shutdown();
 
+  g_uniformUploadDestination = nullptr;
+  g_uniforms.release();
+  std::vector<uint8_t>{}.swap(g_cpuUniforms);
+
   g_textureUploads.clear();
   g_cachedBindGroups.clear();
   g_retiredBindGroups.clear();
@@ -1134,6 +1144,12 @@ static bool begin_frame_impl(bool clearEfb) {
   };
   mapBuffer(g_verts, VertexBufferSize);
   mapBuffer(g_uniforms, UniformBufferSize);
+  g_uniformUploadDestination = nullptr;
+  if (gx::stereo_frame_interpolation_active()) {
+    g_cpuUniforms.resize(UniformBufferSize);
+    g_uniformUploadDestination = g_uniforms.data();
+    g_uniforms = ByteBuffer{g_cpuUniforms.data(), g_cpuUniforms.size()};
+  }
   mapBuffer(g_indices, IndexBufferSize);
   mapBuffer(g_storage, StorageBufferSize);
   if constexpr (UseTextureBuffer) {
@@ -1179,6 +1195,7 @@ void abort_frame() noexcept {
   efb_ram::abort_async();
   g_verts.release();
   g_uniforms.release();
+  g_uniformUploadDestination = nullptr;
   g_indices.release();
   g_storage.release();
   if constexpr (UseTextureBuffer) {
@@ -1509,7 +1526,8 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
           if (size == 0)
             return {};
           const Range copy{static_cast<uint32_t>(history->sources.size()), size};
-          history->sources.insert(history->sources.end(), source, source + size);
+          history->sources.resize(history->sources.size() + size);
+          std::memcpy(history->sources.data() + copy.offset, source, size);
           return copy;
         };
         saved->current = save(sourceUniform.data(), draw.uniformRange.size);
@@ -1573,6 +1591,12 @@ static bool end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame,
     bufferOffset += size;
     return writeSize;
   };
+  if (g_uniformUploadDestination != nullptr) {
+    // Matching, endpoint capture and all uniform edits are complete. Upload
+    // only the used prefix, in one sequential write, before releasing the map.
+    std::memcpy(g_uniformUploadDestination, g_uniforms.data(), g_uniforms.size());
+    g_uniformUploadDestination = nullptr;
+  }
   g_stagingBuffers[currentStagingBuffer].Unmap();
   s_mappingState.store(BufferMapState::Unmapped, std::memory_order_release);
   g_stats.drawCallCount = g_drawCallCount;

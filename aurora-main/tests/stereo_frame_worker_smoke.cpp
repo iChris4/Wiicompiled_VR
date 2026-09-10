@@ -49,7 +49,8 @@ int main(int argc, char** argv) {
   // Extra distinct draws expose CPU uniform/replay costs that a single triangle
   // cannot exercise. Keep the eye targets small to isolate that regression.
   const unsigned drawCount = argc > 1 ? std::max(1, std::atoi(argv[1])) : 1;
-  const bool interpolate = argc < 3 || std::atoi(argv[2]) != 0;
+  const int mode = argc < 3 ? 1 : std::clamp(std::atoi(argv[2]), 0, 2);
+  const bool indexed = argc > 3 && std::atoi(argv[3]) != 0;
   std::filesystem::create_directories("stereo-smoke-cache");
   AuroraConfig config{};
   config.appName = "Aurora VR interpolation smoke";
@@ -66,14 +67,15 @@ int main(int argc, char** argv) {
   config.xrInterop = true;
   aurora_initialize(argc, argv, &config);
   aurora_set_frame_interpolation_fps(0);
-  aurora_set_stereo_frame_interpolation(interpolate);
+  aurora_set_stereo_frame_interpolation(mode != 0);
   aurora_set_stereo_frame_provider(Provide, nullptr);
   aurora::stereo::set_sink(Encode, Submitted, nullptr);
 
   std::thread compositor([] {
     const auto start = Clock::now();
+    uint64_t slot = 1;
     for (uint64_t token = 1;; ++token) {
-      const auto deadline = start + std::chrono::nanoseconds(token * 1'000'000'000 / 90);
+      const auto deadline = start + std::chrono::nanoseconds(slot * 1'000'000'000 / 90);
       std::this_thread::sleep_until(deadline);
       {
         std::lock_guard lock(packetMutex);
@@ -100,6 +102,10 @@ int main(int argc, char** argv) {
       packetCv.wait(lock, [&] { return stop || completed == token; });
       if (stop)
         return;
+      // A real compositor advances to a future display time after a missed
+      // tick. Do not burst old deadlines when interpolation is re-enabled.
+      const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
+      slot = std::max(slot + 1, static_cast<uint64_t>(elapsed) * 90 / 1'000'000'000 + 1);
     }
   });
 
@@ -110,6 +116,10 @@ int main(int argc, char** argv) {
     aurora_update();
     if (!aurora_begin_frame())
       continue;
+    // A live setting change can arrive after this batch's backing memory was
+    // selected. Exercise both directions without restarting the renderer.
+    if (mode == 2 && frame % 60 == 0)
+      aurora_set_stereo_frame_interpolation((frame / 60) % 2 == 0);
     aurora_set_present_schedule(
         std::chrono::duration_cast<std::chrono::nanoseconds>(boundary.time_since_epoch()).count(), 16'666'667);
     Mtx44 projection{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, -1, -1}, {0, 0, -1, 0}};
@@ -119,6 +129,8 @@ int main(int argc, char** argv) {
     GXSetViewport(0, 0, 160, 120, 0, 1);
     GXSetScissor(0, 0, 160, 120);
     GXClearVtxDesc();
+    if (indexed)
+      GXSetVtxDesc(GX_VA_PNMTXIDX, GX_DIRECT);
     GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
     GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
     GXSetNumTexGens(0);
@@ -126,13 +138,25 @@ int main(int argc, char** argv) {
     GXSetNumTevStages(1);
     GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR_NULL);
     GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+    if (indexed) {
+      for (unsigned matrix = 0; matrix < 10; ++matrix)
+        GXLoadPosMtxImm(transform, matrix * 3);
+    }
     for (unsigned draw = 0; draw < drawCount; ++draw) {
       transform[1][3] = static_cast<float>(draw % 20) * 0.01f;
       GXLoadPosMtxImm(transform, GX_PNMTX0);
-      GXBegin(GX_TRIANGLES, GX_VTXFMT0, 3);
-      GXPosition3f32(-1 + static_cast<float>(draw) * 0.0001f, -1, 0);
-      GXPosition3f32(1, -1, 0);
-      GXPosition3f32(0, 1, 0);
+      GXBegin(GX_TRIANGLES, GX_VTXFMT0, indexed ? 30 : 3);
+      for (unsigned matrix = 0; matrix < (indexed ? 10u : 1u); ++matrix) {
+        if (indexed)
+          GXMatrixIndex1u8(GX_VA_PNMTXIDX, matrix * 3);
+        GXPosition3f32(-1 + static_cast<float>(draw) * 0.0001f, -1, 0);
+        if (indexed)
+          GXMatrixIndex1u8(GX_VA_PNMTXIDX, matrix * 3);
+        GXPosition3f32(1, -1, 0);
+        if (indexed)
+          GXMatrixIndex1u8(GX_VA_PNMTXIDX, matrix * 3);
+        GXPosition3f32(0, 1, 0);
+      }
       GXEnd();
     }
     aurora_end_frame_tagged(42);
@@ -158,5 +182,6 @@ int main(int argc, char** argv) {
               submitted.load(), elapsed, fps);
   aurora_shutdown();
   // More headset submissions must not come at the expense of simulation speed.
-  return 240 / elapsed > 55 && fps > (interpolate ? 85 : 55) && fps < (interpolate ? 100 : 65) ? 0 : 1;
+  const double target = mode == 2 ? 75 : mode == 1 ? 90 : 60;
+  return 240 / elapsed > 55 && fps > target - 5 && fps < target + 5 ? 0 : 1;
 }
