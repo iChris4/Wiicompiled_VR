@@ -252,6 +252,12 @@ produced 359 new stereo submissions in 4 seconds (89.7 FPS). This verifies submi
 not full-race performance or visual quality on a headset. Pass a draw count, for example
 `stereo_frame_worker_smoke 2000`, to stress uniform preparation and renderer/producer overlap;
 `stereo_frame_worker_smoke 2000 0` checks native stereo with interpolation Off.
+Use `stereo_frame_worker_smoke 1000 1 1` to exercise ten-matrix palettes and their
+larger uniform history, or `stereo_frame_worker_smoke 1000 2 1` to switch interpolation
+On/Off during recording. The test compositor discards obsolete ticks and uses
+high-resolution waits on Windows, keeping missed ticks from accumulating into bursts.
+It pre-warms the next game frame like the runtime and excludes the first 60 frames
+from timing so shader compilation and initial resource allocation do not skew steady-state results.
 The test checks that the producer stays above 55 FPS as well as checking headset submissions;
 replaying an old scene more often must not hide a slowed simulation. Validate actual races in VDXR at 90 Hz with
 Auto/90 selected, including race entry/exit, first person, recentering and pauses.
@@ -262,6 +268,11 @@ especially with many character draws; see Microsoft's [Map guidance](https://lea
 Retained interpolation reserves eye ranges at seal time and fills them once at the headset sample
 time. VR interpolation also releases the producer after sealing so eye encoding can overlap the
 next game frame, as it does with desktop interpolation.
+
+When VR interpolation is enabled at batch start, uniform recording also uses cached CPU
+memory. Matching and history capture read that buffer, then the used prefix is copied to
+the mapped upload buffer before unmapping. The backing choice stays fixed until the batch
+ends, including mid-frame flushes, so live setting changes cannot invalidate pending tasks.
 
 ## Current limitations
 
