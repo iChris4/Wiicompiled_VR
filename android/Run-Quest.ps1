@@ -3,7 +3,8 @@
 # diagnostics for one session.
 #
 #   powershell -ExecutionPolicy Bypass -File android/Run-Quest.ps1 [-Apk <path>] [-Data <extracted disc dir>]
-#                                                                  [-Seconds 60] [-NoLaunch] [-SkipInstall]
+#                         [-Headset modern|quest1] [-Configuration debug|release]
+#                         [-Seconds 60] [-NoLaunch] [-SkipInstall]
 #
 # -Data names the extracted disc partition (the directory holding sys/, files/,
 # disc/ ...). It is pushed once to a staging folder, then moved into the app's
@@ -24,6 +25,8 @@
 param(
     [string]$Apk = '',
     [string]$Data = '',
+    [ValidateSet('modern', 'quest1')] [string]$Headset = 'modern',
+    [ValidateSet('debug', 'release')] [string]$Configuration = 'debug',
     [int]$Seconds = 60,
     [switch]$NoLaunch,
     [switch]$SkipInstall
@@ -49,8 +52,10 @@ if (-not $devices) { throw 'No device in "device" state; check the Quest is conn
 
 if (-not $SkipInstall) {
     if (-not $Apk) {
-        $Apk = Get-ChildItem -Path (Join-Path $root 'app\build\outputs\apk') -Recurse -Filter '*.apk' |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object FullName
+        $flavour = if ($Headset -eq 'quest1') { 'quest1' } else { 'modernQuest' }
+        $apkDir = Join-Path $root "app\build\outputs\apk\$flavour\$Configuration"
+        $Apk = Get-ChildItem -Path $apkDir -Filter '*.apk' -ErrorAction SilentlyContinue |
+            Select-Object -First 1 | ForEach-Object FullName
     }
     if (-not $Apk -or -not (Test-Path $Apk)) { throw 'No APK found; run Build-Quest.ps1 first or pass -Apk' }
     Write-Host "Installing $Apk"

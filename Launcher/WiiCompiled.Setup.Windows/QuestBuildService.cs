@@ -74,7 +74,7 @@ internal sealed class QuestBuildService
         var kitDirectory = Path.Combine(questRoot, "kit");
         _reporter.Progress(InstallStages.QuestKit, "Reading the game kit from the Quest app...", 2);
         var kit = ExtractKit(apkPath, kitDirectory, cancellationToken);
-        _reporter.Diagnostic($"Quest game kit {kit.Fingerprint} [{string.Join(", ", kit.Products)}]");
+        _reporter.Diagnostic($"Quest game kit {kit.Fingerprint} [{string.Join(", ", kit.Products)}, CPU {kit.AndroidCpu}]");
         if (!kit.Products.Contains(product))
         {
             throw new InvalidOperationException(
@@ -185,7 +185,7 @@ internal sealed class QuestBuildService
         File.Exists(Path.Combine(directory, "sys", "main.dol"));
 
     /// <summary>What the extracted kit says it builds: its fingerprint and the products it carries.</summary>
-    internal sealed record Kit(string Fingerprint, IReadOnlyCollection<string> Products);
+    internal sealed record Kit(string Fingerprint, string AndroidCpu, IReadOnlyCollection<string> Products);
 
     /// <summary>Extracts <c>assets/game_kit</c> from the Quest app's APK and reads what it is for.</summary>
     internal static Kit ExtractKit(string apkPath, string destination, CancellationToken cancellationToken)
@@ -219,11 +219,16 @@ internal sealed class QuestBuildService
         {
             throw new InvalidDataException("The Quest app's game kit has no fingerprint.");
         }
+        if (!document.RootElement.TryGetProperty("androidCpu", out var androidCpu) ||
+            androidCpu.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(androidCpu.GetString()))
+        {
+            throw new InvalidDataException("The Quest app's game kit has no Android CPU target.");
+        }
         var products = document.RootElement.TryGetProperty("products", out var value) &&
                        value.ValueKind == JsonValueKind.Object
             ? value.EnumerateObject().Select(property => property.Name).ToArray()
             : throw new InvalidDataException("The Quest app's game kit lists no games it can build.");
-        return new Kit(fingerprint.GetString()!, products);
+        return new Kit(fingerprint.GetString()!, androidCpu.GetString()!, products);
     }
 
     private async Task<Toolchain> EnsureToolchainAsync(string questRoot, CancellationToken cancellationToken)

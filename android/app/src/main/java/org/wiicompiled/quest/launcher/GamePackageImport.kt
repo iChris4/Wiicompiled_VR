@@ -157,6 +157,9 @@ object GamePackageImport {
         if (manifest.optString("kitFingerprint") != GameLibrary.kitFingerprint(context)) {
             return "This game file was built for a different version of this app. Build it again against the version installed on the headset."
         }
+        if (manifest.optString("androidCpu") != BuildConfig.ANDROID_CPU) {
+            return "This game file targets ${manifest.optString("androidCpu")}, but this app requires ${BuildConfig.ANDROID_CPU}. Build it again for the correct headset."
+        }
         val expected = manifest.optString("librarySha256")
         if (librarySha256 == null) {
             return "This game file has no game library (libmain.so)."

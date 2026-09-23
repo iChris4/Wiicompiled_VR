@@ -617,6 +617,10 @@ class LauncherActivity : Activity() {
     }
 
     private fun play() {
+        if (BuildConfig.QUEST1_DIRECT_LAUNCH) {
+            Toast.makeText(this, R.string.home_quest1_launch_from_library, Toast.LENGTH_LONG).show()
+            return
+        }
         if (launching) {
             return
         }

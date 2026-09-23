@@ -15,8 +15,25 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
 
 namespace {
+#if defined(__ANDROID__)
+bool quest1_direct_display_copy() noexcept {
+  static const bool enabled = [] {
+    char device[PROP_VALUE_MAX]{};
+    return __system_property_get("ro.product.device", device) > 0 && std::strcmp(device, "monterey") == 0;
+  }();
+  return enabled;
+}
+#else
+constexpr bool quest1_direct_display_copy() noexcept { return false; }
+#endif
+
 struct CopyClearState {
   bool clearColor = false;
   bool clearAlpha = false;
@@ -417,7 +434,15 @@ void GXCopyDisp(void* dest, GXBool clear) {
   const auto logicalDstHeight = std::max<u32>(
       g_gxState.dispCopyDstHeight != 0 ? g_gxState.dispCopyDstHeight : static_cast<u32>(g_gxState.dispCopySrc.height),
       1);
-  const auto [dstWidth, dstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
+  auto [dstWidth, dstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
+  if (quest1_direct_display_copy()) {
+    // The Quest 1's Adreno 540 driver renders Aurora's filtered display
+    // copy as uniform black/white. Keeping the destination identical to the
+    // resolved EFB region selects WebGPU's plain CopyTextureToTexture path;
+    // the later presentation pass performs the final screen scaling.
+    dstWidth = static_cast<u32>(std::max(rect.width, 1));
+    dstHeight = static_cast<u32>(std::max(rect.height, 1));
+  }
 
   if (!g_gxState.displayCopyTexture || g_gxState.displayCopyWidth != dstWidth ||
       g_gxState.displayCopyHeight != dstHeight) {
@@ -430,6 +455,15 @@ void GXCopyDisp(void* dest, GXBool clear) {
   auto copyFilter = combined_copy_filter_coefficients(g_gxState.copyFilterVFilter);
   if (aurora::g_config.disableCopyFilter) {
     copyFilter = {0, copyFilter[0] + copyFilter[1] + copyFilter[2], 0};
+  }
+  if (quest1_direct_display_copy()) {
+    copyFilter = {0, 64, 0};
+    static bool questDirectDisplayCopyLogged = false;
+    if (!questDirectDisplayCopyLogged) {
+      questDirectDisplayCopyLogged = true;
+      std::fprintf(stderr, "[gx] Quest 1 direct display copy: EFB rect %dx%d at %d,%d -> %ux%u\n",
+                   rect.width, rect.height, rect.x, rect.y, dstWidth, dstHeight);
+    }
   }
   aurora::gfx::resolve_pass(g_gxState.displayCopyTexture, rect, clearState.clearColor, clearState.clearAlpha,
                             clearState.clearDepth, clearState.clearColorValue, aurora::gx::clear_depth_value(),
@@ -450,11 +484,21 @@ void GXCopyTex(void* dest, GXBool clear) {
   // Keep guest dimensions for cache identity while preserving scaled GPU detail.
   const auto logicalDstWidth = std::max<u32>(g_gxState.texCopyDstWidth, 1);
   const auto logicalDstHeight = std::max<u32>(g_gxState.texCopyDstHeight, 1);
-  const auto [scaledDstWidth, scaledDstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
+  auto [scaledDstWidth, scaledDstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
   const auto texCopyFmt = g_gxState.texCopyFmt;
   const bool sourceHasAlpha = aurora::gx::render_target_has_alpha(g_gxState.pixelFmt);
   const bool forceOpaqueAlpha = !sourceHasAlpha && !aurora::gx::is_depth_format(texCopyFmt);
-  const auto resolveFmt = texCopyFmt;
+  const bool quest1DirectRgb5a3 = quest1_direct_display_copy() && texCopyFmt == GX_TF_RGB5A3;
+  auto resolveFmt = texCopyFmt;
+  if (quest1DirectRgb5a3) {
+    // The host texture is RGBA8 regardless of the guest cache format. Match
+    // the EFB rectangle and advertise an RGBA8 resolve so this live menu copy
+    // becomes CopyTextureToTexture instead of invoking Adreno's broken
+    // RGB5A3 conversion/scaling shader.
+    scaledDstWidth = static_cast<u32>(std::max(rect.width, 1));
+    scaledDstHeight = static_cast<u32>(std::max(rect.height, 1));
+    resolveFmt = GX_TF_RGBA8;
+  }
 
   const aurora::gx::GXState::CopyTextureKey key{
       .dest = dest,
@@ -518,7 +562,10 @@ void GXCopyTex(void* dest, GXBool clear) {
   if (aurora::gx::render_target_has_alpha(g_gxState.pixelFmt)) {
     clearState.clearAlpha = clear && alphaUpdate;
   }
-  const auto copyFilter = combined_copy_filter_coefficients(g_gxState.copyFilterVFilter);
+  auto copyFilter = combined_copy_filter_coefficients(g_gxState.copyFilterVFilter);
+  if (quest1DirectRgb5a3) {
+    copyFilter = {0, 64, 0};
+  }
   // Skip only recurring color copies so one-shot copies are never lost.
   const bool producedConsecutively = handle.revision != 0 && currentFrame - handle.lastProducedFrame <= 1;
   const bool persistentCopy = !aurora::gx::is_depth_format(texCopyFmt) && !producedConsecutively;
@@ -531,7 +578,8 @@ void GXCopyTex(void* dest, GXBool clear) {
   }
   aurora::gfx::resolve_pass(handle.handle, rect, clearState.clearColor, clearState.clearAlpha, clearState.clearDepth,
                             clearState.clearColorValue, aurora::gx::clear_depth_value(), resolveFmt,
-                            &sourceRect.sampleRect, g_gxState.texCopyHalfScale, &copyFilter, forceOpaqueAlpha,
+                            quest1DirectRgb5a3 ? nullptr : &sourceRect.sampleRect,
+                            quest1DirectRgb5a3 ? false : g_gxState.texCopyHalfScale, &copyFilter, forceOpaqueAlpha,
                             sourceRect.sampleRect.w() / std::max<float>(g_gxState.texCopySrc.height, 1.0f),
                             (g_gxState.copyClamp & GX_CLAMP_TOP) != 0, (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0,
                             persistentCopy);

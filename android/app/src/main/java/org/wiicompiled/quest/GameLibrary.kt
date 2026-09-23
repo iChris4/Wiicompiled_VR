@@ -50,6 +50,8 @@ object GameLibrary {
         if (manifest == null || !library(context, profile).isFile) {
             return Status.Missing
         }
-        return if (manifest.optString("kitFingerprint") == kitFingerprint(context)) Status.Ready else Status.Stale
+        return if (manifest.optString("kitFingerprint") == kitFingerprint(context) &&
+            manifest.optString("androidCpu") == BuildConfig.ANDROID_CPU
+        ) Status.Ready else Status.Stale
     }
 }

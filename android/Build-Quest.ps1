@@ -1,7 +1,7 @@
 # Builds the standalone Meta Quest APK on a Windows host.
 #
 #   powershell -ExecutionPolicy Bypass -File android/Build-Quest.ps1 [-Generated <dir>]
-#                                [-Configuration debug|release] [-Install]
+#                                [-Headset modern|quest1] [-Configuration debug|release] [-Install]
 #
 # One app offers both games: the APK carries a kit for the base game, and for Retro Rewind too
 # when -Generated holds a translation that includes the mod.
@@ -20,6 +20,7 @@ param(
     [string]$Generated = '',
     [string]$Dependencies = '',
     [string]$CMakeDir = '',
+    [ValidateSet('modern', 'quest1')] [string]$Headset = 'modern',
     [ValidateSet('debug', 'release')] [string]$Configuration = 'debug',
     [switch]$Install
 )
@@ -73,7 +74,9 @@ if (-not $Dependencies) {
 }
 
 $variant = (Get-Culture).TextInfo.ToTitleCase($Configuration)
-$task = "app:assemble$variant"
+$flavour = if ($Headset -eq 'quest1') { 'Quest1' } else { 'ModernQuest' }
+$expectedCpu = if ($Headset -eq 'quest1') { 'kryo' } else { 'cortex-a77' }
+$task = "app:assemble$flavour$variant"
 $gradleArgs = @(
     '--project-dir', $root,
     "-PmkwGeneratedDir=$Generated"
@@ -84,7 +87,8 @@ Write-Host "gradlew $($gradleArgs -join ' ')"
 & (Join-Path $root 'gradlew.bat') @gradleArgs
 if ($LASTEXITCODE -ne 0) { throw "Gradle failed ($LASTEXITCODE)" }
 
-$apkDir = Join-Path $root "app\build\outputs\apk\$Configuration"
+$flavourDir = if ($Headset -eq 'quest1') { 'quest1' } else { 'modernQuest' }
+$apkDir = Join-Path $root "app\build\outputs\apk\$flavourDir\$Configuration"
 $apk = Get-ChildItem -Path $apkDir -Filter '*.apk' | Select-Object -First 1
 if (-not $apk) { throw "No APK under $apkDir" }
 Write-Host "APK: $($apk.FullName)"
@@ -95,16 +99,25 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($apk.FullName)
 try {
     $gameLibraries = @($archive.Entries | Where-Object { $_.FullName -match '^lib/[^/]+/libmain[^/]*\.so$' })
-    $hasKit = @($archive.Entries | Where-Object { $_.FullName -eq 'assets/game_kit/kit.json' }).Count -gt 0
+    $kitEntry = @($archive.Entries | Where-Object { $_.FullName -eq 'assets/game_kit/kit.json' }) | Select-Object -First 1
+    $kitCpu = if ($kitEntry) {
+        $reader = New-Object IO.StreamReader($kitEntry.Open())
+        try { ($reader.ReadToEnd() | ConvertFrom-Json).androidCpu } finally { $reader.Dispose() }
+    } else { '' }
     $hasToolchain = @($archive.Entries | Where-Object { $_.FullName -eq 'assets/quest_toolchain/files.zip' }).Count -gt 0
 } finally { $archive.Dispose() }
 if ($gameLibraries.Count -gt 0) { throw "The APK contains a translated game library: $($gameLibraries.FullName -join ', ')" }
-if (-not $hasKit) { throw 'The APK has no game kit (assets/game_kit/kit.json)' }
+if (-not $kitEntry) { throw 'The APK has no game kit (assets/game_kit/kit.json)' }
+if ($kitCpu -ne $expectedCpu) { throw "The $Headset APK contains a game kit for CPU '$kitCpu', expected '$expectedCpu'" }
 if (-not $hasToolchain) { throw 'The APK has no build toolchain (assets/quest_toolchain/files.zip)' }
 
 if ($Install) {
     $adb = Join-Path $sdkRoot 'platform-tools\adb.exe'
     & $adb install -r $apk.FullName
     if ($LASTEXITCODE -ne 0) { throw "adb install failed ($LASTEXITCODE)" }
-    Write-Host 'Installed. Build a game with Build on this Quest in the launcher, or on this PC with android/Build-QuestGame.ps1 -Install.'
+    if ($Headset -eq 'quest1') {
+        Write-Host 'Installed. Use WiiCompiled Settings for setup, then launch WiiCompiled VR directly from the library.'
+    } else {
+        Write-Host 'Installed. Build a game with Build on this Quest in the launcher, or on this PC with android/Build-QuestGame.ps1 -Install.'
+    }
 }

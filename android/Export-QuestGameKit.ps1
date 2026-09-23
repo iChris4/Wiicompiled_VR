@@ -8,10 +8,11 @@
 param(
     [Parameter(Mandatory)] [string]$CMakeBinaryDir,
     [Parameter(Mandatory)] [string]$OutputDir,
-    [Parameter(Mandatory)] [string]$LlvmStrip
+    [Parameter(Mandatory)] [string]$LlvmStrip,
+    [Parameter(Mandatory)] [string]$AndroidCpu
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'QuestGameKit.psm1') -Force
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$kit = Export-QuestGameKit -CMakeBinaryDir $CMakeBinaryDir -OutputDir $OutputDir -RepoRoot $repo -LlvmStrip $LlvmStrip
-Write-Host "Quest game kit $($kit.Fingerprint) [$($kit.Products -join ', ')] -> $OutputDir"
+$kit = Export-QuestGameKit -CMakeBinaryDir $CMakeBinaryDir -OutputDir $OutputDir -RepoRoot $repo -LlvmStrip $LlvmStrip -AndroidCpu $AndroidCpu
+Write-Host "Quest game kit $($kit.Fingerprint) [$($kit.Products -join ', '), CPU $AndroidCpu] -> $OutputDir"

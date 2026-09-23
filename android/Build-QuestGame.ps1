@@ -6,6 +6,7 @@
 # SDK's NDK and ninja:
 #
 #   powershell -ExecutionPolicy Bypass -File android/Build-QuestGame.ps1 [-Generated <dir>] [-Kit <dir>]
+#                                    [-Headset modern|quest1] [-Configuration debug|release]
 #                                    [-Data <extracted disc dir>] [-Output <file.wcgame>] [-Install]
 #
 # WiiCompiled Setup's --build-quest runs the copy staged in an installation's BuildWorkspace\android,
@@ -32,6 +33,8 @@ param(
     [string]$Sysroot = '',
     [string]$Ninja = '',
     [string]$BuiltBy = 'android/Build-QuestGame.ps1',
+    [ValidateSet('modern', 'quest1')] [string]$Headset = 'modern',
+    [ValidateSet('debug', 'release')] [string]$Configuration = 'debug',
     [ValidateSet('base', 'retro_rewind')] [string]$Product = 'base',
     [string]$Mod = '',
     [int]$TranslatedJobs = 0,
@@ -44,12 +47,13 @@ $root = $PSScriptRoot
 $workspace = (Resolve-Path (Join-Path $root '..')).Path
 if (-not $Generated) { $Generated = Join-Path $workspace '.scratch\vr-build-workspace\BuildWorkspace\generated' }
 if (-not $Manifest) { $Manifest = Join-Path $workspace 'projects\mkwii\recomp.yml' }
-if (-not $BuildDir) { $BuildDir = Join-Path $root "app\build\questGame\$Product" }
+$variant = if ($Headset -eq 'quest1') { 'quest1' } else { 'modernQuest' }
+$variant += (Get-Culture).TextInfo.ToTitleCase($Configuration)
+if (-not $BuildDir) { $BuildDir = Join-Path $root "app\build\questGame\$variant\$Product" }
 if (-not $Kit) {
-    # The kit the last APK build packaged, so the game matches the app it will be imported into.
-    $Kit = Get-ChildItem -Path (Join-Path $root 'app\build\generated') -Filter kit.json -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.Directory.Name -eq 'game_kit' } |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
+    # Select the requested variant explicitly. Modification time is unsafe now that flavours use
+    # different -mcpu targets and an up-to-date native probe is not necessarily the newest one.
+    $Kit = Join-Path $root "app\build\generated\assets\questGameKit\$variant\game_kit"
 }
 if (-not $Kit -or -not (Test-Path (Join-Path $Kit 'kit.json'))) {
     throw 'No game kit; run Build-Quest.ps1 first, or pass -Kit'

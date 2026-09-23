@@ -10,6 +10,12 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
+
+#include <cstring>
+
 #include "texture_convert.hpp"
 
 using namespace std::string_literals;
@@ -195,6 +201,48 @@ static constexpr std::string_view FragPassthrough = R"(
 }
 )"sv;
 
+// The Quest 1's Adreno compiler misrenders the general copy shader, whose
+// sample helper contains texture-dimension math and a dynamic filter branch,
+// even for passthrough RGBA copies. This equivalent shader deliberately keeps
+// the same bind-group contract while omitting that unused filter machinery.
+static constexpr std::string_view SimpleBlitShader = R"(
+@group(0) @binding(0) var src_samp: sampler;
+@group(0) @binding(1) var src: texture_2d<f32>;
+
+struct UVTransform {
+    offset: vec2f,
+    scale: vec2f,
+    copy_filter: vec4f,
+    flags: vec4f,
+};
+@group(0) @binding(2) var<uniform> uv_xf: UVTransform;
+
+struct VertexOutput {
+    @builtin(position) pos: vec4f,
+    @location(0) uv: vec2f,
+};
+
+var<private> positions: array<vec2f, 3> = array(
+    vec2f(-1.0, 1.0), vec2f(-1.0, -3.0), vec2f(3.0, 1.0));
+var<private> uvs: array<vec2f, 3> = array(
+    vec2f(0.0, 0.0), vec2f(0.0, 2.0), vec2f(2.0, 0.0));
+
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    var out: VertexOutput;
+    out.pos = vec4f(positions[vi], 0.0, 1.0);
+    out.uv = uvs[vi] * uv_xf.scale + uv_xf.offset;
+    return out;
+}
+
+@fragment fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+    let color = textureSample(src, src_samp, in.uv);
+    if (uv_xf.flags.x != 0.0) {
+        return vec4f(color.rgb, 1.0);
+    }
+    return color;
+}
+)"sv;
+
 // GX_TF_I4: 4-bit intensity -> R8Unorm (quantized)
 static constexpr std::string_view FragI4 = R"(
 @fragment fn fs_main(in: VertexOutput) -> @location(0) vec4f {
@@ -375,6 +423,19 @@ static wgpu::Sampler g_nearestSampler;
 static wgpu::Sampler g_linearSampler;
 static absl::flat_hash_map<GXTexFmt, wgpu::RenderPipeline> g_pipelines;
 static wgpu::RenderPipeline g_blitPipeline;
+static wgpu::RenderPipeline g_quest1BlitPipeline;
+
+static bool quest1_simple_blit() noexcept {
+#if defined(__ANDROID__)
+  static const bool enabled = [] {
+    char device[PROP_VALUE_MAX]{};
+    return __system_property_get("ro.product.device", device) > 0 && std::strcmp(device, "monterey") == 0;
+  }();
+  return enabled;
+#else
+  return false;
+#endif
+}
 
 static wgpu::RenderPipeline create_pipeline(const ConvPipeline& conv, const std::string_view shaderPreamble,
                                             const wgpu::BindGroupLayout& bindGroupLayout) {
@@ -491,6 +552,9 @@ void initialize() {
   g_blitPipeline = create_pipeline(
       {GX_TF_RGBA8, FragPassthrough, webgpu::g_graphicsConfig.surfaceConfiguration.format, "TexCopyConv Blit"},
       ShaderPreamble, g_bindGroupLayout);
+  g_quest1BlitPipeline = create_pipeline(
+      {GX_TF_RGBA8, {}, webgpu::g_graphicsConfig.surfaceConfiguration.format, "Quest 1 Simple TexCopy Blit"},
+      SimpleBlitShader, g_bindGroupLayout);
   for (const auto& conv : ConvPipelines) {
     g_pipelines[conv.fmt] = create_pipeline(conv, ShaderPreamble, g_bindGroupLayout);
     if (conv.outputFormat != to_wgpu(conv.fmt)) {
@@ -522,6 +586,7 @@ void initialize() {
 void shutdown() {
   g_pipelines.clear();
   g_blitPipeline = {};
+  g_quest1BlitPipeline = {};
   g_bindGroupLayout = {};
   g_depthBindGroupLayout = {};
   g_nearestSampler = {};
@@ -597,6 +662,14 @@ static void execute(const wgpu::CommandEncoder& cmd, const ConvRequest& req, con
 }
 
 void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req) {
+  if (quest1_simple_blit() && req.fmt == GX_TF_RGB5A3) {
+    // MKW's character/kart menu previews are live RGB5A3 EFB copies. The
+    // Adreno 540 miscompiles their quantizing conversion shader just like the
+    // filtered display-copy shader, leaving the preview panels black. Preserve
+    // the RGBA source directly; only the Wii-era RGB5A3 quantization is lost.
+    execute(cmd, req, g_quest1BlitPipeline);
+    return;
+  }
   const auto it = g_pipelines.find(req.fmt);
   if (it == g_pipelines.end()) {
     Log.fatal("No copy conversion pipeline for format {}", static_cast<int>(req.fmt));
@@ -604,6 +677,8 @@ void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req) {
   execute(cmd, req, it->second);
 }
 
-void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req) { execute(cmd, req, g_blitPipeline); }
+void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req) {
+  execute(cmd, req, quest1_simple_blit() ? g_quest1BlitPipeline : g_blitPipeline);
+}
 
 } // namespace aurora::gfx::tex_copy_conv

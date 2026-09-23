@@ -1,7 +1,7 @@
 # WiiCompiled VR for Meta Quest (Android)
 
-Standalone Android/OpenXR build of the Mario Kart Wii recompilation for Quest 2,
-Quest 3, Quest 3S and Quest Pro. The full design, build walkthrough and current
+Standalone Android/OpenXR build of the Mario Kart Wii recompilation for Quest 1,
+Quest 2, Quest 3, Quest 3S and Quest Pro. The full design, build walkthrough and current
 status live in [docs/quest-port.md](../docs/quest-port.md); this directory only
 holds the Gradle project, its helper scripts, the game kit tooling
 (`QuestGameKit.psm1`, `Build-QuestGame.ps1`), the on-headset build toolchain
@@ -10,6 +10,7 @@ holds the Gradle project, its helper scripts, the game kit tooling
 ```powershell
 powershell -ExecutionPolicy Bypass -File android/Prepare-QuestDependencies.ps1          # stages the SDL3 3.4.4 AAR once
 powershell -ExecutionPolicy Bypass -File android/Build-Quest.ps1 -Install               # the app, debug-signed, installs over adb
+powershell -ExecutionPolicy Bypass -File android/Build-Quest.ps1 -Headset quest1 -Install # Quest 1 flavour
 ```
 
 One app offers both games, with a toggle on Home: Mario Kart Wii and, when your
@@ -23,6 +24,7 @@ half an hour) or on a PC and imported:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File android/Build-QuestGame.ps1 -Product base -Install
+powershell -ExecutionPolicy Bypass -File android/Build-QuestGame.ps1 -Headset quest1 -Product base -Install
 powershell -ExecutionPolicy Bypass -File android/Build-QuestGame.ps1 -Product retro_rewind -Mod <RetroRewind6> -Install
 ```
 

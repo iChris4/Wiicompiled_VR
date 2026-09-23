@@ -268,10 +268,16 @@ function Export-QuestGameKit {
         [Parameter(Mandatory)] [string]$CMakeBinaryDir,
         [Parameter(Mandatory)] [string]$OutputDir,
         [Parameter(Mandatory)] [string]$RepoRoot,
-        [Parameter(Mandatory)] [string]$LlvmStrip
+        [Parameter(Mandatory)] [string]$LlvmStrip,
+        [Parameter(Mandatory)] [string]$AndroidCpu
     )
     $ErrorActionPreference = 'Stop'
     $binary = ConvertTo-ForwardPath $CMakeBinaryDir
+    $cache = [IO.File]::ReadAllText("$binary/CMakeCache.txt")
+    $configuredCpu = [regex]::Match($cache, '(?m)^MKW_ANDROID_CPU(?::[^=\r\n]*)?=([^\r\n]+)\r?$').Groups[1].Value.Trim()
+    if ($configuredCpu -ne $AndroidCpu) {
+        throw "CMake tree $binary targets Android CPU '$configuredCpu', expected '$AndroidCpu'"
+    }
     $runtimeInclude = ConvertTo-ForwardPath (Join-Path $RepoRoot 'runtime/include')
     $ninja = [IO.File]::ReadAllText("$binary/build.ninja")
     $commands = Read-CompileCommands "$binary/compile_commands.json"
@@ -405,6 +411,7 @@ function Export-QuestGameKit {
 
     $recipe = [ordered]@{
         schema = $script:KitSchema
+        androidCpu = $AndroidCpu
         runtimeIncludeFingerprint = Get-RuntimeIncludeFingerprint (Join-Path $OutputDir 'include')
         products = $products
     }
@@ -445,10 +452,16 @@ function Invoke-QuestGameBuild {
     $workspace = ConvertTo-ForwardPath (Split-Path -Parent $generated)
     $recipe = [IO.File]::ReadAllText("$kit/kit.json") | ConvertFrom-Json
     if ($recipe.schema -ne $script:KitSchema) { throw "Unsupported game kit schema $($recipe.schema)" }
+    if ([string]::IsNullOrWhiteSpace($recipe.androidCpu)) { throw 'The game kit does not name its Android CPU target' }
     if (-not $recipe.products.PSObject.Properties.Name.Contains($Product)) {
         throw "This Quest app's game kit cannot build $Product (it has: $($recipe.products.PSObject.Properties.Name -join ', '))"
     }
     $productRecipe = $recipe.products.$Product
+    foreach ($kind in 'translated', 'product', 'runtime', 'asm') {
+        if (@($productRecipe.compile.$kind) -notcontains "-mcpu=$($recipe.androidCpu)") {
+            throw "The game kit says CPU '$($recipe.androidCpu)' but its $kind compile flags do not match"
+        }
+    }
     # The translation must come from the same release as the kit: its code is compiled against the
     # kit's runtime headers and linked with the kit's runtime objects.
     $workspaceInclude = Join-Path $workspace 'runtime/include'
@@ -460,6 +473,20 @@ function Invoke-QuestGameBuild {
     }
     New-Item -ItemType Directory -Force $BuildDir | Out-Null
     $build = ConvertTo-ForwardPath $BuildDir
+    # Ninja sees the response-file path in each command, not changes to that file's contents. A
+    # different kit can therefore otherwise reuse objects compiled with another flavour's -mcpu.
+    # Keep an explicit identity next to the build and discard every reusable native output when it
+    # changes. WiiCompiled Setup deliberately reuses one BuildDir across APK selections.
+    $identity = "$($recipe.fingerprint) $Product"
+    $identityFile = "$build/kit-identity.txt"
+    $previousIdentity = if (Test-Path $identityFile) { [IO.File]::ReadAllText($identityFile).Trim() } else { '' }
+    if ($previousIdentity -ne $identity) {
+        foreach ($stale in 'obj', 'libmain.so', '.ninja_deps', '.ninja_log') {
+            $path = "$build/$stale"
+            if (Test-Path $path) { Remove-Item -Recurse -Force $path }
+        }
+    }
+    [IO.File]::WriteAllText($identityFile, $identity, (New-Object Text.UTF8Encoding $false))
     $expand = { param([string]$s) $s.Replace('{kit}', $kit).Replace('{sysroot}', (ConvertTo-ForwardPath $Sysroot)).Replace('{workspace}', $workspace) }
 
     foreach ($kind in 'translated', 'product', 'runtime', 'asm') {
@@ -596,6 +623,7 @@ function New-QuestGamePackage {
         dolSha256 = $DolSha256
         relSha256 = $RelSha256
         kitFingerprint = $recipe.fingerprint
+        androidCpu = $recipe.androidCpu
         library = $recipe.products.$Product.output
         librarySha256 = Get-Sha256Hex $Library
         includesData = [bool]$DataDir

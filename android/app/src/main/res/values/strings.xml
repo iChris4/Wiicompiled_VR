@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WiiCompiled VR</string>
+    <string name="quest1_settings_name">WiiCompiled Settings</string>
     <string name="missing_game_data_title">Game data not found</string>
     <string name="missing_game_data_message">Copy the extracted DATA directory of your own PAL RMCP01 Mario Kart Wii disc to:\n\n%1$s\n\nFor example with adb: adb push DATA /sdcard/Android/data/org.wiicompiled.quest/files/WiiCompiledOpenXRVR/DATA\n\nThen start the app again.</string>
 
@@ -78,6 +79,7 @@
     <string name="home_replace_title">Replace the game files?</string>
     <string name="home_replace_message">Your current DATA folder stays until the new disc image has been checked and completely extracted.</string>
     <string name="home_launch_failed">The game could not be started.</string>
+    <string name="home_quest1_launch_from_library">Quest 1 cannot switch this settings panel into VR. Close it, then launch WiiCompiled VR from your library.</string>
     <string name="home_close_game_first">Close the game first.</string>
     <string name="home_reset">Reset installation</string>
     <string name="home_reset_title">Reset the installation?</string>

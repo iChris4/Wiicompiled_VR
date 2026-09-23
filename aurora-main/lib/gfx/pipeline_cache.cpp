@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <limits>
@@ -22,6 +23,12 @@
 #include <absl/container/flat_hash_set.h>
 #include <fmt/format.h>
 #include <tracy/Tracy.hpp>
+
+#if defined(__ANDROID__)
+#include <pthread.h>
+#include <sys/resource.h>
+#include <sys/system_properties.h>
+#endif
 
 namespace aurora::gfx {
 static Module Log("aurora::gfx::pipeline_cache");
@@ -66,8 +73,26 @@ constexpr size_t MaxQueuedPipelineBuilds = 256;
 // render and game threads, and cap large hosts to limit driver submissions and memory use.
 constexpr size_t ReservedLogicalProcessors = 2;
 constexpr size_t MaxPipelineWorkers = 22;
-// Cached clear and GX pipelines are prewarmed using the full worker pool.
-constexpr size_t MaxBackgroundPipelineWorkers = MaxPipelineWorkers;
+constexpr size_t Quest1MaxPipelineWorkers = 2;
+static bool g_quest1PipelineScheduling = false;
+
+static bool quest1_pipeline_scheduling() noexcept {
+#if defined(__ANDROID__)
+  static const bool enabled = [] {
+    char device[PROP_VALUE_MAX]{};
+    return __system_property_get("ro.product.device", device) > 0 && std::strcmp(device, "monterey") == 0;
+  }();
+  return enabled;
+#else
+  return false;
+#endif
+}
+
+static size_t max_background_pipeline_workers() noexcept {
+  // Quest 1's Adreno driver serializes pipeline creation. Leave cached recipes
+  // dormant until first use there; all newer headsets retain normal prewarm.
+  return g_quest1PipelineScheduling ? 0 : MaxPipelineWorkers;
+}
 // For synchronous pipeline fallback (OpenGL)
 #ifdef NDEBUG
 constexpr size_t BuildPipelinesPerFrame = 5;
@@ -462,6 +487,12 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
       }
     } else if (g_pendingPipelines.contains(hash)) {
       auto* pending = touch_pending_pipeline(hash, g_pipelineFrameActive);
+      // A cached recipe can sit dormant when background prewarm is disabled.
+      // Promoting it to first-use priority must wake a worker before
+      // bind_pipeline waits for completion, or both threads sleep forever.
+      if (g_pipelineFrameActive && deferGxPipeline) {
+        notifyWorker = true;
+      }
       if (pending != nullptr && firstFrameUsed < pending->firstFrameUsed) {
         pending->firstFrameUsed = firstFrameUsed;
         if (persist) {
@@ -1033,6 +1064,14 @@ static void pipeline_worker() {
 #ifdef TRACY_ENABLE
   tracy::SetThreadName("Pipeline compilation thread");
 #endif
+#if defined(__ANDROID__)
+  pthread_setname_np(pthread_self(), "GXPipeline");
+  if (g_quest1PipelineScheduling) {
+    // setpriority(PRIO_PROCESS, 0, ...) targets the calling Linux thread.
+    // Quest 1 pipeline creation must not preempt gameplay or XR.
+    setpriority(PRIO_PROCESS, 0, 5);
+  }
+#endif
 
   while (true) {
     PendingPipeline pending;
@@ -1042,7 +1081,7 @@ static void pipeline_worker() {
       g_pipelineCv.wait(lock, [] {
         return !g_priorityPipelines.empty() ||
                (!g_backgroundPipelines.empty() &&
-                g_activeBackgroundPipelineWorkers < MaxBackgroundPipelineWorkers) ||
+                g_activeBackgroundPipelineWorkers < max_background_pipeline_workers()) ||
                g_pipelineThreadEnd;
       });
       if (g_pipelineThreadEnd) {
@@ -1091,7 +1130,8 @@ static size_t pipeline_worker_count() {
   }
   const size_t availableWorkers =
       logicalProcessors > ReservedLogicalProcessors ? logicalProcessors - ReservedLogicalProcessors : 1;
-  return std::clamp(availableWorkers, size_t{1}, MaxPipelineWorkers);
+  const size_t maximum = g_quest1PipelineScheduling ? Quest1MaxPipelineWorkers : MaxPipelineWorkers;
+  return std::clamp(availableWorkers, size_t{1}, maximum);
 }
 
 template <typename PipelineConfig, typename CreateFn>
@@ -1252,6 +1292,7 @@ void initialize_pipeline_cache() {
   g_pipelineFrameActive = false;
   g_pipelineThreadEnd = false;
   g_activeBackgroundPipelineWorkers = 0;
+  g_quest1PipelineScheduling = quest1_pipeline_scheduling();
 
   if (webgpu::g_backendType == wgpu::BackendType::OpenGL || webgpu::g_backendType == wgpu::BackendType::OpenGLES ||
       webgpu::g_backendType == wgpu::BackendType::WebGPU) {
@@ -1264,7 +1305,7 @@ void initialize_pipeline_cache() {
       g_pipelineThreads.emplace_back(pipeline_worker);
     }
     Log.info("Enabled {} priority pipeline compilation workers ({} background prewarm)",
-             workerCount, MaxBackgroundPipelineWorkers);
+             workerCount, max_background_pipeline_workers());
   }
 
   load_pipeline_cache();

@@ -1,4 +1,5 @@
 import javax.inject.Inject
+import org.gradle.api.provider.Property
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -139,6 +140,34 @@ android {
         }
     }
 
+    flavorDimensions += "headset"
+    productFlavors {
+        create("modernQuest") {
+            dimension = "headset"
+            manifestPlaceholders["mkwQuestSupportedDevices"] = "quest2|quest3|quest3s|questpro"
+            buildConfigField("boolean", "QUEST1_DIRECT_LAUNCH", "false")
+            buildConfigField("String", "ANDROID_CPU", "\"cortex-a77\"")
+            externalNativeBuild {
+                cmake {
+                    // Snapdragon XR2 and newer. Keep this as the default build target.
+                    arguments += "-DMKW_ANDROID_CPU=cortex-a77"
+                }
+            }
+        }
+        create("quest1") {
+            dimension = "headset"
+            manifestPlaceholders["mkwQuestSupportedDevices"] = "quest|quest2"
+            buildConfigField("boolean", "QUEST1_DIRECT_LAUNCH", "true")
+            buildConfigField("String", "ANDROID_CPU", "\"kryo\"")
+            externalNativeBuild {
+                cmake {
+                    // Snapdragon 835. cortex-a77 binaries terminate with SIGILL on Quest 1.
+                    arguments += "-DMKW_ANDROID_CPU=kryo"
+                }
+            }
+        }
+    }
+
     externalNativeBuild {
         cmake {
             // aurora-main needs CMake 3.25+, newer than the SDK's bundled 3.22.1;
@@ -195,6 +224,9 @@ abstract class ExportQuestGameKit : DefaultTask() {
     @get:Internal
     abstract val llvmStrip: RegularFileProperty
 
+    @get:Input
+    abstract val androidCpu: Property<String>
+
     @get:Inject
     abstract val execOperations: ExecOperations
 
@@ -206,18 +238,37 @@ abstract class ExportQuestGameKit : DefaultTask() {
     @TaskAction
     fun export() {
         val app = appDir.get().asFile
-        val probe = File(app, "build/intermediates/cxx").walkTopDown()
+        data class Candidate(val probe: File, val binaryDir: File, val cpu: String?)
+        fun cacheValue(cache: String, name: String): String? =
+            Regex("(?m)^${Regex.escape(name)}(?::[^=\\r\\n]*)?=([^\\r\\n]*)$")
+                .find(cache)?.groupValues?.get(1)?.trim()
+
+        val candidates = File(app, "build/intermediates/cxx").walkTopDown()
             .filter { it.name == "libmkw_quest_kit_probe.so" && it.parentFile.name == "arm64-v8a" }
-            .maxByOrNull { it.lastModified() }
-            ?: throw GradleException("No libmkw_quest_kit_probe.so; the native build did not produce the game kit probe")
-        val configuration = probe.parentFile.parentFile.parentFile // <BuildType>/<hash>
-        val binaryDir = File(app, ".cxx/${configuration.parentFile.name}/${configuration.name}/arm64-v8a")
-        if (!File(binaryDir, "build.ninja").isFile) throw GradleException("No CMake tree at $binaryDir")
+            .map { probe ->
+                val configuration = probe.parentFile.parentFile.parentFile // <Variant>/<hash>
+                val binaryDir = File(app, ".cxx/${configuration.parentFile.name}/${configuration.name}/arm64-v8a")
+                val cacheFile = File(binaryDir, "CMakeCache.txt")
+                val cache = cacheFile.takeIf { it.isFile }?.readText().orEmpty()
+                Candidate(probe, binaryDir, cacheValue(cache, "MKW_ANDROID_CPU"))
+            }
+            .toList()
+        val expectedCpu = androidCpu.get()
+        val matching = candidates.filter {
+            it.cpu == expectedCpu && File(it.binaryDir, "build.ninja").isFile
+        }
+        val chosen = matching.maxByOrNull { it.probe.lastModified() }
+            ?: throw GradleException(
+                "No CMake tree for Android CPU $expectedCpu. Found: " +
+                    candidates.joinToString { "${it.binaryDir} (cpu=${it.cpu})" }
+            )
+        val binaryDir = chosen.binaryDir
         val kitDir = File(outputDir.get().asFile, "game_kit")
         execOperations.exec {
             commandLine(
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.get().asFile.path,
                 "-CMakeBinaryDir", binaryDir.path, "-OutputDir", kitDir.path, "-LlvmStrip", llvmStrip.get().asFile.path,
+                "-AndroidCpu", expectedCpu,
             )
         }
     }
@@ -267,6 +318,8 @@ androidComponents {
             dependsOn("merge${capitalized}NativeLibs")
             appDir.set(layout.projectDirectory)
             script.set(rootProject.layout.projectDirectory.file("Export-QuestGameKit.ps1"))
+            androidCpu.set(if (variant.name.startsWith("quest1", ignoreCase = true)) "kryo" else "cortex-a77")
+            outputDir.set(layout.buildDirectory.dir("generated/assets/questGameKit/${variant.name}"))
             llvmStrip.set(sdkComponents.ndkDirectory.map {
                 it.file("toolchains/llvm/prebuilt/$host/bin/llvm-strip" + if (host.startsWith("windows")) ".exe" else "")
             })

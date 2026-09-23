@@ -140,6 +140,9 @@ object GameBuild {
             if (kitJson.optInt("schema") != KIT_SCHEMA) {
                 return "This app's game kit is version ${kitJson.optInt("schema")}, which this builder does not know."
             }
+            if (kitJson.optString("androidCpu") != BuildConfig.ANDROID_CPU) {
+                return "This app contains a game kit for ${kitJson.optString("androidCpu")}, but this build requires ${BuildConfig.ANDROID_CPU}."
+            }
             val recipe = kitJson.getJSONObject("products").optJSONObject(profile.id)
                 ?: return "This app's game kit cannot build ${profile.id}."
             report(40, Step.Prepare)
@@ -646,6 +649,7 @@ object GameBuild {
                     .put("dolSha256", BuildConfig.DISC_DOL_SHA256)
                     .put("relSha256", BuildConfig.DISC_REL_SHA256)
                     .put("kitFingerprint", kitFingerprint)
+                    .put("androidCpu", BuildConfig.ANDROID_CPU)
                     .put("library", GameLibrary.LIBRARY_NAME)
                     .put("librarySha256", BuildRecipe.hex(digest.digest()))
                     .put("includesData", false)

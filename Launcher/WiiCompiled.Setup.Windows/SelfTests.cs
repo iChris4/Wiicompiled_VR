@@ -384,14 +384,14 @@ internal static class SelfTests
                     using var writer = new StreamWriter(zip.CreateEntry(name).Open());
                     writer.Write(text);
                 }
-                Add("assets/game_kit/kit.json", "{\"schema\":3,\"fingerprint\":\"abc123\",\"products\":{\"base\":{},\"retro_rewind\":{}}}");
+                Add("assets/game_kit/kit.json", "{\"schema\":3,\"fingerprint\":\"abc123\",\"androidCpu\":\"kryo\",\"products\":{\"base\":{},\"retro_rewind\":{}}}");
                 Add("assets/game_kit/include/memory.h", "#pragma once");
                 Add("assets/runtime_resources/dsp_coef.bin", "not the kit");
                 Add("lib/arm64-v8a/libSDL3.so", "not the kit");
             }
             var kit = Path.Combine(temp, "kit");
             var extracted = QuestBuildService.ExtractKit(apk, kit, CancellationToken.None);
-            if (extracted.Fingerprint != "abc123" || !extracted.Products.Contains("base") ||
+            if (extracted.Fingerprint != "abc123" || extracted.AndroidCpu != "kryo" || !extracted.Products.Contains("base") ||
                 !extracted.Products.Contains("retro_rewind"))
                 throw new Exception("The kit fingerprint or its games were not read.");
             if (!File.Exists(Path.Combine(kit, "include", "memory.h")) ||
