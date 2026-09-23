@@ -191,14 +191,27 @@ mode, vibration, the Wii Remote mapping), Audio, and About (paths, OpenXR
 logging). The launch-time geometry (`render_scale`, `hud_distance_meters`,
 `hud_width_meters`) is only reachable here, not from the in-headset panel.
 
-**Patches**, between the two, is the PC launcher's mods page without its mod
-browser (`PatchesPage`, `ModLibrary`). Import takes one or more picked files,
-asks for a name and makes them one mod under `WiiCompiledOpenXRVR/Mods/<name>/`
-with the PC's `<name>.ini` (Name, Author, ModID, IsEnabled, Priority), so a
-`Mods` folder copied from WheelWizard reads the same. Unlike the PC's Import, a
-picked `.zip` is unpacked, since there is no browser to install downloaded mods;
-`.7z` and `.rar` are refused. Each mod can be switched off, moved up or down,
-renamed or deleted. As on the PC, mods only change Retro Rewind: its Play first
+**Patches**, between the two, is the PC launcher's mods page (`PatchesPage`,
+`ModLibrary`). Import takes one or more picked files, asks for a name and makes
+them one mod under `WiiCompiledOpenXRVR/Mods/<name>/` with the PC's
+`<name>.ini` (Name, Author, ModID, IsEnabled, Priority), so a `Mods` folder
+copied from WheelWizard reads the same. Unlike the PC's Import, a picked
+`.zip`, `.7z` or `.rar` is unpacked into the mod rather than stored in it.
+Browse opens the mod browser in place of the list (`ModBrowser`, `GameBanana`,
+`ModInstaller`), WheelWizard's `ModBrowserWindow` and `ModContent`: GameBanana's
+Mario Kart Wii mods (game 5896) through the same two public API calls, a name
+search a page at a time as the list scrolls and a mod's profile page. An empty
+search lists "Mod" ("Patches" with Patches only on), mods tagged `Patches` come
+first or alone, and rated mods are left out, all as on the PC. Download and
+Install asks for the mod's name first, then downloads into the app's cache,
+checks the file against the MD5 (or size) GameBanana lists, and installs it
+like an Import with the mod's author and GameBanana id, which is how the
+browser shows it as Installed with Uninstall; View Mod in a row's menu opens it
+again. A mod with several files asks which one (the PC takes the first, often
+an older version). Only one install runs at a time, sharing Import's slot; the
+download has its own thread, so Play never waits behind it. Each mod can be
+switched off, moved up or down, renamed or deleted. As on the PC, mods only
+change Retro Rewind: its Play first
 flattens the enabled mods into `RetroRewind6/Patches` exactly like
 `ModsLaunchService.PrepareModsForLaunch` (the top of the list wins a file both
 carry, `<name>.<tag>.szs` archives take their mod's priority as a prefix, and
@@ -252,12 +265,24 @@ v2.0.0-alpha.10, so both write the same layout:
    run never costs a working `DATA`.
 
 nod is the one piece of native code the launcher loads: `android/nod-jni` is
-a Rust `cdylib` with three JNI calls (header, read one file, extract). The
-extraction is nodtool's `extract` command, plus progress reporting and
-cancellation. It reads the picker's file descriptor with `pread`, so nod's
-preloader threads each hold their own clone. Wii partition decryption needs
-the common key, and that key lives in the nod crate fetched at build time, not
-in this repository. The PC installer is the same way: it downloads nodtool.
+a Rust `cdylib` with three JNI calls for discs (header, read one file,
+extract). The extraction is nodtool's `extract` command, plus progress
+reporting and cancellation. It reads the picker's file descriptor with
+`pread`, so nod's preloader threads each hold their own clone. Wii partition
+decryption needs the common key, and that key lives in the nod crate fetched at
+build time, not in this repository. The PC installer is the same way: it
+downloads nodtool.
+
+A fourth call (`ModArchive.extract`, `src/archive.rs`) unpacks the `.7z` and
+`.rar` mods GameBanana serves, which WheelWizard opens with SharpCompress and
+Android cannot open at all: sevenz-rust2 (LZMA, LZMA2, PPMd, BZip2, Deflate,
+BCJ/BCJ2; no AES, since there is no password to give) and rars (RAR 1.5 to 4.x
+and RAR5), both pure Rust and both checking every file's CRC or hash. It
+writes regular files only, refuses a name that climbs out with `..` as the
+zip reader does, and tells the formats apart by signature, not by name. On the
+PC it was checked against 7-Zip on nine real mods (three 7z, three RAR4, three
+RAR5, byte-identical) and on flipped and truncated copies, which all fail. Its
+path and signature rules have unit tests in `archive.rs`.
 
 `GameSetupService` runs the job as a `dataSync` foreground service with a
 partial wake lock. A multi-minute extraction then survives the panel being
@@ -501,7 +526,7 @@ Android facts this design rests on, all measured on a Quest 3:
 
 Prerequisites on the Windows host (all already present on the machine this
 was developed on): JDK 17, Android SDK with platform 34+, NDK `29.0.14206865`,
-SDK CMake `3.22.1`, `adb`, Rust 1.85+ with `rustup target add aarch64-linux-android`,
+SDK CMake `3.22.1`, `adb`, Rust 1.93+ with `rustup target add aarch64-linux-android`,
 the .NET 10 SDK (for the headset's translator; the APK build downloads ~70 MB of Termux
 packages into `android/.dependencies` the first time); a translated graph for your own disc (the
 installer's `BuildWorkspace/generated`, produced by the normal Windows pipeline).
@@ -663,6 +688,14 @@ build log is the newest `Logs/build_*.log`:
 
 ```powershell
 adb shell am start -n org.wiicompiled.quest/.launcher.LauncherActivity --ez org.wiicompiled.quest.debug.BUILD_GAME true
+```
+
+It opens the mod browser the same way, on a GameBanana mod when one is named, and with
+`INSTALL_MOD` installs that mod as Download and Install would (its first file, the suggested
+name); `adb logcat -s WiiCompiledLauncher` shows the searches and the install:
+
+```powershell
+adb shell am start -n org.wiicompiled.quest/.launcher.LauncherActivity --ei org.wiicompiled.quest.debug.MOD_BROWSER 699980 --ez org.wiicompiled.quest.debug.INSTALL_MOD true
 ```
 
 Performance, measured 2026-09-16 on a 50cc Luigi Circuit start with the player

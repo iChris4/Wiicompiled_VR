@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A mod in the browser's list (ModBrowserListItem): the chosen one takes the primary outline. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_activated="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/neutral_700" />
+            <stroke android:width="1dp" android:color="@color/primary_300" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/neutral_600" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+    <item android:state_hovered="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/neutral_700" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/neutral_900" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+</selector>

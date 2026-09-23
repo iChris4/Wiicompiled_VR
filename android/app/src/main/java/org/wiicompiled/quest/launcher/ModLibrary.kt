@@ -5,14 +5,16 @@ import android.os.Looper
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.zip.ZipFile
 
 /**
- * The mods imported on the Patches page, kept the way WheelWizard VR keeps them on a computer
- * (Features/Mods): one folder per mod under Mods/, holding the mod's files and a `<name>.ini` with
- * its state, so a Mods folder copied from one launcher reads the same in the other.
+ * The mods imported or installed from the mod browser on the Patches page, kept the way
+ * WheelWizard VR keeps them on a computer (Features/Mods): one folder per mod under Mods/, holding
+ * the mod's files and a `<name>.ini` with its state, so a Mods folder copied from one launcher
+ * reads the same in the other.
  *
  * Mods only change Retro Rewind. Before it starts, [plan] and [sync] flatten the enabled mods into
  * the pack's Patches folder, which the pack's Riivolution XML maps onto the disc (/patches, /sound),
@@ -21,7 +23,10 @@ import java.util.zip.ZipFile
  */
 object ModLibrary {
 
-    /** One imported mod, as its `.ini` describes it. Author and ModID only come from the PC's mod browser. */
+    /**
+     * One imported mod, as its `.ini` describes it. Author and ModID (its GameBanana id) only come
+     * from a mod browser, this launcher's or the PC's.
+     */
     data class Mod(
         val title: String,
         val enabled: Boolean,
@@ -30,19 +35,32 @@ object ModLibrary {
         val modId: Int = -1,
     )
 
-    /** One file picked for an import: its display name and how to read it. */
-    class Source(val name: String, val open: () -> InputStream)
+    /**
+     * One file for an import, picked or downloaded: its display name and how to read it, and the
+     * file itself when it is already on disk, so a downloaded archive is not copied again.
+     */
+    class Source(val name: String, val file: File? = null, val open: () -> InputStream)
 
     enum class NameProblem { Empty, Exists, IllegalCharacters }
 
+    /** The archive formats GameBanana serves, told apart by their first bytes. */
+    enum class ArchiveKind { Zip, SevenZip, Rar }
+
     private const val SECTION = "Mod"
-    private const val NO_ID = "-1"
+    const val NO_ID = "-1"
 
     /** ModManager._illegalChars plus Windows' invalid file name characters, so a name travels to the PC. */
     private val ILLEGAL_NAME_CHARACTERS = ".~/\\<>:\"|?*".toSet()
+    private val WHITESPACE = Regex("\\s+")
 
-    /** Archives the PC unpacks with SharpCompress; without it, only .zip can be opened here. */
-    private val UNSUPPORTED_ARCHIVES = listOf(".7z", ".rar")
+    /** The archives the PC unpacks with SharpCompress: .zip here, .7z and .rar through [ModArchive]. */
+    private val ARCHIVE_EXTENSIONS = listOf(".zip", ".7z", ".rar")
+
+    private val ZIP_SIGNATURES = listOf(byteArrayOf(0x50, 0x4B, 0x03, 0x04), byteArrayOf(0x50, 0x4B, 0x05, 0x06))
+    private val SEVEN_ZIP_SIGNATURE = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C)
+    /** Followed by 0 for RAR 1.5 to 4.x and by 1, 0 for RAR5; nod-jni reads both. */
+    private val RAR_SIGNATURE = byteArrayOf(0x52, 0x61, 0x72, 0x21, 0x1A, 0x07)
+    private const val COPY_BUFFER = 64 * 1024
 
     // Metadata
 
@@ -124,27 +142,48 @@ object ModLibrary {
 
     /** A starting name for the import dialog: the file's name without its extensions, made valid. */
     fun suggestName(fileName: String, mods: List<Mod>): String {
-        val base = fileName.substringAfterLast('/').substringBefore('.').trim()
-            .map { if (it in ILLEGAL_NAME_CHARACTERS || it.code < 32) ' ' else it }
-            .joinToString("").trim()
+        val base = legalName(fileName.substringAfterLast('/').substringBefore('.'))
         return base.takeIf { validateName(it, mods) == null } ?: ""
     }
+
+    /**
+     * A starting name for the browser's install dialog: the mod's GameBanana name with what a
+     * folder name cannot hold turned into spaces. The PC offers the raw name, which a headset
+     * keyboard would then have to fix; a name already taken is left for the dialog to point out.
+     */
+    fun nameFrom(title: String): String = legalName(title)
+
+    private fun legalName(text: String): String =
+        text.map { if (it in ILLEGAL_NAME_CHARACTERS || it.code < 32) ' ' else it }
+            .joinToString("")
+            .replace(WHITESPACE, " ")
+            .trim()
+
+    /** ModManager.IsModInstalled: the mod a browser installed with this GameBanana id, if any. */
+    fun installed(mods: List<Mod>, modId: Int): Mod? = if (modId < 0) null else mods.firstOrNull { it.modId == modId }
 
     // Changes
 
     /**
-     * ModManager.ImportModFilesAsync: the picked files become one new mod, enabled, below every
-     * existing one. A picked .zip is unpacked into it, as the PC does with a mod it downloads.
+     * ModManager.ImportModFilesAsync and InstallModFromFileAsync: the files become one new mod,
+     * enabled, below every existing one. A .zip, .7z or .rar among them is unpacked into it, as the
+     * PC does with a mod it downloads; [author] and [modId] are what the mod browser knows of it.
      * The files are gathered beside the Mods folder's other entries and only moved into place once
-     * all are in, so a failed import leaves nothing behind.
+     * all are in, so a failed import leaves nothing behind. [progress] follows the unpacking of
+     * archives and returns false to cancel it.
      */
-    fun import(modsDir: File, title: String, sources: List<Source>, mods: List<Mod>): Mod {
+    fun import(
+        modsDir: File,
+        title: String,
+        sources: List<Source>,
+        mods: List<Mod>,
+        author: String = NO_ID,
+        modId: Int = -1,
+        progress: ModArchive.Listener? = null,
+    ): Mod {
         val name = title.trim()
         validateName(name, mods)?.let { throw IOException("The name $name cannot be used ($it).") }
         if (sources.isEmpty()) throw IOException("No files were chosen.")
-        sources.firstOrNull { source -> UNSUPPORTED_ARCHIVES.any { source.name.endsWith(it, ignoreCase = true) } }?.let {
-            throw IOException("${it.name} is an archive this headset cannot open. Unpack it on a computer and import its files, or import a .zip.")
-        }
         modsDir.mkdirs()
         val staging = File(modsDir, ".$name.importing")
         staging.deleteRecursively()
@@ -153,14 +192,14 @@ object ModLibrary {
             for (source in sources) {
                 val fileName = source.name.substringAfterLast('/').substringAfterLast('\\')
                 if (fileName.isBlank() || fileName == "." || fileName == "..") throw IOException("A chosen file has no usable name.")
-                if (fileName.endsWith(".zip", ignoreCase = true)) {
-                    unpack(source, staging)
+                if (ARCHIVE_EXTENSIONS.any { fileName.endsWith(it, ignoreCase = true) }) {
+                    unpack(source, staging, progress)
                 } else {
                     source.open().use { input -> File(staging, fileName).outputStream().use { input.copyTo(it) } }
                 }
             }
             if (staging.walkTopDown().none { it.isFile }) throw IOException("There was nothing to import.")
-            val mod = Mod(name, enabled = true, priority = (mods.maxOfOrNull { it.priority } ?: 0) + 1)
+            val mod = Mod(name, enabled = true, priority = (mods.maxOfOrNull { it.priority } ?: 0) + 1, author = author, modId = modId)
             val target = folder(modsDir, mod)
             // No mod has this name, so a folder under it is what an interrupted import left.
             target.deleteRecursively()
@@ -172,26 +211,72 @@ object ModLibrary {
         }
     }
 
-    /** Unpacks a picked .zip into [destination], refusing entries that would land outside it. */
-    private fun unpack(source: Source, destination: File) {
-        // ZipFile reads the central directory, which every zip has; streaming fails on some.
-        val archive = File(destination, ".archive.zip")
+    /** The archive format [header], a file's first bytes, starts with; null for anything else. */
+    fun archiveKind(header: ByteArray): ArchiveKind? {
+        fun startsWith(signature: ByteArray) = header.size >= signature.size && signature.indices.all { header[it] == signature[it] }
+        return when {
+            ZIP_SIGNATURES.any(::startsWith) -> ArchiveKind.Zip
+            startsWith(SEVEN_ZIP_SIGNATURE) -> ArchiveKind.SevenZip
+            startsWith(RAR_SIGNATURE) -> ArchiveKind.Rar
+            else -> null
+        }
+    }
+
+    /**
+     * Unpacks an archive into [destination], by what it holds rather than its name, refusing
+     * entries that would land outside it. Every reader needs the archive as a file, so a picked
+     * one is copied beside the staging folder first; a downloaded one is read where it is.
+     */
+    private fun unpack(source: Source, destination: File, progress: ModArchive.Listener?) {
+        val copy = if (source.file == null) File(destination.parentFile, "${destination.name}.archive") else null
+        val archive = source.file ?: copy!!
         try {
-            source.open().use { input -> archive.outputStream().use { input.copyTo(it) } }
-            ZipFile(archive).use { zip ->
-                for (entry in zip.entries()) {
-                    if (entry.isDirectory) continue
-                    val relative = entry.name.replace('\\', '/').trimStart('/')
-                    if (relative.isEmpty() || relative.split('/').any { it == ".." }) {
-                        throw IOException("${source.name} has a file outside its own folder (${entry.name}).")
-                    }
-                    val file = File(destination, relative)
-                    file.parentFile?.mkdirs()
-                    zip.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
+            if (copy != null) source.open().use { input -> copy.outputStream().use { input.copyTo(it) } }
+            val header = ByteArray(8)
+            val read = archive.inputStream().use { it.read(header) }
+            when (archiveKind(header.copyOf(maxOf(read, 0)))) {
+                ArchiveKind.Zip -> unzip(archive, source.name, destination, progress)
+                ArchiveKind.SevenZip, ArchiveKind.Rar -> try {
+                    ModArchive.extract(archive.absolutePath, destination.absolutePath, progress ?: ModArchive.Listener { _, _ -> true })
+                } catch (e: InterruptedIOException) {
+                    throw e
+                } catch (e: IOException) {
+                    throw IOException("${source.name}: ${e.message}", e)
                 }
+                null -> throw IOException("${source.name} is not a zip, 7z or RAR archive.")
             }
         } finally {
-            archive.delete()
+            copy?.delete()
+        }
+    }
+
+    private fun unzip(archive: File, name: String, destination: File, progress: ModArchive.Listener?) {
+        // ZipFile reads the central directory, which every zip has; streaming fails on some.
+        ZipFile(archive).use { zip ->
+            val entries = zip.entries().toList().filter { !it.isDirectory }
+            val total = entries.sumOf { maxOf(it.size, 0L) }
+            var done = 0L
+            if (progress?.update(done, total) == false) throw InterruptedIOException("Install cancelled")
+            for (entry in entries) {
+                val relative = entry.name.replace('\\', '/').trimStart('/')
+                if (relative.isEmpty() || relative.split('/').any { it == ".." }) {
+                    throw IOException("$name has a file outside its own folder (${entry.name}).")
+                }
+                val file = File(destination, relative)
+                file.parentFile?.mkdirs()
+                zip.getInputStream(entry).use { input ->
+                    file.outputStream().use { output ->
+                        val buffer = ByteArray(COPY_BUFFER)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                            done += count
+                            if (progress?.update(done, total) == false) throw InterruptedIOException("Install cancelled")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -318,10 +403,13 @@ object ModLibrary {
     private val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "ModLibrary").apply { isDaemon = true } }
     private val main by lazy { Handler(Looper.getMainLooper()) }
 
-    /** True while an import runs; imports and launch preparation take turns on one thread. */
+    /**
+     * True while an import runs, including a mod browser install from the start of its download
+     * ([ModInstaller]); imports and launch preparation take turns on one thread.
+     */
     @Volatile
     var importing = false
-        private set
+        internal set
 
     /** Runs [work] off the main thread, one task at a time, and hands its result to [done] on the main thread. */
     fun <T> background(work: () -> T, done: (Result<T>) -> Unit) {

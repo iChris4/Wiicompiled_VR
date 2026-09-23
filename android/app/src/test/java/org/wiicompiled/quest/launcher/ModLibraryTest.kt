@@ -3,6 +3,7 @@ package org.wiicompiled.quest.launcher
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -149,5 +150,86 @@ class ModLibraryTest {
         assertNull(ModLibrary.prepareForLaunch(modsDir, patches, disabled, clear = true))
         assertFalse(patches.exists())
         assertFalse(ModLibrary.shouldAskToClear(disabled, patches))
+    }
+
+    @Test
+    fun archivesAreToldApartByTheirFirstBytes() {
+        fun bytes(vararg values: Int) = ByteArray(values.size) { values[it].toByte() }
+        assertEquals(ModLibrary.ArchiveKind.Zip, ModLibrary.archiveKind(bytes(0x50, 0x4B, 0x03, 0x04, 0x14)))
+        assertEquals(ModLibrary.ArchiveKind.Zip, ModLibrary.archiveKind(bytes(0x50, 0x4B, 0x05, 0x06)))
+        assertEquals(ModLibrary.ArchiveKind.SevenZip, ModLibrary.archiveKind(bytes(0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0x00, 0x04)))
+        // RAR 1.5 to 4.x, then RAR5.
+        assertEquals(ModLibrary.ArchiveKind.Rar, ModLibrary.archiveKind(bytes(0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00)))
+        assertEquals(ModLibrary.ArchiveKind.Rar, ModLibrary.archiveKind(bytes(0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00)))
+        assertNull(ModLibrary.archiveKind(bytes(0x52, 0x61, 0x72)))
+        assertNull(ModLibrary.archiveKind("text".toByteArray()))
+    }
+
+    @Test
+    fun browserInstallsRememberTheirGameBananaMod() {
+        val modsDir = temp()
+        val archive = File(temp(), "vanellope.zip")
+        archive.outputStream().use { out ->
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("Vanellope/Patches/Driver.szs"))
+                zip.write("driver".toByteArray())
+                zip.closeEntry()
+            }
+        }
+        // A downloaded archive is read where it is, not opened as a stream and copied again.
+        val downloaded = ModLibrary.Source(archive.name, archive) { throw IOException("copied a downloaded archive") }
+        val mod = ModLibrary.import(modsDir, "Vanellope", listOf(downloaded), emptyList(), author = "toothcakee", modId = 699980)
+        assertEquals(ModLibrary.Mod("Vanellope", enabled = true, priority = 1, author = "toothcakee", modId = 699980), mod)
+        assertEquals(listOf(mod), ModLibrary.load(modsDir))
+        assertEquals("driver", File(modsDir, "Vanellope/Vanellope/Patches/Driver.szs").readText())
+        assertTrue(archive.isFile)
+        assertEquals(mod, ModLibrary.installed(ModLibrary.load(modsDir), 699980))
+        assertNull(ModLibrary.installed(ModLibrary.load(modsDir), 1))
+        // Imported mods have no GameBanana id, and -1 never means installed.
+        assertNull(ModLibrary.installed(listOf(ModLibrary.Mod("Local", true, 1)), -1))
+    }
+
+    @Test
+    fun zipProgressCountsTheBytesAndCanCancel() {
+        val modsDir = temp()
+        val updates = mutableListOf<Pair<Long, Long>>()
+        val counting = ModArchive.Listener { done, total ->
+            updates += done to total
+            true
+        }
+        ModLibrary.import(modsDir, "Two", listOf(zip("two.zip", "a.szs" to "aaaa", "b.szs" to "bb")), emptyList(), progress = counting)
+        assertEquals(0L to 6L, updates.first())
+        assertEquals(6L to 6L, updates.last())
+
+        try {
+            val stop = ModArchive.Listener { _, _ -> false }
+            ModLibrary.import(modsDir, "Stopped", listOf(zip("stop.zip", "a.szs" to "aaaa")), ModLibrary.load(modsDir), progress = stop)
+            fail("a cancelled import finished")
+        } catch (expected: InterruptedIOException) {
+        }
+        assertEquals(setOf("Two"), modsDir.list()!!.toSet())
+    }
+
+    @Test
+    fun archivesThatAreNotWhatTheyAreCalledAreRefused() {
+        val modsDir = temp()
+        for (name in listOf("mod.7z", "mod.rar", "mod.zip")) {
+            try {
+                ModLibrary.import(modsDir, "Fake", listOf(source(name, "not an archive")), emptyList())
+                fail("imported $name")
+            } catch (expected: IOException) {
+                assertTrue(expected.message!!, expected.message!!.contains("not a zip, 7z or RAR archive"))
+            }
+        }
+        assertEquals(0, modsDir.list()!!.size)
+    }
+
+    @Test
+    fun gameBananaNamesBecomeFolderNames() {
+        assertEquals("PaRappa Award szs for CTGP", ModLibrary.nameFrom("PaRappa Award.szs for CTGP"))
+        assertEquals("Mario Kart Wii", ModLibrary.nameFrom("Mario Kart: Wii"))
+        assertEquals("Galacta Character Mod MKWii", ModLibrary.nameFrom("Galacta Character Mod | MKWii"))
+        assertEquals("Retro Rewind - Vanellope", ModLibrary.nameFrom("  Retro Rewind - Vanellope "))
+        assertNull(ModLibrary.validateName(ModLibrary.nameFrom("a/b\\c?.d"), emptyList()))
     }
 }

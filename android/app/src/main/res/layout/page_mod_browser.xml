@@ -1,0 +1,439 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WheelWizard's mod browser (Views/Popups/ModManagement/ModBrowserWindow.axaml with ModContent),
+     opened from the Patches page: GameBanana's Mario Kart Wii mods on the left, the chosen one on
+     the right. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="bottom"
+            android:orientation="horizontal"
+            android:paddingBottom="6dp">
+
+            <ImageView
+                android:id="@+id/browser_back"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="-10dp"
+                android:background="@drawable/bg_nav_item"
+                android:clickable="true"
+                android:contentDescription="@string/browser_back"
+                android:focusable="true"
+                android:padding="10dp"
+                android:src="@drawable/ic_arrow_left"
+                android:tint="@color/neutral_300" />
+
+            <TextView
+                style="@style/Launcher.PageTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:paddingBottom="2dp"
+                android:text="@string/browser_title" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginBottom="14dp"
+            android:text="@string/browser_powered_by"
+            android:textColor="@color/neutral_500"
+            android:textSize="12sp" />
+    </FrameLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/neutral_700" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+
+        <!-- The list: search, Patches only, results. -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="2"
+            android:orientation="vertical"
+            android:paddingTop="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/browser_search"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_search_field"
+                    android:hint="@string/browser_search_hint"
+                    android:imeOptions="actionSearch"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/neutral_100"
+                    android:textColorHint="@color/neutral_500"
+                    android:textSize="15sp" />
+
+                <ImageView
+                    android:id="@+id/browser_search_button"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_button_secondary"
+                    android:clickable="true"
+                    android:contentDescription="@string/browser_search"
+                    android:focusable="true"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_search"
+                    android:tint="@color/neutral_100" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/browser_patches_only_row"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <Switch
+                    android:id="@+id/browser_patches_only"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/browser_patches_only"
+                    android:textColor="@color/neutral_200"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <ListView
+                    android:id="@+id/browser_results"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:choiceMode="singleChoice"
+                    android:clipToPadding="false"
+                    android:divider="@android:color/transparent"
+                    android:dividerHeight="6dp"
+                    android:fadeScrollbars="false"
+                    android:listSelector="@android:color/transparent"
+                    android:paddingBottom="16dp"
+                    android:scrollbarStyle="outsideOverlay" />
+
+                <LinearLayout
+                    android:id="@+id/browser_results_message"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical"
+                    android:padding="12dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/browser_results_message_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:textColor="@color/neutral_300"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/browser_retry"
+                        style="@style/Launcher.Button.Secondary"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/browser_retry" />
+                </LinearLayout>
+            </FrameLayout>
+        </LinearLayout>
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="16dp"
+            android:background="@color/neutral_700" />
+
+        <!-- The chosen mod. -->
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="3"
+            android:paddingTop="12dp">
+
+            <ProgressBar
+                android:id="@+id/browser_details_loading"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_gravity="center"
+                android:indeterminateTint="@color/neutral_600"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/browser_details_empty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_banana"
+                    android:tint="@color/neutral_600" />
+
+                <TextView
+                    android:id="@+id/browser_details_empty_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:text="@string/browser_no_mod_selected_title"
+                    android:textColor="@color/neutral_200"
+                    android:textSize="18sp" />
+
+                <TextView
+                    android:id="@+id/browser_details_empty_message"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center"
+                    android:maxWidth="360dp"
+                    android:text="@string/browser_no_mod_selected"
+                    android:textColor="@color/neutral_400"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/browser_details"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="128dp"
+                    android:background="@drawable/bg_row_single"
+                    android:clipToOutline="true">
+
+                    <ImageView
+                        android:id="@+id/browser_banner"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:importantForAccessibility="no"
+                        android:scaleType="centerCrop" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/bg_banner_fade" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="bottom"
+                        android:gravity="bottom"
+                        android:orientation="horizontal"
+                        android:padding="8dp">
+
+                        <TextView
+                            android:id="@+id/browser_mod_title"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:ellipsize="end"
+                            android:fontFamily="sans-serif-medium"
+                            android:maxLines="2"
+                            android:shadowColor="#CC000000"
+                            android:shadowRadius="6"
+                            android:textColor="@color/neutral_50"
+                            android:textSize="20sp" />
+
+                        <TextView
+                            android:id="@+id/browser_mod_likes"
+                            style="@style/Launcher.StateBox"
+                            android:layout_marginStart="8dp"
+                            android:contentDescription="@string/browser_likes"
+                            android:drawableStart="@drawable/ic_heart" />
+
+                        <TextView
+                            android:id="@+id/browser_mod_views"
+                            style="@style/Launcher.StateBox"
+                            android:layout_marginStart="4dp"
+                            android:contentDescription="@string/browser_views"
+                            android:drawableStart="@drawable/ic_eye" />
+
+                        <TextView
+                            android:id="@+id/browser_mod_downloads"
+                            style="@style/Launcher.StateBox"
+                            android:layout_marginStart="4dp"
+                            android:contentDescription="@string/browser_downloads"
+                            android:drawableStart="@drawable/ic_download" />
+                    </LinearLayout>
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/browser_mod_author"
+                        style="@style/Launcher.LinkButton"
+                        android:layout_marginStart="-6dp"
+                        android:drawableStart="@drawable/ic_user"
+                        android:maxWidth="200dp" />
+
+                    <TextView
+                        android:id="@+id/browser_mod_page"
+                        style="@style/Launcher.LinkButton"
+                        android:layout_marginStart="4dp"
+                        android:drawableEnd="@drawable/ic_external_link"
+                        android:text="@string/browser_gamebanana_page" />
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/browser_mod_report"
+                        style="@style/Launcher.LinkButton"
+                        android:drawableEnd="@drawable/ic_warning_tip"
+                        android:drawableTint="@color/danger_400"
+                        android:text="@string/browser_report"
+                        android:textColor="@color/danger_400" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/browser_install"
+                        style="@style/Launcher.Button.Primary"
+                        android:minWidth="190dp"
+                        android:text="@string/browser_install" />
+
+                    <TextView
+                        android:id="@+id/browser_cancel"
+                        style="@style/Launcher.Button.Secondary"
+                        android:layout_marginStart="6dp"
+                        android:text="@string/browser_cancel"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/browser_uninstall"
+                        style="@style/Launcher.Button.Warning"
+                        android:layout_marginStart="6dp"
+                        android:text="@string/browser_uninstall"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/browser_install_note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textColor="@color/neutral_400"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <ScrollView
+                    android:id="@+id/browser_details_scroll"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="16dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_row_single"
+                    android:fadeScrollbars="false"
+                    android:scrollbarStyle="insideOverlay">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="10dp">
+
+                        <TextView
+                            android:id="@+id/browser_images_label"
+                            style="@style/Launcher.SectionLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/browser_images" />
+
+                        <HorizontalScrollView
+                            android:id="@+id/browser_images_scroll"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:layout_marginBottom="10dp"
+                            android:scrollbarStyle="insideOverlay">
+
+                            <LinearLayout
+                                android:id="@+id/browser_images"
+                                android:layout_width="wrap_content"
+                                android:layout_height="140dp"
+                                android:orientation="horizontal" />
+                        </HorizontalScrollView>
+
+                        <TextView
+                            style="@style/Launcher.SectionLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/browser_description" />
+
+                        <TextView
+                            android:id="@+id/browser_mod_description"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:lineSpacingMultiplier="1.15"
+                            android:textColor="@color/neutral_300"
+                            android:textColorLink="@color/primary_300"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+                </ScrollView>
+            </LinearLayout>
+        </FrameLayout>
+    </LinearLayout>
+</LinearLayout>

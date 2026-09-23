@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One mod in the browser's list: WheelWizard's ModBrowserListItem, its picture beside the title,
+     author and counts. ModBrowser gives mods that use patches the green look and the badge. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="84dp"
+    android:background="@drawable/bg_browser_item"
+    android:clipToOutline="true"
+    android:orientation="horizontal">
+
+    <ImageView
+        android:id="@+id/browser_item_image"
+        android:layout_width="96dp"
+        android:layout_height="match_parent"
+        android:background="@color/neutral_700"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingStart="10dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/browser_item_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="2"
+            android:textColor="@color/neutral_100"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/browser_item_author"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:textColor="@color/neutral_400"
+            android:textSize="12sp" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/browser_item_patches"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_badge_patches"
+                android:paddingStart="7dp"
+                android:paddingTop="1dp"
+                android:paddingEnd="7dp"
+                android:paddingBottom="1dp"
+                android:singleLine="true"
+                android:text="@string/browser_uses_patches"
+                android:textColor="@color/patches_badge_text"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/browser_item_likes"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/browser_likes"
+                android:drawableStart="@drawable/ic_heart"
+                android:drawablePadding="4dp"
+                android:drawableTint="@color/neutral_500"
+                android:textColor="@color/neutral_300"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/browser_item_views"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:contentDescription="@string/browser_views"
+                android:drawableStart="@drawable/ic_eye"
+                android:drawablePadding="4dp"
+                android:drawableTint="@color/neutral_500"
+                android:textColor="@color/neutral_300"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

@@ -9,6 +9,11 @@
 //! v2.0.0-alpha.10, MIT OR Apache-2.0) with progress reporting and cancellation added, so both
 //! installers write the same `sys/`, `files/`, `disc/` and `*.bin` layout that the runtime's DVD
 //! layer reads.
+//!
+//! It also unpacks the .7z and .rar mods the Patches page installs
+//! (`org.wiicompiled.quest.launcher.ModArchive`, see `archive.rs`).
+
+mod archive;
 
 use std::{
     fs::{self, File},
@@ -26,7 +31,7 @@ use std::{
 use jni::{
     JNIEnv,
     objects::{JObject, JString, JValue},
-    sys::{jbyteArray, jint, jstring},
+    sys::{jbyteArray, jint, jlong, jstring},
 };
 use nod::{
     common::PartitionKind,
@@ -296,5 +301,30 @@ pub extern "system" fn Java_org_wiicompiled_quest_launcher_NodDisc_extract<'loca
             Ok(result?.z()?)
         };
         extract(fd, Path::new(&out_dir), &mut report)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_wiicompiled_quest_launcher_ModArchive_extract<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    archive_path: JString<'local>,
+    out_dir: JString<'local>,
+    listener: JObject<'local>,
+) -> jlong {
+    guarded(&mut env, 0, |env| {
+        let archive_path: String = env.get_string(&archive_path)?.into();
+        let out_dir: String = env.get_string(&out_dir)?.into();
+        // An exception thrown by the listener stops the extraction and stays pending for Java.
+        let mut report = |done: u64, total: u64| -> bool {
+            env.call_method(&listener, "update", "(JJ)Z", &[JValue::Long(done as i64), JValue::Long(total as i64)])
+                .and_then(|value| value.z())
+                .unwrap_or(false)
+        };
+        match archive::extract(Path::new(&archive_path), Path::new(&out_dir), &mut report) {
+            Ok(files) => Ok(files as jlong),
+            Err(archive::Failure::Error(message)) => Err(Failure::Error(message)),
+            Err(archive::Failure::Cancelled) => Err(Failure::Cancelled),
+        }
     })
 }

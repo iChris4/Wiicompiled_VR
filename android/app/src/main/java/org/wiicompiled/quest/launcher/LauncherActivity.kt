@@ -28,8 +28,8 @@ import org.wiicompiled.quest.R
 
 /**
  * The app's entry point on the headset: a 2D panel modelled on the PC launcher (WheelWizard VR),
- * with a Home page that sets up and starts the game, a Patches page that imports mods for Retro
- * Rewind, and a Settings page that edits Config.toml.
+ * with a Home page that sets up and starts the game, a Patches page that finds mods for Retro
+ * Rewind on GameBanana or imports them, and a Settings page that edits Config.toml.
  *
  * The APK carries no game code. Playing needs two things the player owns: the game files (DATA,
  * extracted from their disc image here or on a PC) and the game itself (libmain.so, built from
@@ -161,6 +161,22 @@ class LauncherActivity : Activity() {
             Log.i(TAG, "Starting a game build requested over adb")
             GameSetupService.startBuild(this, GameProfile.selected(this))
         }
+        // ...and open the mod browser, on a GameBanana mod when one is named, which they can also
+        // install as the dialogs would with its first file and suggested name.
+        if (BuildConfig.DEBUG && savedInstanceState == null && intent.hasExtra(EXTRA_DEBUG_MOD_BROWSER)) {
+            val modId = intent.getIntExtra(EXTRA_DEBUG_MOD_BROWSER, -1)
+            Log.i(TAG, "Opening the mod browser over adb" + if (modId >= 0) " on mod $modId" else "")
+            showPage(Page.Patches)
+            patches.showBrowser(true, modId.takeIf { it >= 0 }, install = intent.getBooleanExtra(EXTRA_DEBUG_INSTALL_MOD, false))
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // The mod browser sits in place of the Patches list, so Back returns to the list first.
+        if (page == Page.Patches && patches.back()) return
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     override fun onResume() {
@@ -172,6 +188,7 @@ class LauncherActivity : Activity() {
         setupKind = GameSetup.state.javaClass
         refresh()
         GameSetup.addListener(setupListener)
+        patches.attach()
         // The game's process can take a moment to go away after its activity
         // closes, which would still read as running.
         val runningAtResume = isGameRunning()
@@ -182,6 +199,7 @@ class LauncherActivity : Activity() {
 
     override fun onPause() {
         GameSetup.removeListener(setupListener)
+        patches.detach()
         super.onPause()
     }
 
@@ -726,5 +744,9 @@ class LauncherActivity : Activity() {
         const val PREFERENCES = "launcher"
         const val KEY_LAST_DROPPED_IMPORT = "lastDroppedImport"
         const val EXTRA_DEBUG_BUILD_GAME = "org.wiicompiled.quest.debug.BUILD_GAME"
+        /** An int: the GameBanana mod to show, or -1 for the browser's first search alone. */
+        const val EXTRA_DEBUG_MOD_BROWSER = "org.wiicompiled.quest.debug.MOD_BROWSER"
+        /** With MOD_BROWSER naming a mod: install it as Download and Install would, without the dialogs. */
+        const val EXTRA_DEBUG_INSTALL_MOD = "org.wiicompiled.quest.debug.INSTALL_MOD"
     }
 }

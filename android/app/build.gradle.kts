@@ -294,6 +294,8 @@ dependencies {
     // SDLActivity and libSDL3.so; the AAR is downloaded by Prepare-QuestDependencies.ps1.
     implementation(files("libs/SDL3-3.4.4.aar"))
     testImplementation("junit:junit:4.13.2")
+    // android.jar only stubs org.json; the GameBanana parsing tests need a real one.
+    testImplementation("org.json:json:20180813")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

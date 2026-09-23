@@ -97,10 +97,12 @@
     <string name="game_storage_failed">The game folder could not be prepared: %1$s</string>
 
     <!-- Patches: WheelWizard's mods page, its wording from the PC launcher's en.yml -->
+    <string name="patches_browse">Browse</string>
     <string name="patches_import">Import</string>
     <string name="patches_importing">Importing…</string>
     <string name="patches_empty_title">No mods found</string>
-    <string name="patches_empty_message">Mods can alter how the game works. Start importing your first mod by clicking the button below.\n\nAs on the computer, mods change Retro Rewind. Import the mod\'s files, or the .zip it came in.</string>
+    <string name="patches_empty_message">Mods can alter how the game works. Browse GameBanana for your first mod, or import one with the buttons below.\n\nAs on the computer, mods change Retro Rewind. Import the mod\'s files, or the .zip, .7z or .rar it came in.</string>
+    <string name="patches_view_mod">View Mod</string>
     <string name="patches_mods">Mods</string>
     <string name="patches_enable_all">Enable all</string>
     <string name="patches_note">Each time Retro Rewind starts, the enabled mods are copied into its Patches folder. When two mods replace the same file, the one higher in the list wins.</string>
@@ -128,6 +130,43 @@
     <string name="home_installing_patches">Installing mods…</string>
     <string name="home_patches_failed">The mods could not be installed</string>
 
+    <!-- The mod browser: WheelWizard's ModBrowserWindow and ModContent, wording from en.yml -->
+    <string name="browser_title">Mod Browser</string>
+    <string name="browser_back">Back to your mods</string>
+    <string name="browser_powered_by">Powered By GameBanana</string>
+    <string name="browser_search_hint">Search for mods…</string>
+    <string name="browser_search">Search</string>
+    <string name="browser_patches_only">Patches only</string>
+    <string name="browser_uses_patches">Uses Patches!</string>
+    <string name="browser_by">By: %1$s</string>
+    <string name="browser_likes">Likes</string>
+    <string name="browser_views">Views</string>
+    <string name="browser_downloads">Downloads</string>
+    <string name="browser_search_too_short">Failed to retrieve mods. Make sure the request has at least 2 characters.</string>
+    <string name="browser_load_failed">Failed to load mods.\n%1$s</string>
+    <string name="browser_no_results">No mods found for \"%1$s\".</string>
+    <string name="browser_retry">Try again</string>
+    <string name="browser_no_mod_selected_title">No mod selected</string>
+    <string name="browser_no_mod_selected">Select a mod in the list to view its details</string>
+    <string name="browser_details_failed">Failed to retrieve mod info</string>
+    <string name="browser_gamebanana_page">GameBanana page</string>
+    <string name="browser_report">Report</string>
+    <string name="browser_images">Images:</string>
+    <string name="browser_description">Description:</string>
+    <string name="browser_install">Download and Install</string>
+    <string name="browser_installed">Installed</string>
+    <string name="browser_uninstall">Uninstall</string>
+    <string name="browser_cancel">Cancel</string>
+    <string name="browser_downloading">Downloading %1$d%%</string>
+    <string name="browser_installing">Installing…</string>
+    <string name="browser_installing_percent">Installing %1$d%%</string>
+    <string name="browser_no_files">This mod has no file to download from GameBanana.</string>
+    <string name="browser_busy">Another mod is being installed. This one can be installed once it has finished.</string>
+    <string name="browser_install_note">Downloads %1$s (%2$s) from GameBanana and installs it as a new mod.</string>
+    <string name="browser_choose_file">This mod has several files. Which one?</string>
+    <string name="browser_install_failed">Mod download failed.</string>
+    <string name="browser_no_browser">This headset has no browser to open the link with.</string>
+
     <!-- Settings shell -->
     <string name="settings_tab_vr">VR</string>
     <string name="settings_tab_graphics">Graphics</string>
@@ -148,6 +187,7 @@
     <string name="about_credit_aurora">aurora by encounter (MIT) with Google\'s Dawn: the graphics layer every frame goes through.</string>
     <string name="about_credit_openxr">The OpenXR SDK by Khronos, and SDL 3 for windowing, audio and controllers.</string>
     <string name="about_credit_nod">nod by encounter, which reads your disc image, built into this app as libnod_jni.</string>
+    <string name="about_credit_mod_browser">The Patches page\'s mod browser finds mods on GameBanana, as Wheel Wizard\'s does. Their .7z and .rar archives are unpacked by sevenz-rust2 (Apache 2.0) and rars by bitplane (MIT or Apache 2.0), built into libnod_jni.</string>
     <string name="about_credit_toolchain">On-headset builds use Termux\'s Android clang and lld, Google\'s Android NDK headers and libraries, and .NET for the translator.</string>
     <string name="about_credit_dolphin">The Dolphin emulator, the reference for how the Wii behaves.</string>
     <string name="about_credit_logo">The WiiCompiled logo by inkwreck.</string>
@@ -161,6 +201,7 @@
     <string name="about_credit_title_graphics">Graphics</string>
     <string name="about_credit_title_platform">OpenXR and SDL</string>
     <string name="about_credit_title_disc">Disc images</string>
+    <string name="about_credit_title_mod_browser">Mod browser</string>
     <string name="about_credit_title_toolchain">On-headset builds</string>
     <string name="about_credit_title_dolphin">Dolphin</string>
     <string name="about_credit_title_logo">Logo</string>

@@ -2,10 +2,11 @@
 name = "nod-jni"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+# sevenz-rust2 0.23 needs 1.93.
+rust-version = "1.93"
 license = "GPL-3.0-only"
 publish = false
-description = "JNI bridge from the Quest launcher to nod, the disc image library behind the PC installer's nodtool."
+description = "JNI bridge from the Quest launcher to nod, the disc image library behind the PC installer's nodtool, and to the 7z and RAR readers its Patches page installs mods with."
 
 [lib]
 name = "nod_jni"
@@ -26,6 +27,10 @@ nod = { git = "https://github.com/encounter/nod", tag = "v2.0.0-alpha.10", defau
     "threading",
 ] }
 zerocopy = "0.8"
+# Mod archives GameBanana serves besides .zip (src/archive.rs), both pure Rust. The 7z codecs are
+# the ones WheelWizard's SharpCompress reads; AES is left out, as there is no password to give.
+sevenz-rust2 = { version = "0.23", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
+rars = "0.9.4"
 
 [profile.release]
 codegen-units = 1

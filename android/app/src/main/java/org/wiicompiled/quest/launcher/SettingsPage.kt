@@ -400,6 +400,7 @@ class SettingsPage(
             info(R.string.about_credit_title_graphics, activity.getString(R.string.about_credit_aurora), stacked = true)
             info(R.string.about_credit_title_platform, activity.getString(R.string.about_credit_openxr), stacked = true)
             info(R.string.about_credit_title_disc, activity.getString(R.string.about_credit_nod), stacked = true)
+            info(R.string.about_credit_title_mod_browser, activity.getString(R.string.about_credit_mod_browser), stacked = true)
             if (BuildConfig.ON_DEVICE_BUILD) {
                 info(R.string.about_credit_title_toolchain, activity.getString(R.string.about_credit_toolchain), stacked = true)
             }
