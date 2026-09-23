@@ -1,9 +1,15 @@
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <ctime>
+#include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <filesystem>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "../fs_helper.hpp"
@@ -28,9 +34,36 @@ static sqlite3_stmt* store_stmt;
 static sqlite3_stmt* touch_stmt;
 static bool cache_broken;
 static std::mutex cache_mutex;
-#if defined(AURORA_CACHE_USE_ZSTD)
-static std::vector<uint8_t> compress_buffer;
-#endif
+
+// Dawn calls store_to_cache while holding its device lock: the monolithic Vulkan pipeline cache is
+// serialized under that lock and handed over as one blob (26 MiB on a desktop GPU, 58 MiB on a
+// Quest 3), and compressing and committing it there held every other user of the device for the
+// whole write, 0.4 s on a desktop and 0.9 to 3.8 s on a Quest at each race exit, long enough to
+// stall the game thread and its music. The callback now only copies the blob and queues it, and
+// one writer thread compresses and commits. Loads look at the queue first, so a stored blob can
+// be read back at once. The newest content of each large blob is remembered by hash, so Dawn
+// re-serializing an unchanged pipeline cache costs a hash instead of a rewrite.
+struct KeyHasher {
+  size_t operator()(const XXH128_hash_t& hash) const noexcept { return static_cast<size_t>(hash.low64 ^ hash.high64); }
+};
+struct KeyEqual {
+  bool operator()(const XXH128_hash_t& a, const XXH128_hash_t& b) const noexcept { return XXH128_isEqual(a, b) != 0; }
+};
+using QueuedBlob = std::shared_ptr<const std::vector<uint8_t>>;
+
+constexpr size_t LargeBlobBytes = size_t{1} << 20;
+
+// Lock order: g_writeMutex and cache_mutex are never held together.
+static std::mutex g_writeMutex;
+static std::condition_variable g_writeCv;
+// The newest content per key not yet committed. A key is in g_writeOrder at most once; a key in
+// g_queuedBlobs but not in g_writeOrder is the one being written.
+static std::unordered_map<XXH128_hash_t, QueuedBlob, KeyHasher, KeyEqual> g_queuedBlobs;
+static std::deque<XXH128_hash_t> g_writeOrder;
+static std::unordered_map<XXH128_hash_t, XXH128_hash_t, KeyHasher, KeyEqual> g_largeContent;
+static std::thread g_writerThread;
+static bool g_writerStop = false;
+static bool g_writerBusy = false;
 
 // Schema 3 added last_used (whole days since the Unix epoch) so stale blobs can be
 // pruned: config-version bumps and driver updates change every Dawn cache key, and
@@ -47,6 +80,7 @@ static std::atomic<uint64_t> g_lookups{0};
 static std::atomic<uint64_t> g_hits{0};
 static std::atomic<uint64_t> g_stores{0};
 static std::atomic<uint64_t> g_hitBytes{0};
+static std::atomic<uint64_t> g_unchanged{0};
 static std::vector<XXH128_hash_t> g_pendingTouches;
 
 static int64_t days_now() { return static_cast<int64_t>(std::time(nullptr) / 86400); }
@@ -259,9 +293,9 @@ static bool cache_init() {
   return true;
 }
 
-size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valueSize, void*) {
-  std::lock_guard lock(cache_mutex);
-
+// Caller holds cache_mutex. `complete` is set when `value` received the whole entry.
+static size_t load_from_database(const XXH128_hash_t& keyHash, void* value, size_t valueSize, bool& complete) {
+  complete = false;
   if (!cache_init()) {
     return 0;
   }
@@ -272,13 +306,6 @@ size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valu
     return 0;
   }
 
-  // Dawn probes with value == nullptr for the size first, then fetches; count each
-  // probe as one logical lookup so the hit rate reads per-entry.
-  if (value == nullptr) {
-    g_lookups.fetch_add(1, std::memory_order_relaxed);
-  }
-
-  const auto keyHash = XXH128(key, keySize, 0);
   check(sqlite3_bind_blob(load_stmt, 1, &keyHash, sizeof(keyHash), SQLITE_TRANSIENT));
 
   const auto ret = sqlite3_step(load_stmt);
@@ -321,6 +348,7 @@ size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valu
           std::memcpy(value, foundPtr, foundSize);
         }
       }
+      complete = foundSize != 0;
     }
   } else if (ret == SQLITE_DONE) {
     // Miss
@@ -335,9 +363,77 @@ size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valu
   return foundSize;
 }
 
-void store_to_cache(void const* key, size_t keySize, void const* value, size_t valueSize, void*) {
-  std::lock_guard lock(cache_mutex);
+size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valueSize, void*) {
+  const auto keyHash = XXH128(key, keySize, 0);
+  // Dawn probes with value == nullptr for the size first, then fetches; count each
+  // probe as one logical lookup so the hit rate reads per-entry.
+  if (value == nullptr) {
+    g_lookups.fetch_add(1, std::memory_order_relaxed);
+  }
 
+  QueuedBlob queued;
+  {
+    std::lock_guard lock(g_writeMutex);
+    if (const auto entry = g_queuedBlobs.find(keyHash); entry != g_queuedBlobs.end()) {
+      queued = entry->second;
+    }
+  }
+  if (queued) {
+    if (value == nullptr) {
+      g_hits.fetch_add(1, std::memory_order_relaxed);
+    } else if (valueSize == queued->size()) {
+      std::memcpy(value, queued->data(), queued->size());
+      g_hitBytes.fetch_add(queued->size(), std::memory_order_relaxed);
+    }
+    return queued->size();
+  }
+
+  bool complete = false;
+  size_t foundSize = 0;
+  {
+    std::lock_guard lock(cache_mutex);
+    foundSize = load_from_database(keyHash, value, valueSize, complete);
+  }
+  if (complete && foundSize >= LargeBlobBytes) {
+    // Remember what the database holds, so re-storing the same bytes is skipped. A store queued
+    // meanwhile already recorded newer content.
+    const auto content = XXH3_128bits(value, foundSize);
+    std::lock_guard lock(g_writeMutex);
+    g_largeContent.try_emplace(keyHash, content);
+  }
+  return foundSize;
+}
+
+static void write_blob(const XXH128_hash_t& keyHash, const std::vector<uint8_t>& blob,
+                       std::vector<uint8_t>& compressBuffer) {
+  const void* storedValue = blob.data();
+  sqlite3_uint64 storedValueSize = blob.size();
+  int compressed = 0;
+#if defined(AURORA_CACHE_USE_ZSTD)
+  const auto bound = ZSTD_compressBound(blob.size());
+  if (ZSTD_isError(bound)) {
+    Log.error("Failed to calculate ZSTD_compressBound: {}", ZSTD_getErrorName(bound));
+    return;
+  }
+
+  if (compressBuffer.size() < bound) {
+    compressBuffer.resize(bound);
+  }
+
+  const auto compressRet = ZSTD_compress(compressBuffer.data(), compressBuffer.size(), blob.data(), blob.size(), 0);
+  if (ZSTD_isError(compressRet)) {
+    Log.error("ZSTD compression error: {}", ZSTD_getErrorName(compressRet));
+    return;
+  }
+
+  if (compressRet < blob.size()) {
+    storedValue = compressBuffer.data();
+    storedValueSize = compressRet;
+    compressed = 1;
+  }
+#endif
+
+  std::lock_guard lock(cache_mutex);
   if (!cache_init()) {
     return;
   }
@@ -348,61 +444,124 @@ void store_to_cache(void const* key, size_t keySize, void const* value, size_t v
     return;
   }
 
-  const void* storedValue = value;
-  sqlite3_uint64 storedValueSize = valueSize;
-  int compressed = 0;
-#if defined(AURORA_CACHE_USE_ZSTD)
-  const auto bound = ZSTD_compressBound(valueSize);
-  if (ZSTD_isError(bound)) {
-    Log.error("Failed to calculate ZSTD_compressBound: {}", ZSTD_getErrorName(bound));
-    return;
-  }
-
-  if (compress_buffer.size() < bound) {
-    compress_buffer.resize(bound);
-  }
-
-  const auto compressRet = ZSTD_compress(compress_buffer.data(), compress_buffer.size(), value, valueSize, 0);
-  if (ZSTD_isError(compressRet)) {
-    Log.error("ZSTD compression error: {}", ZSTD_getErrorName(compressRet));
-    return;
-  }
-
-  if (compressRet < valueSize) {
-    storedValue = compress_buffer.data();
-    storedValueSize = compressRet;
-    compressed = 1;
-  }
-#endif
-
-  const auto keyHash = XXH128(key, keySize, 0);
+  // Both buffers outlive the statement's use of them: the binding is cleared below.
   check(sqlite3_bind_blob64(store_stmt, 1, &keyHash, sizeof(keyHash), SQLITE_TRANSIENT));
-  check(
-      sqlite3_bind_blob64(store_stmt, 2, storedValue, storedValueSize, compressed ? SQLITE_STATIC : SQLITE_TRANSIENT));
-  check(sqlite3_bind_int64(store_stmt, 3, static_cast<sqlite3_int64>(valueSize)));
+  check(sqlite3_bind_blob64(store_stmt, 2, storedValue, storedValueSize, SQLITE_STATIC));
+  check(sqlite3_bind_int64(store_stmt, 3, static_cast<sqlite3_int64>(blob.size())));
   check(sqlite3_bind_int(store_stmt, 4, compressed));
   check(sqlite3_bind_int64(store_stmt, 5, days_now()));
-  g_stores.fetch_add(1, std::memory_order_relaxed);
 
   const auto ret = sqlite3_step(store_stmt);
+  check(sqlite3_reset(store_stmt));
+  check(sqlite3_bind_null(store_stmt, 2));
   if (ret != SQLITE_DONE) {
-    // Error or something
     Log.error("Failed to insert row: {}", sqlite3_errmsg(db));
     return;
   }
 
-  check(sqlite3_reset(store_stmt));
-  check(sqlite3_bind_null(store_stmt, 2));
-  check(sqlite3_bind_null(store_stmt, 4));
-
   tx.commit();
 }
 
+static void cache_writer_loop() {
+  std::vector<uint8_t> compressBuffer;
+  for (;;) {
+    XXH128_hash_t keyHash{};
+    QueuedBlob blob;
+    {
+      std::unique_lock lock(g_writeMutex);
+      g_writeCv.wait(lock, [] { return g_writerStop || !g_writeOrder.empty(); });
+      if (g_writeOrder.empty()) {
+        // Stopping, and everything queued has been written.
+        break;
+      }
+      keyHash = g_writeOrder.front();
+      g_writeOrder.pop_front();
+      blob = g_queuedBlobs.at(keyHash);
+      g_writerBusy = true;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    write_blob(keyHash, *blob, compressBuffer);
+    if (blob->size() >= LargeBlobBytes) {
+      const auto elapsed =
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+      Log.info("Wrote a {:.1f} MiB Dawn cache blob in {} ms, off the GPU device",
+               static_cast<double>(blob->size()) / (1024.0 * 1024.0), elapsed.count());
+    }
+
+    {
+      std::lock_guard lock(g_writeMutex);
+      if (const auto entry = g_queuedBlobs.find(keyHash); entry != g_queuedBlobs.end()) {
+        if (entry->second == blob) {
+          g_queuedBlobs.erase(entry);
+        } else {
+          // Stored again while this copy was being written: the newer content still goes out.
+          g_writeOrder.push_back(keyHash);
+        }
+      }
+      g_writerBusy = false;
+    }
+    g_writeCv.notify_all();
+  }
+}
+
+void store_to_cache(void const* key, size_t keySize, void const* value, size_t valueSize, void*) {
+  const auto keyHash = XXH128(key, keySize, 0);
+  const auto* bytes = static_cast<const uint8_t*>(value);
+  const bool large = valueSize >= LargeBlobBytes;
+  const XXH128_hash_t content = large ? XXH3_128bits(value, valueSize) : XXH128_hash_t{};
+  if (large) {
+    std::lock_guard lock(g_writeMutex);
+    if (const auto known = g_largeContent.find(keyHash);
+        known != g_largeContent.end() && XXH128_isEqual(known->second, content)) {
+      g_unchanged.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+  }
+
+  // Dawn's buffer is only valid for this call.
+  auto blob = std::make_shared<const std::vector<uint8_t>>(bytes, bytes + valueSize);
+  {
+    std::lock_guard lock(g_writeMutex);
+    if (large) {
+      g_largeContent.insert_or_assign(keyHash, content);
+    }
+    if (g_queuedBlobs.insert_or_assign(keyHash, std::move(blob)).second) {
+      g_writeOrder.push_back(keyHash);
+    }
+    if (!g_writerThread.joinable()) {
+      g_writerStop = false;
+      g_writerThread = std::thread(cache_writer_loop);
+    }
+  }
+  g_stores.fetch_add(1, std::memory_order_relaxed);
+  g_writeCv.notify_all();
+}
+
+void flush_cache_writes() {
+  std::unique_lock lock(g_writeMutex);
+  g_writeCv.wait(lock, [] { return g_writeOrder.empty() && !g_writerBusy; });
+}
+
 void cache_shutdown() {
+  {
+    std::lock_guard lock(g_writeMutex);
+    g_writerStop = true;
+  }
+  g_writeCv.notify_all();
+  // The writer drains the queue before it exits.
+  if (g_writerThread.joinable()) {
+    g_writerThread.join();
+  }
+  {
+    std::lock_guard lock(g_writeMutex);
+    g_queuedBlobs.clear();
+    g_writeOrder.clear();
+    g_largeContent.clear();
+    g_writerStop = false;
+  }
+
   std::lock_guard lock(cache_mutex);
-#if defined(AURORA_CACHE_USE_ZSTD)
-  compress_buffer.clear();
-#endif
   flush_touches();
   check(sqlite3_finalize(load_stmt));
   check(sqlite3_finalize(store_stmt));
@@ -420,6 +579,7 @@ BlobCacheStats blob_cache_stats() noexcept {
       .hits = g_hits.load(std::memory_order_relaxed),
       .stores = g_stores.load(std::memory_order_relaxed),
       .hitBytes = g_hitBytes.load(std::memory_order_relaxed),
+      .unchanged = g_unchanged.load(std::memory_order_relaxed),
   };
 }
 

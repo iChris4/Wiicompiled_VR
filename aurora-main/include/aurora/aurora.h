@@ -334,9 +334,13 @@ bool aurora_wait_for_frame_worker_for(uint32_t timeoutMicros);
 // the gap between aurora_end_frame() and aurora_begin_frame().
 void aurora_quiesce_frame_worker();
 // Persists the renderer's pipeline caches now (Dawn's Vulkan pipeline cache, then the queued
-// pipeline recipes). It holds the GPU device for the store, so a race would see it as a stall:
-// call it at a race exit, when the session loses focus, or before ending the process.
+// pipeline recipes) and returns once they are on disk. Dawn holds the GPU device while it
+// serializes its cache, so a race would see that part as a stall: call it at a race exit, when
+// the session loses focus, or before ending the process.
 void aurora_store_pipeline_caches();
+// The same store on a background thread, returning at once, for a caller that must not wait
+// (the XR pacing thread at a race exit). The device is still held while Dawn serializes.
+void aurora_request_pipeline_cache_store();
 // Allows the pipeline compiler to store the caches itself, rate-limited, whenever a first-use
 // burst completes. Off by default; enable it while a stall is acceptable, such as in menus.
 void aurora_set_pipeline_cache_idle_store(bool allowed);

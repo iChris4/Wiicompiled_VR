@@ -1215,19 +1215,81 @@ static void stop_pipeline_cache_writer() {
 }
 
 void store_pipeline_caches() {
-  const uint64_t storesBefore = webgpu::blob_cache_stats().stores;
+  const auto before = webgpu::blob_cache_stats();
   const auto start = std::chrono::steady_clock::now();
   {
     std::lock_guard lock{g_storeMutex};
     webgpu::serialize_pipeline_caches();
     g_lastStore = std::chrono::steady_clock::now();
   }
+  // Dawn holds its device only while it serializes; the blobs it handed over are compressed and
+  // committed by the cache's writer thread, and the recipes by the pipeline cache writer.
+  const auto serialized = std::chrono::steady_clock::now();
+  webgpu::flush_cache_writes();
   flush_pipeline_cache_writes();
-  const uint64_t stored = webgpu::blob_cache_stats().stores - storesBefore;
-  if (stored != 0) {
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-    Log.info("Stored the pipeline caches in {} ms: {} new Dawn blob cache entries", elapsed.count(), stored);
+  const auto after = webgpu::blob_cache_stats();
+  const uint64_t stored = after.stores - before.stores;
+  const uint64_t unchanged = after.unchanged - before.unchanged;
+  if (stored != 0 || unchanged != 0) {
+    const auto milliseconds = [](auto duration) {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    };
+    Log.info("Stored the pipeline caches in {} ms, {} ms of it holding the GPU device: {} new Dawn blob cache "
+             "entries, {} unchanged",
+             milliseconds(std::chrono::steady_clock::now() - start), milliseconds(serialized - start), stored,
+             unchanged);
   }
+}
+
+// A race exit asks for a store and moves on: the VR pacing thread that asks has to keep the
+// compositor fed, while Dawn holds its device for as long as it serializes.
+static std::mutex g_storeRequestMutex;
+static std::condition_variable g_storeRequestCv;
+static std::thread g_storeRequestThread;
+static bool g_storeRequestsEnabled = false;
+static bool g_storeRequested = false;
+static bool g_storeRequestStop = false;
+
+static void store_request_loop() {
+  for (;;) {
+    {
+      std::unique_lock lock{g_storeRequestMutex};
+      g_storeRequestCv.wait(lock, [] { return g_storeRequestStop || g_storeRequested; });
+      if (!g_storeRequested) {
+        break;
+      }
+      g_storeRequested = false;
+    }
+    store_pipeline_caches();
+  }
+}
+
+void request_pipeline_cache_store() {
+  std::lock_guard lock{g_storeRequestMutex};
+  if (!g_storeRequestsEnabled) {
+    return;
+  }
+  g_storeRequested = true;
+  if (!g_storeRequestThread.joinable()) {
+    g_storeRequestThread = std::thread(store_request_loop);
+  }
+  g_storeRequestCv.notify_one();
+}
+
+// A request still pending is carried out before this returns.
+static void stop_store_requests() {
+  {
+    std::lock_guard lock{g_storeRequestMutex};
+    g_storeRequestsEnabled = false;
+    g_storeRequestStop = true;
+  }
+  g_storeRequestCv.notify_all();
+  if (g_storeRequestThread.joinable()) {
+    g_storeRequestThread.join();
+  }
+  std::lock_guard lock{g_storeRequestMutex};
+  g_storeRequested = false;
+  g_storeRequestStop = false;
 }
 
 void set_pipeline_cache_idle_store(bool allowed) noexcept {
@@ -1245,6 +1307,10 @@ PipelineRef find_pipeline(ShaderType type, const gx::PipelineConfig& config, New
 }
 
 void initialize_pipeline_cache() {
+  {
+    std::lock_guard lock{g_storeRequestMutex};
+    g_storeRequestsEnabled = true;
+  }
   g_pipelineCacheBroken = false;
   g_pipelineCacheWriterStop = false;
   g_idleStoreAllowed.store(false, std::memory_order_relaxed);
@@ -1274,6 +1340,8 @@ void initialize_pipeline_cache() {
 }
 
 void shutdown_pipeline_cache() {
+  // First: a requested store still needs the pipeline cache writer and the device.
+  stop_store_requests();
   if (g_hasPipelineThread) {
     {
       std::lock_guard lock{g_pipelineMutex};

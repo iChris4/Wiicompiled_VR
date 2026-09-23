@@ -2711,6 +2711,11 @@ void aurora_store_pipeline_caches() {
   aurora::gfx::store_pipeline_caches();
 #endif
 }
+void aurora_request_pipeline_cache_store() {
+#ifdef AURORA_ENABLE_GX
+  aurora::gfx::request_pipeline_cache_store();
+#endif
+}
 void aurora_set_pipeline_cache_idle_store(bool allowed) {
 #ifdef AURORA_ENABLE_GX
   aurora::gfx::set_pipeline_cache_idle_store(allowed);

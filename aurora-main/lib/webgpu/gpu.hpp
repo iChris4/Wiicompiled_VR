@@ -88,12 +88,17 @@ void draw_clear(const wgpu::RenderPassEncoder& pass, bool clearColor, bool clear
 size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valueSize, void* userdata);
 void store_to_cache(void const* key, size_t keySize, void const* value, size_t valueSize, void* userdata);
 void cache_shutdown();
+// Blocks until every blob Dawn has stored is committed to the cache database. Stores return
+// once the blob is copied, so a caller that needs it on disk (a process about to end) waits here.
+void flush_cache_writes();
 
 struct BlobCacheStats {
   uint64_t lookups;
   uint64_t hits;
   uint64_t stores;
   uint64_t hitBytes;
+  // Stores of a large blob whose bytes matched what the database already holds.
+  uint64_t unchanged;
 };
 BlobCacheStats blob_cache_stats() noexcept;
 // Persists the monolithic Vulkan pipeline cache into the blob cache (no-op elsewhere).

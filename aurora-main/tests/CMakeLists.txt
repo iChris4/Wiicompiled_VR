@@ -106,6 +106,20 @@ if (AURORA_ENABLE_GX)
   )
 
   gtest_discover_tests(gx_fifo_tests)
+
+  # The Dawn blob cache's background writer, against a real SQLite database in a temp folder.
+  if (TARGET sqlite3)
+    add_executable(gpu_cache_tests gpu_cache_test.cpp ../lib/webgpu/gpu_cache.cpp)
+    target_include_directories(gpu_cache_tests PRIVATE ../include ../lib)
+    target_compile_definitions(gpu_cache_tests PRIVATE AURORA TARGET_PC)
+    target_link_libraries(gpu_cache_tests PRIVATE gtest gtest_main fmt::fmt xxhash sqlite3 dawn::dawncpp_headers
+                          TracyClient ${AURORA_SDL3_TARGET})
+    if (AURORA_CACHE_USE_ZSTD)
+      target_compile_definitions(gpu_cache_tests PRIVATE AURORA_CACHE_USE_ZSTD)
+      target_link_libraries(gpu_cache_tests PRIVATE libzstd_static)
+    endif ()
+    gtest_discover_tests(gpu_cache_tests)
+  endif ()
 endif () # AURORA_ENABLE_GX
 
 # DVD API tests

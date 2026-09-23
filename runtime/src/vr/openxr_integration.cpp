@@ -785,6 +785,7 @@ private:
                     ResetTrackingOrigin();
                     // Nothing is displayed while the session is not running (the system menu,
                     // the headset taken off), so the stall of a cache store is invisible here.
+                    // Waiting for it is deliberate: the process may be ended next.
                     aurora_store_pipeline_caches();
                 }
             }
@@ -851,9 +852,11 @@ private:
             aurora_set_stereo_panel_layer(panel_layer);
             presentation.panel.requested = panel_layer && OpenXRSettingsPanelOpen();
 
-            // Pipeline caches are stored where their stall is invisible: once when a race ends,
-            // and by the compiler itself while the headset shows the virtual screen. Never
-            // mid-race, and a race on the virtual screen (Flat Screen mode) is still a race.
+            // Pipeline caches are stored where their stall is least visible: once when a race
+            // ends, and by the compiler itself while the headset shows the virtual screen. Never
+            // mid-race, and a race on the virtual screen (Flat Screen mode) is still a race. The
+            // race-exit store runs on Aurora's thread: this one keeps submitting frames while
+            // Dawn holds its device to serialize, which is still a brief game stall.
             const bool racing = immersive || (!policy.config.immersive_races &&
                                               policy.scene.mode == VRSceneMode::Race);
             if (!store_gate_set || racing != store_gate_racing) {
@@ -862,7 +865,7 @@ private:
                 store_gate_racing = racing;
                 aurora_set_pipeline_cache_idle_store(!racing);
                 if (left_race) {
-                    aurora_store_pipeline_caches();
+                    aurora_request_pipeline_cache_store();
                 }
             }
 

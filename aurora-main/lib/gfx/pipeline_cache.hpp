@@ -23,10 +23,14 @@ void end_pipeline_frame();
 void set_skip_unready_pipelines(bool enabled) noexcept;
 bool skip_unready_pipelines() noexcept;
 uint32_t queued_pipeline_count() noexcept;
-// Persists the pipeline caches now: Dawn's Vulkan pipeline cache when a pipeline was compiled
-// since the last store, then every queued recipe row. Holds the device for the store, so call it
-// where a stall is invisible (a race exit, process exit).
+// Persists the pipeline caches now: Dawn's Vulkan pipeline cache when a pipeline was created
+// since the last store, then every queued recipe row, and returns once both are on disk. Dawn
+// holds the device while it serializes its cache (tens to hundreds of ms for a large one), but
+// not while the result is compressed and written.
 void store_pipeline_caches();
+// store_pipeline_caches on a background thread, returning at once. Requests made while one is
+// running coalesce into one more store.
+void request_pipeline_cache_store();
 // Lets a drained first-use burst store the caches itself, rate-limited. Off by default; a host
 // turns it on while a stall is acceptable (menus) and off again for a race.
 void set_pipeline_cache_idle_store(bool allowed) noexcept;
