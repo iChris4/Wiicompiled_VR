@@ -50,6 +50,26 @@ object GameStorage {
 
     fun configFile(context: Context): File = File(gameRoot(context), "Config.toml")
 
+    /**
+     * The runtime's NAND (ManagedNandRootPath in runtime/include/nand_path.h): `[paths] nand_root`
+     * when Config.toml sets one, relative to the config's folder, otherwise NAND beside it.
+     */
+    fun nandDirectory(context: Context): File {
+        val configured = runCatching { TomlConfig.parse(configFile(context).readText()).string("paths", "nand_root") }.getOrNull()
+        if (configured.isNullOrBlank()) return File(gameRoot(context), "NAND")
+        val path = File(configured)
+        return if (path.isAbsolute) path else File(gameRoot(context), configured)
+    }
+
+    /**
+     * Retro Rewind's save: the pack's Riivolution XML sends the game's saves to
+     * riivolution/save/RetroWFC/<game ID><region> beside the pack, and the Quest only runs PAL.
+     */
+    fun retroRewindSave(context: Context): File = File(gameRoot(context), "riivolution/save/RetroWFC/RMCP/rksys.dat")
+
+    /** Pulsar's record of the VR and BR Retro Rewind plays with, per profile. */
+    fun retroRewindRatings(context: Context): File = File(nandDirectory(context), "shared2/Pulsar/RetroRewind6/RRRating.pul")
+
     fun logsDirectory(context: Context): File = File(gameRoot(context), "Logs")
 
     /** Game packages dropped here (adb push, Build-QuestGame.ps1 -Install) are imported when the launcher opens. */

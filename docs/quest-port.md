@@ -220,6 +220,24 @@ that still holds files is only cleared if the player says so. The pack's
 Riivolution XML maps that folder onto `/patches` and `/sound`. `ModLibraryTest`
 covers the rules.
 
+**My profiles**, between Home and Patches, is the PC's UserProfilePage
+(`ProfilesPage`, `ProfileStore`, `RksysProfiles`, `RetroWfc`), with the PC's sidebar
+profile card above General (`SidebarProfileCard`). Like the PC it reads Retro Rewind's
+save only (`riivolution/save/RetroWFC/RMCP/rksys.dat`): the four licences with their
+name, friend code (derived from the profile ID as `FriendCodeGenerator` does), VR, BR
+and race counts, the VR and BR replaced by Pulsar's `RRRating.pul` in the NAND when it
+knows the profile, as the PC's `RRratingReader` does. Retro WFC's public API gives the
+rest: a licence is Online (card glow) while its friend code is in a room
+(`/api/roomstatus`, asked again every 30 s while the page is shown), its VR history
+comes from `/api/leaderboard/player/<fc>/history?days=N`, and its Mii picture is the
+64-pixel PNG of `/api/leaderboard/player/<fc>`, kept on disk for the sidebar. The
+headset has no Mii database (`RFL_DB.dat`), so this picture stands in for the PC's
+rendered Mii, and a licence never taken online shows a silhouette. Badges come from
+WheelWizard's `badges.json`. It only reads: Rename and change Mii need that database,
+and the PC's region picker is gone since the Quest runs PAL only. The card and the
+carousel sit side by side on the wide panel. `RksysProfilesTest` and `RetroWfcTest`
+cover the parsing.
+
 The launcher follows the runtime's rules exactly. `TomlConfig` edits one line
 the way `RuntimeConfigFile::WriteSetting` does, and every edit re-reads the file,
 so values the in-headset panel wrote are kept. Each row reads its key with the

@@ -7,6 +7,7 @@
     <!-- Launcher shell -->
     <string name="launcher_section_general">General</string>
     <string name="launcher_nav_home">Home</string>
+    <string name="launcher_nav_profiles">My profiles</string>
     <string name="launcher_nav_patches">Patches</string>
     <string name="launcher_nav_settings">Settings</string>
     <string name="launcher_version">v%1$s</string>
@@ -130,6 +131,45 @@
     <string name="home_installing_patches">Installing mods…</string>
     <string name="home_patches_failed">The mods could not be installed</string>
 
+    <!-- My profiles: WheelWizard's UserProfilePage and VrHistoryGraph, wording from en.yml -->
+    <string name="profiles_title">My profiles</string>
+    <string name="profiles_save">Retro Rewind save</string>
+    <string name="profiles_empty_title">No profiles</string>
+    <string name="profiles_empty_message">You have to play Retro Rewind at least once in order to see your profiles listed here</string>
+    <string name="profiles_no_license">No license</string>
+    <string name="profiles_no_name">No name</string>
+    <string name="profiles_make_primary">Make Primary</string>
+    <string name="profiles_primary_helper">The primary profile is the one the sidebar shows.</string>
+    <string name="profiles_primary_set">Set profile as primary</string>
+    <string name="profiles_copy_code">Copy friend code</string>
+    <string name="profiles_code_copied">Copied friend code to clipboard</string>
+    <string name="profiles_code_label">Friend code</string>
+    <string name="profiles_online">Online</string>
+    <string name="profiles_vr">VR</string>
+    <string name="profiles_vr_full">Versus Rating</string>
+    <string name="profiles_br">BR</string>
+    <string name="profiles_br_full">Battle Rating</string>
+    <string name="profiles_total_won">Total games won</string>
+    <string name="profiles_total_played">Total games played</string>
+    <string name="profiles_previous">Previous</string>
+    <string name="profiles_next">Next</string>
+    <string name="history_start">Start VR</string>
+    <string name="history_end">End VR</string>
+    <string name="history_change">Net Change</string>
+    <string name="history_title">VR History</string>
+    <string name="history_matches">Matches</string>
+    <string name="history_days_1">Last 24 hours</string>
+    <string name="history_days_7">Last 7 days</string>
+    <string name="history_days_30">Last 30 days</string>
+    <string name="history_days_60">Last 60 days</string>
+    <string name="history_days_all">Lifetime</string>
+    <string name="history_range">Past %1$d days (%2$s to %3$s)</string>
+    <string name="history_range_all">Lifetime history</string>
+    <string name="history_match">Match %1$d</string>
+    <string name="history_none_title">No VR history</string>
+    <string name="history_none_range">No VR history found for this range yet.</string>
+    <string name="history_no_code">Friend code is required to load VR history.</string>
+
     <!-- The mod browser: WheelWizard's ModBrowserWindow and ModContent, wording from en.yml -->
     <string name="browser_title">Mod Browser</string>
     <string name="browser_back">Back to your mods</string>
@@ -188,6 +228,7 @@
     <string name="about_credit_openxr">The OpenXR SDK by Khronos, and SDL 3 for windowing, audio and controllers.</string>
     <string name="about_credit_nod">nod by encounter, which reads your disc image, built into this app as libnod_jni.</string>
     <string name="about_credit_mod_browser">The Patches page\'s mod browser finds mods on GameBanana, as Wheel Wizard\'s does. Their .7z and .rar archives are unpacked by sevenz-rust2 (Apache 2.0) and rars by bitplane (MIT or Apache 2.0), built into libnod_jni.</string>
+    <string name="about_credit_profiles">My profiles reads your licences from Retro Rewind\'s save, and shows each one\'s Mii picture, VR history and online status from Retro WFC (rwfc.net), as Wheel Wizard does. Badges come from Wheel Wizard\'s data.</string>
     <string name="about_credit_toolchain">On-headset builds use Termux\'s Android clang and lld, Google\'s Android NDK headers and libraries, and .NET for the translator.</string>
     <string name="about_credit_dolphin">The Dolphin emulator, the reference for how the Wii behaves.</string>
     <string name="about_credit_logo">The WiiCompiled logo by inkwreck.</string>
@@ -202,6 +243,7 @@
     <string name="about_credit_title_platform">OpenXR and SDL</string>
     <string name="about_credit_title_disc">Disc images</string>
     <string name="about_credit_title_mod_browser">Mod browser</string>
+    <string name="about_credit_title_profiles">My profiles</string>
     <string name="about_credit_title_toolchain">On-headset builds</string>
     <string name="about_credit_title_dolphin">Dolphin</string>
     <string name="about_credit_title_logo">Logo</string>

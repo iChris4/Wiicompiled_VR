@@ -39,6 +39,69 @@
                 android:textSize="16sp" />
         </LinearLayout>
 
+        <!-- WheelWizard's sidebar profile block: the primary licence, opening My profiles. -->
+        <LinearLayout
+            android:id="@+id/sidebar_profile"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginBottom="18dp"
+            android:background="@drawable/bg_sidebar_profile"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="6dp"
+            android:paddingEnd="8dp"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="48dp"
+                android:layout_height="48dp">
+
+                <ImageView
+                    android:id="@+id/sidebar_profile_placeholder"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_gravity="center"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_user_circle"
+                    android:tint="@color/neutral_600" />
+
+                <ImageView
+                    android:id="@+id/sidebar_profile_mii"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:importantForAccessibility="no"
+                    android:scaleType="fitCenter" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/sidebar_profile_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
+                    android:singleLine="true"
+                    android:textColor="@color/neutral_200"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/sidebar_profile_code"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:singleLine="true"
+                    android:textColor="@color/neutral_400"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
         <TextView
             style="@style/Launcher.SectionLabel"
             android:layout_width="wrap_content"
@@ -59,6 +122,20 @@
             <TextView
                 style="@style/Launcher.NavLabel"
                 android:text="@string/launcher_nav_home" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/nav_profiles"
+            style="@style/Launcher.NavItem">
+
+            <ImageView
+                style="@style/Launcher.NavIcon"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_user_circle" />
+
+            <TextView
+                style="@style/Launcher.NavLabel"
+                android:text="@string/launcher_nav_profiles" />
         </LinearLayout>
 
         <LinearLayout
@@ -118,6 +195,11 @@
         <include
             android:id="@+id/page_home"
             layout="@layout/page_home" />
+
+        <include
+            android:id="@+id/page_profiles"
+            layout="@layout/page_profiles"
+            android:visibility="gone" />
 
         <include
             android:id="@+id/page_patches"

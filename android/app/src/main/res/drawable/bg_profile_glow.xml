@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The glow behind an online licence's Mii (WheelWizard blurs a Primary200 ellipse at half opacity). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <gradient
+        android:endColor="#008EFFE2"
+        android:gradientRadius="130dp"
+        android:startColor="#808EFFE2"
+        android:type="radial" />
+</shape>

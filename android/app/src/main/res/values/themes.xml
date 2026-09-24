@@ -144,6 +144,43 @@
         <item name="android:focusable">true</item>
     </style>
 
+    <!-- The profiles page's number cards (WheelWizard's profileStatCard). -->
+    <style name="Launcher.StatCard">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:background">@drawable/bg_state_box</item>
+        <item name="android:padding">10dp</item>
+    </style>
+
+    <style name="Launcher.StatLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/neutral_300</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
+    <style name="Launcher.StatValue">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:textColor">@color/neutral_100</item>
+        <item name="android:textSize">17sp</item>
+    </style>
+
+    <!-- The profiles carousel's arrows (WheelWizard's small UglyLight buttons). -->
+    <style name="Launcher.CarouselArrow">
+        <item name="android:layout_width">30dp</item>
+        <item name="android:layout_height">30dp</item>
+        <item name="android:background">@drawable/bg_button_secondary</item>
+        <item name="android:padding">8dp</item>
+        <item name="android:tint">@color/neutral_300</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
     <!-- WheelWizard's StateBox: a count with its icon. -->
     <style name="Launcher.StateBox">
         <item name="android:layout_width">wrap_content</item>

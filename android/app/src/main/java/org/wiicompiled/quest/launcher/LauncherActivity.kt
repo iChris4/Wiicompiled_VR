@@ -28,8 +28,9 @@ import org.wiicompiled.quest.R
 
 /**
  * The app's entry point on the headset: a 2D panel modelled on the PC launcher (WheelWizard VR),
- * with a Home page that sets up and starts the game, a Patches page that finds mods for Retro
- * Rewind on GameBanana or imports them, and a Settings page that edits Config.toml.
+ * with a Home page that sets up and starts the game, a My profiles page that shows the licences
+ * of Retro Rewind's save, a Patches page that finds mods for Retro Rewind on GameBanana or imports
+ * them, and a Settings page that edits Config.toml.
  *
  * The APK carries no game code. Playing needs two things the player owns: the game files (DATA,
  * extracted from their disc image here or on a PC) and the game itself (libmain.so, built from
@@ -42,15 +43,17 @@ import org.wiicompiled.quest.R
  */
 class LauncherActivity : Activity() {
 
-    private enum class Page { Home, Patches, Settings }
+    private enum class Page { Home, Profiles, Patches, Settings }
 
     /** What Home's main and secondary buttons do. */
     private enum class Action { Play, Resume, SelectDisc, ImportGame, BuildGame, DownloadModPack, Reset }
 
     private lateinit var navHome: View
+    private lateinit var navProfiles: View
     private lateinit var navPatches: View
     private lateinit var navSettings: View
     private lateinit var homePage: View
+    private lateinit var profilesView: View
     private lateinit var patchesView: View
     private lateinit var settingsView: View
     private lateinit var trails: WheelTrailsView
@@ -68,6 +71,8 @@ class LauncherActivity : Activity() {
     private lateinit var gameToggle: LinearLayout
     private lateinit var settings: SettingsPage
     private lateinit var patches: PatchesPage
+    private lateinit var profilesPage: ProfilesPage
+    private lateinit var sidebarProfile: SidebarProfileCard
 
     /** The games this APK carries a kit for, and the one the player picked. */
     private val profiles: List<GameProfile> by lazy { GameProfile.available(this) }
@@ -101,9 +106,11 @@ class LauncherActivity : Activity() {
         }
 
         navHome = findViewById(R.id.nav_home)
+        navProfiles = findViewById(R.id.nav_profiles)
         navPatches = findViewById(R.id.nav_patches)
         navSettings = findViewById(R.id.nav_settings)
         homePage = findViewById(R.id.page_home)
+        profilesView = findViewById(R.id.page_profiles)
         patchesView = findViewById(R.id.page_patches)
         settingsView = findViewById(R.id.page_settings)
         trails = findViewById(R.id.home_trails)
@@ -140,11 +147,14 @@ class LauncherActivity : Activity() {
         patches = PatchesPage(this, patchesView) {
             openPicker(REQUEST_PATCH_FILES, multiple = true, noPicker = R.string.patches_no_picker)
         }
+        sidebarProfile = SidebarProfileCard(this, findViewById(R.id.sidebar_profile)) { showPage(Page.Profiles) }
+        profilesPage = ProfilesPage(this, profilesView) { snapshot -> sidebarProfile.show(snapshot) }
         savedInstanceState?.getString(KEY_TAB)?.let { name ->
             SettingsPage.Tab.entries.firstOrNull { it.name == name }?.let(settings::select)
         }
 
         navHome.setOnClickListener { showPage(Page.Home) }
+        navProfiles.setOnClickListener { showPage(Page.Profiles) }
         navPatches.setOnClickListener { showPage(Page.Patches) }
         navSettings.setOnClickListener { showPage(Page.Settings) }
         playButton.setOnClickListener { perform(mainAction) }
@@ -189,6 +199,9 @@ class LauncherActivity : Activity() {
         refresh()
         GameSetup.addListener(setupListener)
         patches.attach()
+        // The game may have changed the save while it ran; the profiles page reads it again itself.
+        if (page != Page.Profiles) sidebarProfile.refresh()
+        profilesPage.setVisible(page == Page.Profiles)
         // The game's process can take a moment to go away after its activity
         // closes, which would still read as running.
         val runningAtResume = isGameRunning()
@@ -200,6 +213,7 @@ class LauncherActivity : Activity() {
     override fun onPause() {
         GameSetup.removeListener(setupListener)
         patches.detach()
+        profilesPage.setVisible(false)
         super.onPause()
     }
 
@@ -235,10 +249,13 @@ class LauncherActivity : Activity() {
     private fun showPage(target: Page) {
         page = target
         navHome.isSelected = target == Page.Home
+        navProfiles.isSelected = target == Page.Profiles
         navPatches.isSelected = target == Page.Patches
         navSettings.isSelected = target == Page.Settings
         homePage.visibility = if (target == Page.Home) View.VISIBLE else View.GONE
+        profilesView.visibility = if (target == Page.Profiles) View.VISIBLE else View.GONE
         patchesView.visibility = if (target == Page.Patches) View.VISIBLE else View.GONE
+        profilesPage.setVisible(target == Page.Profiles)
         settingsView.visibility = if (target == Page.Settings) View.VISIBLE else View.GONE
         if (target == Page.Home) {
             trailsAway = true
@@ -249,6 +266,7 @@ class LauncherActivity : Activity() {
     private fun refresh() {
         when (page) {
             Page.Home -> refreshHome()
+            Page.Profiles -> profilesPage.refresh()
             Page.Patches -> patches.refresh()
             Page.Settings -> settings.refresh()
         }
