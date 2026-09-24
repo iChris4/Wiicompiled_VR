@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Mii editor's page column, Neutral900 as in WheelWizard's MiiEditorWindow. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/neutral_900" />
+    <corners android:radius="8dp" />
+</shape>

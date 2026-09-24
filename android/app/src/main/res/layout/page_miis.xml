@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WheelWizard's My Miis page (Views/Pages/MiiListPage.axaml), with its Mii editor
+     (page_mii_editor.xml) opened in place of the list. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:id="@+id/miis_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="64dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="bottom"
+                android:orientation="horizontal"
+                android:paddingBottom="10dp">
+
+                <TextView
+                    style="@style/Launcher.PageTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/launcher_nav_miis" />
+
+                <TextView
+                    android:id="@+id/miis_count"
+                    style="@style/Launcher.StateBox"
+                    android:layout_marginStart="10dp"
+                    android:layout_marginBottom="4dp"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/miis_buttons"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_marginBottom="10dp"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/miis_favorite"
+                    style="@style/Launcher.IconButton"
+                    android:contentDescription="@string/miis_favorite"
+                    android:src="@drawable/ic_star"
+                    android:tooltipText="@string/miis_favorite" />
+
+                <ImageView
+                    android:id="@+id/miis_edit"
+                    style="@style/Launcher.IconButton"
+                    android:contentDescription="@string/miis_edit"
+                    android:src="@drawable/ic_pen"
+                    android:tooltipText="@string/miis_edit" />
+
+                <ImageView
+                    android:id="@+id/miis_duplicate"
+                    style="@style/Launcher.IconButton"
+                    android:contentDescription="@string/miis_duplicate"
+                    android:src="@drawable/ic_duplicate"
+                    android:tooltipText="@string/miis_duplicate" />
+
+                <ImageView
+                    android:id="@+id/miis_export"
+                    style="@style/Launcher.IconButton"
+                    android:contentDescription="@string/miis_export"
+                    android:src="@drawable/ic_file_export"
+                    android:tooltipText="@string/miis_export" />
+
+                <ImageView
+                    android:id="@+id/miis_delete"
+                    style="@style/Launcher.IconButton.Danger"
+                    android:contentDescription="@string/miis_delete"
+                    android:src="@drawable/ic_trash"
+                    android:tooltipText="@string/miis_delete" />
+
+                <ImageView
+                    android:id="@+id/miis_import"
+                    style="@style/Launcher.IconButton"
+                    android:contentDescription="@string/miis_import"
+                    android:src="@drawable/ic_file_import"
+                    android:tooltipText="@string/miis_import" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/neutral_700" />
+
+        <!-- The Mii parts every picture needs, until they are downloaded. -->
+        <LinearLayout
+            android:id="@+id/miis_parts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_banner_info"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_download"
+                android:tint="@color/primary_400" />
+
+            <TextView
+                android:id="@+id/miis_parts_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_weight="1"
+                android:textColor="@color/neutral_200"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/miis_parts_download"
+                style="@style/Launcher.Button.Primary"
+                android:text="@string/miis_parts_download" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <LinearLayout
+                android:id="@+id/miis_empty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_shirt"
+                    android:tint="@color/neutral_600" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/miis_empty_title"
+                    android:textColor="@color/neutral_200"
+                    android:textSize="20sp" />
+
+                <TextView
+                    android:id="@+id/miis_empty_message"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center"
+                    android:maxWidth="440dp"
+                    android:textColor="@color/neutral_400"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <ScrollView
+                android:id="@+id/miis_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp">
+
+                <org.wiicompiled.quest.launcher.TileGrid
+                    android:id="@+id/miis_grid"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+            </ScrollView>
+        </FrameLayout>
+    </LinearLayout>
+
+    <include
+        android:id="@+id/miis_editor"
+        layout="@layout/page_mii_editor"
+        android:visibility="gone" />
+</FrameLayout>

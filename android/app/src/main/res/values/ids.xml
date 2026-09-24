@@ -2,4 +2,6 @@
 <resources>
     <!-- The picture URL an ImageView last asked RemoteImages for. -->
     <item name="remote_image_url" type="id" />
+    <!-- The Mii picture an ImageView last asked MiiImages for. -->
+    <item name="mii_image_key" type="id" />
 </resources>

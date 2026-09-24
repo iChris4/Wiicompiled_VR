@@ -30,7 +30,8 @@ import org.wiicompiled.quest.R
  * The app's entry point on the headset: a 2D panel modelled on the PC launcher (WheelWizard VR),
  * with a Home page that sets up and starts the game, a My profiles page that shows the licences
  * of Retro Rewind's save, a Patches page that finds mods for Retro Rewind on GameBanana or imports
- * them, and a Settings page that edits Config.toml.
+ * them, a My Miis page that makes and edits the game's Miis, and a Settings page that edits
+ * Config.toml.
  *
  * The APK carries no game code. Playing needs two things the player owns: the game files (DATA,
  * extracted from their disc image here or on a PC) and the game itself (libmain.so, built from
@@ -43,7 +44,7 @@ import org.wiicompiled.quest.R
  */
 class LauncherActivity : Activity() {
 
-    private enum class Page { Home, Profiles, Patches, Settings }
+    private enum class Page { Home, Profiles, Patches, Miis, Settings }
 
     /** What Home's main and secondary buttons do. */
     private enum class Action { Play, Resume, SelectDisc, ImportGame, BuildGame, DownloadModPack, Reset }
@@ -51,10 +52,12 @@ class LauncherActivity : Activity() {
     private lateinit var navHome: View
     private lateinit var navProfiles: View
     private lateinit var navPatches: View
+    private lateinit var navMiis: View
     private lateinit var navSettings: View
     private lateinit var homePage: View
     private lateinit var profilesView: View
     private lateinit var patchesView: View
+    private lateinit var miisView: View
     private lateinit var settingsView: View
     private lateinit var trails: WheelTrailsView
     private lateinit var playButton: View
@@ -71,6 +74,7 @@ class LauncherActivity : Activity() {
     private lateinit var gameToggle: LinearLayout
     private lateinit var settings: SettingsPage
     private lateinit var patches: PatchesPage
+    private lateinit var miis: MiisPage
     private lateinit var profilesPage: ProfilesPage
     private lateinit var sidebarProfile: SidebarProfileCard
 
@@ -108,10 +112,12 @@ class LauncherActivity : Activity() {
         navHome = findViewById(R.id.nav_home)
         navProfiles = findViewById(R.id.nav_profiles)
         navPatches = findViewById(R.id.nav_patches)
+        navMiis = findViewById(R.id.nav_miis)
         navSettings = findViewById(R.id.nav_settings)
         homePage = findViewById(R.id.page_home)
         profilesView = findViewById(R.id.page_profiles)
         patchesView = findViewById(R.id.page_patches)
+        miisView = findViewById(R.id.page_miis)
         settingsView = findViewById(R.id.page_settings)
         trails = findViewById(R.id.home_trails)
         playButton = findViewById(R.id.home_play)
@@ -147,6 +153,13 @@ class LauncherActivity : Activity() {
         patches = PatchesPage(this, patchesView) {
             openPicker(REQUEST_PATCH_FILES, multiple = true, noPicker = R.string.patches_no_picker)
         }
+        miis = MiisPage(
+            this,
+            miisView,
+            gameRunning = ::isGameRunning,
+            pickImport = { openPicker(REQUEST_MII_FILES, multiple = true, noPicker = R.string.miis_no_picker) },
+            pickExport = ::openMiiExport,
+        )
         sidebarProfile = SidebarProfileCard(this, findViewById(R.id.sidebar_profile)) { showPage(Page.Profiles) }
         profilesPage = ProfilesPage(this, profilesView) { snapshot -> sidebarProfile.show(snapshot) }
         savedInstanceState?.getString(KEY_TAB)?.let { name ->
@@ -156,6 +169,7 @@ class LauncherActivity : Activity() {
         navHome.setOnClickListener { showPage(Page.Home) }
         navProfiles.setOnClickListener { showPage(Page.Profiles) }
         navPatches.setOnClickListener { showPage(Page.Patches) }
+        navMiis.setOnClickListener { showPage(Page.Miis) }
         navSettings.setOnClickListener { showPage(Page.Settings) }
         playButton.setOnClickListener { perform(mainAction) }
         secondary.setOnClickListener { secondaryAction?.let(::perform) }
@@ -179,12 +193,21 @@ class LauncherActivity : Activity() {
             showPage(Page.Patches)
             patches.showBrowser(true, modId.takeIf { it >= 0 }, install = intent.getBooleanExtra(EXTRA_DEBUG_INSTALL_MOD, false))
         }
+        // ...and open My Miis, optionally with the editor on a Mii and one of its pages.
+        if (BuildConfig.DEBUG && savedInstanceState == null && intent.hasExtra(EXTRA_DEBUG_MIIS)) {
+            val spec = intent.getStringExtra(EXTRA_DEBUG_MIIS).orEmpty()
+            Log.i(TAG, "Opening My Miis over adb: $spec")
+            showPage(Page.Miis)
+            miis.debugOpen(spec)
+        }
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        // The mod browser sits in place of the Patches list, so Back returns to the list first.
+        // The mod browser sits in place of the Patches list, so Back returns to the list first, and
+        // so does the Mii editor on My Miis.
         if (page == Page.Patches && patches.back()) return
+        if (page == Page.Miis && miis.back()) return
         @Suppress("DEPRECATION")
         super.onBackPressed()
     }
@@ -235,6 +258,17 @@ class LauncherActivity : Activity() {
             patches.importPicked(uris)
             return
         }
+        if (requestCode == REQUEST_MII_FILES) {
+            val clip = data.clipData
+            val uris = if (clip != null) (0 until clip.itemCount).map { clip.getItemAt(it).uri } else listOfNotNull(data.data)
+            showPage(Page.Miis)
+            miis.importPicked(uris)
+            return
+        }
+        if (requestCode == REQUEST_MII_EXPORT || requestCode == REQUEST_MII_EXPORT_FOLDER) {
+            data.data?.let { miis.exportPicked(it, folder = requestCode == REQUEST_MII_EXPORT_FOLDER) }
+            return
+        }
         val uri = data.data ?: return
         val task = when (requestCode) {
             REQUEST_DISC_IMAGE -> GameSetup.Task.ExtractDisc
@@ -251,10 +285,12 @@ class LauncherActivity : Activity() {
         navHome.isSelected = target == Page.Home
         navProfiles.isSelected = target == Page.Profiles
         navPatches.isSelected = target == Page.Patches
+        navMiis.isSelected = target == Page.Miis
         navSettings.isSelected = target == Page.Settings
         homePage.visibility = if (target == Page.Home) View.VISIBLE else View.GONE
         profilesView.visibility = if (target == Page.Profiles) View.VISIBLE else View.GONE
         patchesView.visibility = if (target == Page.Patches) View.VISIBLE else View.GONE
+        miisView.visibility = if (target == Page.Miis) View.VISIBLE else View.GONE
         profilesPage.setVisible(target == Page.Profiles)
         settingsView.visibility = if (target == Page.Settings) View.VISIBLE else View.GONE
         if (target == Page.Home) {
@@ -268,6 +304,7 @@ class LauncherActivity : Activity() {
             Page.Home -> refreshHome()
             Page.Profiles -> profilesPage.refresh()
             Page.Patches -> patches.refresh()
+            Page.Miis -> miis.refresh()
             Page.Settings -> settings.refresh()
         }
     }
@@ -633,6 +670,28 @@ class LauncherActivity : Activity() {
     }
 
     /**
+     * Asks where Export saves the Miis: a new .mii file for one, a folder for several, which the
+     * PC would ask for one file at a time.
+     */
+    private fun openMiiExport(suggestedName: String, several: Boolean) {
+        val intent = if (several) {
+            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        } else {
+            Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/octet-stream")
+                .putExtra(Intent.EXTRA_TITLE, suggestedName)
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, if (several) REQUEST_MII_EXPORT_FOLDER else REQUEST_MII_EXPORT)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "No document picker", e)
+            Toast.makeText(this, R.string.miis_no_picker, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
      * Imports the newest .wcgame in the Import folder, where Build-QuestGame.ps1 -Install and adb
      * put them. Each package is tried once, whether it imports or not, until it changes: a file
      * adb pushed belongs to the shell user, so the app cannot always delete it afterwards.
@@ -759,6 +818,9 @@ class LauncherActivity : Activity() {
         const val REQUEST_DISC_IMAGE = 1
         const val REQUEST_GAME_PACKAGE = 2
         const val REQUEST_PATCH_FILES = 3
+        const val REQUEST_MII_FILES = 4
+        const val REQUEST_MII_EXPORT = 5
+        const val REQUEST_MII_EXPORT_FOLDER = 6
         const val PREFERENCES = "launcher"
         const val KEY_LAST_DROPPED_IMPORT = "lastDroppedImport"
         const val EXTRA_DEBUG_BUILD_GAME = "org.wiicompiled.quest.debug.BUILD_GAME"
@@ -766,5 +828,7 @@ class LauncherActivity : Activity() {
         const val EXTRA_DEBUG_MOD_BROWSER = "org.wiicompiled.quest.debug.MOD_BROWSER"
         /** With MOD_BROWSER naming a mod: install it as Download and Install would, without the dialogs. */
         const val EXTRA_DEBUG_INSTALL_MOD = "org.wiicompiled.quest.debug.INSTALL_MOD"
+        /** A string: empty for My Miis, or edit:N[:Section] for the editor on the Nth Mii and that page. */
+        const val EXTRA_DEBUG_MIIS = "org.wiicompiled.quest.debug.MIIS"
     }
 }

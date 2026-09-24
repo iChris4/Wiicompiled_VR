@@ -230,13 +230,48 @@ knows the profile, as the PC's `RRratingReader` does. Retro WFC's public API giv
 rest: a licence is Online (card glow) while its friend code is in a room
 (`/api/roomstatus`, asked again every 30 s while the page is shown), its VR history
 comes from `/api/leaderboard/player/<fc>/history?days=N`, and its Mii picture is the
-64-pixel PNG of `/api/leaderboard/player/<fc>`, kept on disk for the sidebar. The
-headset has no Mii database (`RFL_DB.dat`), so this picture stands in for the PC's
-rendered Mii, and a licence never taken online shows a silhouette. Badges come from
-WheelWizard's `badges.json`. It only reads: Rename and change Mii need that database,
-and the PC's region picker is gone since the Quest runs PAL only. The card and the
+64-pixel PNG of `/api/leaderboard/player/<fc>`, kept on disk for the sidebar. It
+stands in for the PC's rendered Mii because a licence's Mii is rarely in the
+headset's Mii database, which only exists once My Miis has created it; a licence
+never taken online shows a silhouette. Badges come from WheelWizard's
+`badges.json`. It only reads, without the PC's Rename and change Mii, and the PC's
+region picker is gone since the Quest runs PAL only. The card and the
 carousel sit side by side on the wide panel. `RksysProfilesTest` and `RetroWfcTest`
 cover the parsing.
+
+**My Miis**, after Patches, is the PC's MiiListPage with its Mii editor
+(`MiisPage`, `MiiEditor`). It lists and changes the Wii's Mii database in the
+game's own NAND, `shared2/menu/FaceLib/RFL_DB.dat` (`MiiDatabase`, the PC's
+`MiiRepositoryService` and `MiiDbService`), which the game reads, so a Mii made here
+can be picked for a new licence. The Quest's NAND starts without one, so the page
+creates it empty the first time, as the PC does, with one difference: a database
+the Wii formatted links its 10,000 hidden-Mii entries to nothing (`0x7FFF`), and
+the PC leaves those links zero, so the headset writes the Wii's (checked byte for
+byte against Dolphin's database). A Mii is the 74-byte block of the PC's
+`MiiSerializer` (`MiiData`). A Mii made or duplicated here gets a new ID and this
+console's system ID, from the MAC address the runtime derives from `setting.txt`'s
+serial (`RuntimeConsoleIdentity::FromSerial`), so making one needs the game to have
+started once. An imported `.mii` gets the PC's import address and, like any Mii
+from another console, the PC's globe. The PC selects more Miis with Shift or Ctrl;
+here a long press adds or removes one. Export saves one `.mii` through the save
+dialog, several into a chosen folder. Changes are refused while the game runs.
+
+The pictures come from a Kotlin port of the PC's software renderer (`MiiRenderer`,
+`FflResource`), without the PC's body, whose 3DS models are not ours to ship, so
+the head is drawn alone, as the Wii's own Mii icons show it. It draws from FFL's
+Mii parts (`FFLResHigh.dat`), which are Nintendo's and never in the APK: like the
+PC, the page downloads them once from the Internet Archive's copy of Miitomo's
+`AFLResHigh_2_3.dat` (a 4.4 MB zip) and checks them against their SHA-256
+(`MiiRenderResource`). Compared with the PC's C# renderer on 257 Miis covering
+every part and colour, 283 of 299 pictures were identical and the rest differed by
+one colour level in at most four pixels, except for one deliberate fix: the PC
+colours a beard with the hair colour, here with the facial hair colour, as the Wii
+does. The editor's choices are drawn from the same parts, the flat parts from their
+textures in the Mii's colours and hairstyles, head shapes and beards as the Mii's
+head, where the PC shows icons of its own. On a Quest 3 the 424-pixel face in the
+editor takes about 150 ms, drawn in four bands of rows in parallel, and a choice
+about 40 ms. `MiiDataTest`, `MiiDatabaseTest`, `MiiIdsTest` and `MiiRendererTest`
+(on a made-up parts file) cover it.
 
 The launcher follows the runtime's rules exactly. `TomlConfig` edits one line
 the way `RuntimeConfigFile::WriteSetting` does, and every edit re-reads the file,
@@ -714,6 +749,15 @@ name); `adb logcat -s WiiCompiledLauncher` shows the searches and the install:
 
 ```powershell
 adb shell am start -n org.wiicompiled.quest/.launcher.LauncherActivity --ei org.wiicompiled.quest.debug.MOD_BROWSER 699980 --ez org.wiicompiled.quest.debug.INSTALL_MOD true
+```
+
+`MIIS` opens My Miis, and `edit:N` or `edit:N:<Page>` the Mii editor on its Nth Mii
+and one of its pages. The launcher panel takes `adb shell input tap x y` in its
+1280x800 pixels, and `adb shell uiautomator dump` gives its views' bounds, so a
+test can go on from there with nobody wearing the headset:
+
+```powershell
+adb shell am start -n org.wiicompiled.quest/.launcher.LauncherActivity --es org.wiicompiled.quest.debug.MIIS edit:0:Hair
 ```
 
 Performance, measured 2026-09-16 on a 50cc Luigi Circuit start with the player

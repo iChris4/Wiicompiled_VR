@@ -41,4 +41,6 @@
     <color name="patches_image">#28503B</color>
     <color name="patches_badge">#1E5E3A</color>
     <color name="patches_badge_text">#D6FFE2</color>
+    <!-- WheelWizard marks Miis made on another console with a DeepSkyBlue globe. -->
+    <color name="mii_foreign">#00BFFF</color>
 </resources>

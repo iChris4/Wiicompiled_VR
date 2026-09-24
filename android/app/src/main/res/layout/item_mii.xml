@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A Mii on My Miis (WheelWizard's MiiBlock), or the tile that makes a new one. The tile shows
+     the item's state: selected is the selection, activated a favourite. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="104dp"
+    android:layout_height="wrap_content"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_horizontal"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:id="@+id/mii_tile"
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:background="@drawable/bg_mii_tile"
+        android:clipToOutline="true"
+        android:duplicateParentState="true">
+
+        <ImageView
+            android:id="@+id/mii_placeholder"
+            android:layout_width="46dp"
+            android:layout_height="46dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_user"
+            android:tint="@color/neutral_700" />
+
+        <ImageView
+            android:id="@+id/mii_add"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_plus"
+            android:tint="@color/neutral_500"
+            android:visibility="gone" />
+
+        <!-- Larger than the tile and raised, as WheelWizard crops its list pictures. -->
+        <ImageView
+            android:id="@+id/mii_picture"
+            android:layout_width="140dp"
+            android:layout_height="140dp"
+            android:layout_gravity="center_horizontal|top"
+            android:layout_marginTop="-19dp"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:id="@+id/mii_favorite"
+            android:layout_width="17dp"
+            android:layout_height="17dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="6dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_star"
+            android:tint="@color/warning_500"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/mii_foreign"
+            android:layout_width="17dp"
+            android:layout_height="17dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="6dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_globe"
+            android:tint="@color/mii_foreign"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/mii_name"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:ellipsize="end"
+        android:maxWidth="100dp"
+        android:singleLine="true"
+        android:textColor="@color/neutral_200"
+        android:textSize="13sp" />
+</LinearLayout>

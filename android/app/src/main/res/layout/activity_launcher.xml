@@ -153,6 +153,20 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/nav_miis"
+            style="@style/Launcher.NavItem">
+
+            <ImageView
+                style="@style/Launcher.NavIcon"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_shirt" />
+
+            <TextView
+                style="@style/Launcher.NavLabel"
+                android:text="@string/launcher_nav_miis" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/nav_settings"
             style="@style/Launcher.NavItem">
 
@@ -204,6 +218,11 @@
         <include
             android:id="@+id/page_patches"
             layout="@layout/page_patches"
+            android:visibility="gone" />
+
+        <include
+            android:id="@+id/page_miis"
+            layout="@layout/page_miis"
             android:visibility="gone" />
 
         <include

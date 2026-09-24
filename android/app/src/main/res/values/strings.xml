@@ -9,6 +9,7 @@
     <string name="launcher_nav_home">Home</string>
     <string name="launcher_nav_profiles">My profiles</string>
     <string name="launcher_nav_patches">Patches</string>
+    <string name="launcher_nav_miis">My Miis</string>
     <string name="launcher_nav_settings">Settings</string>
     <string name="launcher_version">v%1$s</string>
 
@@ -170,6 +171,118 @@
     <string name="history_none_range">No VR history found for this range yet.</string>
     <string name="history_no_code">Friend code is required to load VR history.</string>
 
+    <!-- My Miis and the Mii editor: WheelWizard's MiiListPage and MiiEditorWindow, wording from en.yml -->
+    <string name="miis_favorite">Favorite</string>
+    <string name="miis_unfavorite">Unfavorite</string>
+    <string name="miis_edit">Edit</string>
+    <string name="miis_duplicate">Duplicate</string>
+    <string name="miis_export">Export</string>
+    <string name="miis_delete">Delete</string>
+    <string name="miis_import">Import</string>
+    <string name="miis_empty_title">No Miis yet!</string>
+    <string name="miis_empty_message">The Mii database in the game\'s NAND cannot be opened: %1$s</string>
+    <string name="miis_parts_message">Mii pictures are drawn from FFL\'s Mii parts (%1$s), the file Wheel Wizard downloads for the same reason: a copy of Miitomo\'s kept by the Internet Archive. They are downloaded once and stay on this headset.</string>
+    <string name="miis_parts_download">Download</string>
+    <string name="miis_parts_connecting">Connecting to the Internet Archive…</string>
+    <string name="miis_parts_downloading">Downloading the Mii parts: %1$s of %2$s</string>
+    <string name="miis_parts_failed">The Mii parts could not be downloaded: %1$s</string>
+    <string name="miis_new_title">New Mii</string>
+    <string name="miis_new_random">Randomize</string>
+    <string name="miis_new_male">Male</string>
+    <string name="miis_new_female">Female</string>
+    <string name="miis_default_name">New Mii</string>
+    <string name="miis_delete_title_one">Are you sure you want to delete %1$s?</string>
+    <string name="miis_delete_title_many">Are you sure you want to delete %1$d Miis?</string>
+    <string name="miis_delete_message">Deleting is permanent and cannot be undone.</string>
+    <string name="miis_delete_favorite_title">Cannot delete favorite Mii(s)</string>
+    <string name="miis_delete_favorite_message">One or more of the selected Mii(s) is a favorite. Miis can only be deleted if they are not favorites to prevent accidental deletions.</string>
+    <string name="miis_deleted_one">Deleted \'%1$s\'</string>
+    <string name="miis_deleted_many">Deleted %1$d Miis</string>
+    <string name="miis_duplicated_one">Created duplicate of \'%1$s\'</string>
+    <string name="miis_duplicated_many">Created %1$d duplicate Miis</string>
+    <plurals name="miis_imported">
+        <item quantity="one">Imported %1$d Mii</item>
+        <item quantity="other">Imported %1$d Miis</item>
+    </plurals>
+    <string name="miis_import_problem">%1$s: %2$s</string>
+    <string name="miis_exported_one">Saved Mii \'%1$s\'</string>
+    <string name="miis_exported_many">Saved %1$d Miis</string>
+    <string name="miis_export_failed">The Miis could not be saved: %1$s</string>
+    <string name="miis_change_failed">The Mii database could not be changed</string>
+    <string name="miis_close_game">Close the game first: it reads the Mii database.</string>
+    <string name="miis_no_console_title">Start the game once first</string>
+    <string name="miis_no_console_message">Miis made on this headset carry its console identity, which the game creates the first time it starts. Start it once, then come back.</string>
+    <string name="miis_no_picker">No file picker is available on this headset.</string>
+    <string name="mii_editor_randomize">Randomize</string>
+    <string name="mii_editor_cancel">Cancel</string>
+    <string name="mii_editor_save">Save</string>
+    <string name="mii_editor_back">Back</string>
+    <string name="mii_editor_no_parts">Download the Mii parts on My Miis to see your Mii here.</string>
+    <string name="mii_editor_discard_title">Discard your changes?</string>
+    <string name="mii_editor_discard_message">Leaving the editor without saving loses them.</string>
+    <string name="mii_editor_discard">Discard</string>
+    <string name="mii_section_general">General</string>
+    <string name="mii_section_face">Face</string>
+    <string name="mii_section_hair">Hair</string>
+    <string name="mii_section_eyebrows">Eyebrows</string>
+    <string name="mii_section_eyes">Eyes</string>
+    <string name="mii_section_nose">Nose</string>
+    <string name="mii_section_lips">Lips</string>
+    <string name="mii_section_glasses">Glasses</string>
+    <string name="mii_section_facial_hair">Facial Hair</string>
+    <string name="mii_section_mole">Mole</string>
+    <string name="mii_name">Mii Name</string>
+    <string name="mii_name_hint">Enter Mii name…</string>
+    <string name="mii_name_length">Names must be between 3 and 10 characters long.</string>
+    <string name="mii_creator_name">Creator Name</string>
+    <string name="mii_creator_hint">Optional</string>
+    <string name="mii_creation_date">Creation Date</string>
+    <string name="mii_creation_unknown">Unknown</string>
+    <string name="mii_gender">Gender</string>
+    <string name="mii_gender_male">Male</string>
+    <string name="mii_gender_female">Female</string>
+    <string name="mii_height">Height</string>
+    <string name="mii_width">Width</string>
+    <string name="mii_favorite_color">Favorite Color</string>
+    <string name="mii_skin_color">Skin Color</string>
+    <string name="mii_head_shape">Head Shape</string>
+    <string name="mii_facial_feature">Facial Feature</string>
+    <string-array name="mii_facial_features">
+        <item>None</item>
+        <item>Cheeks</item>
+        <item>Cheek and eyes</item>
+        <item>Freckles</item>
+        <item>Baggy eyes</item>
+        <item>Chad</item>
+        <item>Tired</item>
+        <item>Chin</item>
+        <item>Eye shadow</item>
+        <item>Beard</item>
+        <item>Mouth corners</item>
+        <item>Wrinkles</item>
+    </string-array>
+    <string name="mii_hair_color">Hair Color</string>
+    <string name="mii_mirror_hair">Mirror Hair</string>
+    <string name="mii_hair_type">Hair Type</string>
+    <string name="mii_vertical_position">Vertical Position (Up/Down)</string>
+    <string name="mii_horizontal_position">Horizontal Position (Left/Right)</string>
+    <string name="mii_rotation">Rotation (Rotate Left/Right)</string>
+    <string name="mii_size">Size</string>
+    <string name="mii_space_between">Spacing in between</string>
+    <string name="mii_eyebrow_type">Eyebrow Type</string>
+    <string name="mii_eye_color">Eye Color</string>
+    <string name="mii_eye_type">Eye Type</string>
+    <string name="mii_nose_type">Nose Type</string>
+    <string name="mii_lip_color">Lip Color</string>
+    <string name="mii_mouth_type">Mouth Type</string>
+    <string name="mii_glasses_type">Glasses Type</string>
+    <string name="mii_glasses_color">Glasses Color</string>
+    <string name="mii_mustache_type">Mustache Type</string>
+    <string name="mii_mustache_vertical">Mustache Vertical Position (Up/Down)</string>
+    <string name="mii_mustache_size">Mustache Size</string>
+    <string name="mii_beard_type">Beard Type</string>
+    <string name="mii_mole_enabled">Enable Mole?</string>
+
     <!-- The mod browser: WheelWizard's ModBrowserWindow and ModContent, wording from en.yml -->
     <string name="browser_title">Mod Browser</string>
     <string name="browser_back">Back to your mods</string>
@@ -229,6 +342,7 @@
     <string name="about_credit_nod">nod by encounter, which reads your disc image, built into this app as libnod_jni.</string>
     <string name="about_credit_mod_browser">The Patches page\'s mod browser finds mods on GameBanana, as Wheel Wizard\'s does. Their .7z and .rar archives are unpacked by sevenz-rust2 (Apache 2.0) and rars by bitplane (MIT or Apache 2.0), built into libnod_jni.</string>
     <string name="about_credit_profiles">My profiles reads your licences from Retro Rewind\'s save, and shows each one\'s Mii picture, VR history and online status from Retro WFC (rwfc.net), as Wheel Wizard does. Badges come from Wheel Wizard\'s data.</string>
+    <string name="about_credit_miis">My Miis edits the game\'s Mii database, and its Mii editor works as Wheel Wizard\'s. Miis are drawn by a port of Wheel Wizard\'s Mii renderer (GPL v3), from FFL\'s Mii parts, which you download from the Internet Archive\'s copy of Miitomo\'s files.</string>
     <string name="about_credit_toolchain">On-headset builds use Termux\'s Android clang and lld, Google\'s Android NDK headers and libraries, and .NET for the translator.</string>
     <string name="about_credit_dolphin">The Dolphin emulator, the reference for how the Wii behaves.</string>
     <string name="about_credit_logo">The WiiCompiled logo by inkwreck.</string>
@@ -244,6 +358,7 @@
     <string name="about_credit_title_disc">Disc images</string>
     <string name="about_credit_title_mod_browser">Mod browser</string>
     <string name="about_credit_title_profiles">My profiles</string>
+    <string name="about_credit_title_miis">My Miis</string>
     <string name="about_credit_title_toolchain">On-headset builds</string>
     <string name="about_credit_title_dolphin">Dolphin</string>
     <string name="about_credit_title_logo">Logo</string>
