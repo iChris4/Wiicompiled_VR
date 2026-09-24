@@ -170,10 +170,17 @@ at 0.8, and 492 to 525 MHz at 1.3, the unfoveated windows running at the higher 
 - A compositor screenshot (`TAKE_SCREENSHOT`, headset still on a desk) at High shows 4x4 pixel
   blocks on the kart body at the bottom of the view, and smooth shading with foveation off.
 
-So at the default render scale an eye's time is mostly geometry and full-resolution tile stores,
-which a density map does not reduce (the stores stay full size for non-subsampled images).
-Foveation stays off by default; it pays when `render_scale` is raised. Heavy Retro Rewind tracks
-such as SNES Ghost Valley 2 were not measured.
+- Retro Rewind's SNES Ghost Valley 2 at `render_scale` 1.0 (1680x1760), paused at the
+  countdown, GPU-bound at clock 640 MHz. That session ran without `fpslog`, so these are the
+  compositor's figures per setting (headset FPS, app GPU time, GPU busy). One render pass per
+  recorded pass: 38.9 FPS, 23.3 ms, 97%. Merged: 41.5 FPS, 21.7 ms, 96%. Low, Medium and High:
+  40.3, 39.4 and 39.6 FPS at 22.2, 22.4 and 22.0 ms, with the GPU busy falling to 95, 94 and 94%.
+  The merge helps here too, and no foveation level raised the frame rate.
+
+So an eye's time on these tracks is mostly geometry and full-resolution tile stores, which a
+density map does not reduce (the stores stay full size for non-subsampled images). Foveation
+stays off by default; it pays only when `render_scale` makes the eyes pixel-bound, as at 1.3 on
+Luigi Circuit.
 
 ### Controllers
 

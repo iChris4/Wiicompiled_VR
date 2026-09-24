@@ -670,7 +670,9 @@ At the Quest's default 0.8 an eye's time goes mostly to geometry and to storing 
 resolution. The Wii's shading is cheap, so foveation saves nothing measurable there, although the
 density map verifiably applies (4x4 blocks at the view's edges on High). That is why it defaults to
 `off`. At higher render scales it takes 8 to 22% off the eyes, which is where it earns its keep,
-bought with a softer periphery.
+bought with a softer periphery. It is no fix for a heavy track: on Retro Rewind's SNES Ghost Valley
+2 at 1.0, GPU-bound at about 40 FPS, no level raised the frame rate, while merging the eye passes
+did (39 to 41.5 FPS).
 
 ## Diagnostics
 
