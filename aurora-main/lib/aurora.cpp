@@ -2857,6 +2857,8 @@ void aurora_set_stereo_stop_at_display_copy(bool enabled) { aurora::gfx::set_ste
 bool aurora_get_stereo_stop_at_display_copy() { return aurora::gfx::get_stereo_stop_at_display_copy(); }
 void aurora_set_stereo_skip_copy_clears(bool enabled) { aurora::gfx::set_stereo_skip_copy_clears(enabled); }
 bool aurora_get_stereo_skip_copy_clears() { return aurora::gfx::get_stereo_skip_copy_clears(); }
+void aurora_set_stereo_single_pass_eyes(bool enabled) { aurora::gfx::set_stereo_single_pass_eyes(enabled); }
+bool aurora_get_stereo_single_pass_eyes() { return aurora::gfx::get_stereo_single_pass_eyes(); }
 void aurora_set_stereo_hud_screen(bool enabled, float width, float distance) {
   aurora::gfx::set_stereo_hud_screen(enabled, width, distance);
 }

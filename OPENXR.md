@@ -48,6 +48,7 @@ hud_virtual_screen = true
 flat_screen = false
 stop_at_display_copy = true
 skip_copy_clears = true
+single_pass_eyes = true
 first_person = false
 first_person_toggle_click = true
 first_person_seat = "cockpit"
@@ -161,6 +162,13 @@ panel's rectangle), at the same size per pixel, so nothing moves.
 `stop_at_display_copy` ends eye replay at the final `GXCopyDisp`, matching the frame shown on the
 desktop. `skip_copy_clears` independently suppresses the EFB reset performed after a copy. Both
 default on and can be changed live from the F10 settings bar for diagnostics.
+`single_pass_eyes` draws each eye in one render pass. The desktop image ends a render pass at every
+GX copy, because the copy reads what was drawn before it; an eye samples the copies the desktop
+image made and never performs them, so it keeps drawing in the pass it has open, and it leaves out
+whatever a later clear of the whole color and depth erases. The picture is the same with less GPU
+memory traffic, which a tiled mobile GPU pays for at every split (the "Eye replay plan" log line
+reports each new pass structure). It defaults on and is live; turning it off replays one render pass
+per recorded pass.
 `first_person` and the `first_person_*` values are the first-person camera described below. All
 four are live and are also exposed in the F10 settings bar.
 `performance_level` is the level asked of the runtime through `XR_EXT_performance_settings` for

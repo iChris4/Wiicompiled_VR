@@ -140,6 +140,7 @@ bool g_showFps = RuntimeConfigFile::ShowFps();
 bool g_vrEnabled = RuntimeConfigFile::VrEnabled(true);
 bool g_vrStopAtDisplayCopy = RuntimeConfigFile::VrStopAtDisplayCopy(true);
 bool g_vrSkipCopyClears = RuntimeConfigFile::VrSkipCopyClears(true);
+bool g_vrSinglePassEyes = RuntimeConfigFile::VrSinglePassEyes(true);
 bool g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
 bool g_vrFlatScreen = RuntimeConfigFile::VrFlatScreen();
 #if defined(__ANDROID__)
@@ -1424,6 +1425,18 @@ void DrawVrSettings() {
         "Both apply on the next frame. Turning either off restores the raw replay and is "
         "expected to black out the eyes.");
     ImGui::PopTextWrapPos();
+    // Shows the live state, which the Quest's debug.wiicompiled.eye_passes can override.
+    g_vrSinglePassEyes = aurora_get_stereo_single_pass_eyes();
+    if (ImGui::Checkbox("One render pass per eye", &g_vrSinglePassEyes)) {
+        aurora_set_stereo_single_pass_eyes(g_vrSinglePassEyes);
+        RuntimeConfigFile::SetVrSinglePassEyes(g_vrSinglePassEyes);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Keeps drawing each eye in the render pass it has open across the frame's GX "
+            "copies, which only the desktop image performs, and skips what a later clear "
+            "erases. Same picture, less GPU memory traffic; turn off to compare.");
+    }
     ImGui::Separator();
     ImGui::Text("VR 2D layer");
     ImGui::BeginDisabled(g_vrFlatScreen);
@@ -2317,6 +2330,7 @@ void InitializeRuntimeSettings() noexcept {
     aurora_set_disable_copy_filter(g_disableCopyFilter);
     aurora_set_stereo_stop_at_display_copy(g_vrStopAtDisplayCopy);
     aurora_set_stereo_skip_copy_clears(g_vrSkipCopyClears);
+    aurora_set_stereo_single_pass_eyes(g_vrSinglePassEyes);
     aurora_set_stereo_mirror_view(static_cast<AuroraStereoMirrorView>(g_vrMirrorView));
     mkw::vr::OpenXRSetControllerMode(static_cast<mkw::vr::OpenXRControllerMode>(g_vrControllerMode));
     ApplyVrHudVirtualScreen();

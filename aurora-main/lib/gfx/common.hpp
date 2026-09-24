@@ -405,6 +405,10 @@ void set_stereo_stop_at_display_copy(bool value) noexcept;
 bool get_stereo_stop_at_display_copy() noexcept;
 void set_stereo_skip_copy_clears(bool value) noexcept;
 bool get_stereo_skip_copy_clears() noexcept;
+// Replays each eye in as few render passes as its clears allow (gfx/eye_pass_plan.hpp). On by
+// default and live, like the two above.
+void set_stereo_single_pass_eyes(bool value) noexcept;
+bool get_stereo_single_pass_eyes() noexcept;
 
 // Places orthographic draws on a fixed virtual screen during immersive replay.
 // `width` and `distance` are in game world units; the screen's height follows

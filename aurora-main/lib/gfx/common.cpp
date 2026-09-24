@@ -4,6 +4,7 @@
 #include "clear.hpp"
 #include "depth_peek.hpp"
 #include "efb_ram_copy.hpp"
+#include "eye_pass_plan.hpp"
 #include "../internal.hpp"
 #include "../webgpu/gpu.hpp"
 #include "../gx/pipeline.hpp"
@@ -217,6 +218,9 @@ static u32 g_currentRenderPass = UINT32_MAX;
 // for A/B comparison without a rebuild.
 static std::atomic_bool g_stereoStopAtDisplayCopy{true};
 static std::atomic_bool g_stereoSkipCopyClears{true};
+// Replays each eye in as few render passes as its clears allow (eye_pass_plan.hpp) rather than one
+// per recorded pass. Same image, fewer tile loads and stores.
+static std::atomic_bool g_stereoSinglePassEyes{true};
 
 void set_stereo_stop_at_display_copy(bool value) noexcept {
   g_stereoStopAtDisplayCopy.store(value, std::memory_order_relaxed);
@@ -226,6 +230,10 @@ void set_stereo_skip_copy_clears(bool value) noexcept {
   g_stereoSkipCopyClears.store(value, std::memory_order_relaxed);
 }
 bool get_stereo_skip_copy_clears() noexcept { return g_stereoSkipCopyClears.load(std::memory_order_relaxed); }
+void set_stereo_single_pass_eyes(bool value) noexcept {
+  g_stereoSinglePassEyes.store(value, std::memory_order_relaxed);
+}
+bool get_stereo_single_pass_eyes() noexcept { return g_stereoSinglePassEyes.load(std::memory_order_relaxed); }
 
 // The fixed virtual screen orthographic draws are placed on during immersive
 // replay, in game world units. Written from the settings overlay and read by
@@ -1766,14 +1774,111 @@ struct RenderInvocation {
   cockpit::SceneDepth cockpitDepth{};
   bool* cockpitDrawn = nullptr;
   bool* sceneDrawn = nullptr;
+  // An eye replay laid out by eye_pass_plan, replacing the one-render-pass-per-recorded-pass loop.
+  const eye_pass_plan::Plan* eyePlan = nullptr;
 };
 
 static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vector<RenderPass>& passes, u32 idx,
                              const RenderInvocation& invocation);
 
+// Replays one eye as its plan lays it out. Each step's commands go through render_pass_impl exactly
+// as render_impl's loop replays them; only where render passes begin and end differs.
+static void render_eye_planned(std::vector<RenderPass>& renderPasses, wgpu::CommandEncoder& cmd,
+                               const RenderInvocation& invocation, const eye_pass_plan::Plan& plan) {
+  const ReplayTarget& target = *invocation.target;
+  const bool stereoStencil = target.depthFormat == wgpu::TextureFormat::Depth24PlusStencil8;
+  const GpuTimingCategory timingCategory =
+      invocation.stereoEye == 0 ? GpuTimingCategory::EyeLeft : GpuTimingCategory::EyeRight;
+  wgpu::RenderPassEncoder pass;
+  for (const auto& step : plan.steps) {
+    const auto& passInfo = renderPasses[step.pass];
+    if (step.begin) {
+      if (pass) {
+        pass.End();
+      }
+      const wgpu::RenderPassColorAttachment colorAttachment{
+          .view = target.colorView,
+          .resolveTarget = target.resolveView,
+          .loadOp = step.clearColor ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
+          .storeOp = wgpu::StoreOp::Store,
+          .clearValue =
+              {
+                  .r = passInfo.clearColorValue.x(),
+                  .g = passInfo.clearColorValue.y(),
+                  .b = passInfo.clearColorValue.z(),
+                  .a = passInfo.clearColorValue.w(),
+              },
+      };
+      const wgpu::RenderPassDepthStencilAttachment depthStencilAttachment{
+          .view = target.depthView,
+          .depthLoadOp = step.clearDepth ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
+          .depthStoreOp = wgpu::StoreOp::Store,
+          .depthClearValue = passInfo.clearDepthValue,
+          .stencilLoadOp = stereoStencil ? (step.clearStencil ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load)
+                                         : wgpu::LoadOp::Undefined,
+          .stencilStoreOp = stereoStencil ? wgpu::StoreOp::Store : wgpu::StoreOp::Undefined,
+          .stencilClearValue = 0,
+      };
+      const wgpu::RenderPassDescriptor renderPassDescriptor{
+          .label = render_pass_label(step.pass),
+          .colorAttachmentCount = 1,
+          .colorAttachments = &colorAttachment,
+          .depthStencilAttachment = &depthStencilAttachment,
+          .timestampWrites = gpu_timing_pass(timingCategory),
+      };
+      pass = cmd.BeginRenderPass(&renderPassDescriptor);
+    } else {
+      // Carry on from the state a fresh render pass starts in: render_pass_impl assumes the whole eye
+      // as viewport and scissor, and a clear draw leaves its colour behind as the blend constant.
+      const wgpu::Color noBlendConstant{0.0, 0.0, 0.0, 0.0};
+      pass.SetViewport(0.0f, 0.0f, static_cast<float>(target.size.width), static_cast<float>(target.size.height),
+                       0.0f, 1.0f);
+      pass.SetScissorRect(0, 0, target.size.width, target.size.height);
+      pass.SetBlendConstant(&noBlendConstant);
+      pass.SetStencilReference(0);
+    }
+    render_pass_impl(pass, renderPasses, step.pass, invocation);
+  }
+  if (!pass) {
+    return;
+  }
+  // The cockpit that no virtual-screen draw brought in goes over the finished world here rather than
+  // in a render pass of its own (render_stereo_eye's fallback), which would load the eye back.
+  if (invocation.cockpitFrame != nullptr && !*invocation.cockpitDrawn) {
+    cockpit::render(*invocation.cockpitEncoder, *invocation.cockpitFrame, invocation.stereoEye,
+                    invocation.cockpitDepth, &pass);
+    *invocation.cockpitDrawn = true;
+  }
+  pass.End();
+}
+
+static void finish_render_impl(std::vector<RenderPass>& renderPasses, const RenderInvocation& invocation) {
+  if (invocation.finalize) {
+    recycle_render_passes(renderPasses);
+  }
+
+#if defined(AURORA_GFX_DEBUG_GROUPS)
+  if (invocation.finalize && !g_debugGroupStack.empty()) {
+    for (auto& it : std::ranges::reverse_view(g_debugGroupStack)) {
+      Log.warn("Debug group was not popped at end of frame: {}", it);
+    }
+    g_debugGroupStack.clear();
+  }
+
+  if (invocation.finalize && g_debugMarkers.size() > 0) {
+    g_debugMarkers.clear();
+  }
+#endif
+}
+
 static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEncoder& cmd,
                         const RenderInvocation& invocation) {
   ZoneScoped;
+  if (invocation.eyePlan != nullptr) {
+    render_eye_planned(renderPasses, cmd, invocation, *invocation.eyePlan);
+    finish_render_impl(renderPasses, invocation);
+    return;
+  }
   // Palette conversions, MSAA resolves and EFB copies depend on sealed frame state, not on the
   // interpolation weight, so encode them on the native render and let replay slots sample them.
   // Eye textures are reused; discard the previous frame's mask, then retain it
@@ -1929,22 +2034,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
       }
     }
   }
-  if (invocation.finalize) {
-    recycle_render_passes(renderPasses);
-  }
-
-#if defined(AURORA_GFX_DEBUG_GROUPS)
-  if (invocation.finalize && !g_debugGroupStack.empty()) {
-    for (auto& it : std::ranges::reverse_view(g_debugGroupStack)) {
-      Log.warn("Debug group was not popped at end of frame: {}", it);
-    }
-    g_debugGroupStack.clear();
-  }
-
-  if (invocation.finalize && g_debugMarkers.size() > 0) {
-    g_debugMarkers.clear();
-  }
-#endif
+  finish_render_impl(renderPasses, invocation);
 }
 
 void seal_frame(SealedFrame& out) noexcept {
@@ -2059,6 +2149,39 @@ bool prepare_late_stereo_replay(SealedFrame& frame, wgpu::CommandEncoder& cmd, c
   return true;
 }
 
+// This frame's eye plan, built in scratch storage that is reused from frame to frame. Each new plan
+// shape is logged once, so a headset log shows the pass structure of every scene it went through.
+static const eye_pass_plan::Plan& plan_eye_passes(const std::vector<RenderPass>& passes, int32_t lastPass,
+                                                  bool skipCopyClears) {
+  thread_local std::vector<eye_pass_plan::PassSummary> summaries;
+  thread_local eye_pass_plan::Plan plan;
+  summaries.resize(passes.size());
+  for (size_t i = 0; i < passes.size(); ++i) {
+    const auto& pass = passes[i];
+    summaries[i] = eye_pass_plan::PassSummary{
+        .efbTarget = pass.efbTarget,
+        .clearColor = pass.clearColor,
+        .clearDepth = pass.clearDepth,
+        .postCopyClear = pass.postCopyClear,
+        .hasCommands = !pass.commands.empty(),
+    };
+  }
+  eye_pass_plan::build(summaries.data(), summaries.size(), lastPass, skipCopyClears, plan);
+
+  static std::mutex loggedShapesMutex;
+  static std::vector<std::array<uint32_t, 5>> loggedShapes;
+  const std::array<uint32_t, 5> shape{plan.efbPasses, plan.renderPasses, plan.dead, plan.empty, plan.splits};
+  std::lock_guard lock{loggedShapesMutex};
+  if (loggedShapes.size() < 32 && std::ranges::find(loggedShapes, shape) == loggedShapes.end()) {
+    loggedShapes.push_back(shape);
+    Log.info("Eye replay plan: {} EFB passes -> {} render pass{} per eye ({} erased by a later clear, {} empty, "
+             "{} split by a partial clear)",
+             plan.efbPasses, plan.renderPasses, plan.renderPasses == 1 ? "" : "es", plan.dead, plan.empty,
+             plan.splits);
+  }
+  return plan;
+}
+
 void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame,
                        uint32_t eye, bool finalize) {
   CHECK(eye < AURORA_STEREO_EYE_COUNT, "invalid stereo eye {}", eye);
@@ -2079,6 +2202,9 @@ void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const Ster
   bool cockpitDrawn = false;
   bool sceneDrawn = false;
   const bool cockpitActive = stereoFrame.cockpit.active && cockpitDepth.valid;
+  const bool skipCopyClears = get_stereo_skip_copy_clears();
+  const eye_pass_plan::Plan* plan =
+      get_stereo_single_pass_eyes() ? &plan_eye_passes(frame.data().passes, lastPass, skipCopyClears) : nullptr;
   render_impl(frame.data().passes, cmd,
               RenderInvocation{
                   .stereoEye = eye,
@@ -2088,7 +2214,7 @@ void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const Ster
                   .replayLastPass = lastPass,
                   .finalize = finalize,
                   .replayOnlyEfb = true,
-                  .skipCopyClears = get_stereo_skip_copy_clears(),
+                  .skipCopyClears = skipCopyClears,
                   .encodeTextureBakes = false,
                   .encodeResolves = false,
                   .captureDepth = false,
@@ -2097,9 +2223,11 @@ void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const Ster
                   .cockpitDepth = cockpitDepth,
                   .cockpitDrawn = &cockpitDrawn,
                   .sceneDrawn = &sceneDrawn,
+                  .eyePlan = plan,
               });
   // A frame without a virtual-screen draw after its world still gets the
-  // overlay, in a pass of its own over the finished eye.
+  // overlay, in a pass of its own over the finished eye. A planned eye draws it
+  // in its last render pass instead, unless it had nothing to render at all.
   if (cockpitActive && !cockpitDrawn) {
     cockpit::render(cmd, stereoFrame, eye, cockpitDepth);
   }

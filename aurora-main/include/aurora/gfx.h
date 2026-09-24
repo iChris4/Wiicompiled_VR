@@ -99,6 +99,13 @@ void aurora_set_stereo_stop_at_display_copy(bool enabled);
 bool aurora_get_stereo_stop_at_display_copy();
 void aurora_set_stereo_skip_copy_clears(bool enabled);
 bool aurora_get_stereo_skip_copy_clears();
+// single_pass_eyes keeps drawing an eye in the render pass it has open across
+// the frame's GX copies, which only the mono render performs, and leaves out
+// passes a later clear of the whole EFB erases. The image is the same with
+// fewer tile loads and stores; on by default, live, and off replays one render
+// pass per recorded pass.
+void aurora_set_stereo_single_pass_eyes(bool enabled);
+bool aurora_get_stereo_single_pass_eyes();
 
 // Places orthographic GX draws (menus, HUD, 2D overlays) on a fixed virtual
 // screen during immersive replay instead of stretching them across the whole

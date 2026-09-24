@@ -61,6 +61,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrPassthrough;
     std::optional<bool> vrStopAtDisplayCopy;
     std::optional<bool> vrSkipCopyClears;
+    std::optional<bool> vrSinglePassEyes;
     std::optional<std::string> vrMirrorView;
     std::optional<std::string> vrControllerMode;
     std::optional<uint32_t> vrFrameInterpolationFps;
@@ -509,6 +510,10 @@ inline void EnsureConfigFile() {
               "# from erasing the eye, and both are safe to turn off.\n"
               "stop_at_display_copy = true\n"
               "skip_copy_clears = true\n"
+              "# Draw each eye in one render pass across the frame's GX copies,\n"
+              "# which only the desktop image performs: the same picture with\n"
+              "# less GPU memory traffic. Changeable live from the F10 menu.\n"
+              "single_pass_eyes = true\n"
               "# Put the camera at the Player 1 driver's head instead of behind\n"
               "# the kart, with the horizon kept level. Changeable live from the\n"
               "# F10 menu, and only during a single-screen race.\n"
@@ -757,6 +762,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.vrPassthrough = FindConfigValue<bool>(document, "vr", "passthrough");
     config.vrStopAtDisplayCopy = FindConfigValue<bool>(document, "vr", "stop_at_display_copy");
     config.vrSkipCopyClears = FindConfigValue<bool>(document, "vr", "skip_copy_clears");
+    config.vrSinglePassEyes = FindConfigValue<bool>(document, "vr", "single_pass_eyes");
     config.vrFirstPerson = FindConfigValue<bool>(document, "vr", "first_person");
     config.vrFirstPersonToggleClick = FindConfigValue<bool>(document, "vr", "first_person_toggle_click");
     if (auto value = FindConfigFloat(document, "vr", "first_person_units_per_meter");
@@ -1086,6 +1092,11 @@ inline bool SetVrStopAtDisplayCopy(bool value) {
 inline bool SetVrSkipCopyClears(bool value) {
     Mutable().vrSkipCopyClears = value;
     return WriteSetting("vr", "skip_copy_clears", value ? "true" : "false");
+}
+
+inline bool SetVrSinglePassEyes(bool value) {
+    Mutable().vrSinglePassEyes = value;
+    return WriteSetting("vr", "single_pass_eyes", value ? "true" : "false");
 }
 
 inline bool SetVrFirstPerson(bool value) {
@@ -1551,6 +1562,10 @@ inline bool VrStopAtDisplayCopy(bool fallback = true) {
 
 inline bool VrSkipCopyClears(bool fallback = true) {
     return Get().vrSkipCopyClears.value_or(fallback);
+}
+
+inline bool VrSinglePassEyes(bool fallback = true) {
+    return Get().vrSinglePassEyes.value_or(fallback);
 }
 
 inline bool VrFirstPerson(bool fallback = false) {
