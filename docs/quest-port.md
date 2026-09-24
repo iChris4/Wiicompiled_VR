@@ -250,7 +250,10 @@ suggested for `oculus/touch_controller` and `khr/simple_controller`.
   (created on first use) or pauses it as each presentation arrives, and submits
   it first, under the virtual screen's quad, or alone while there is no image
   yet (startup, a recenter). An immersive race never submits it and pauses the
-  cameras; a `flat_screen` race is a virtual screen, so it keeps the room.
+  cameras; a `flat_screen` race is a virtual screen, so it keeps the room, and
+  so does an `immersive_window` race, whose projection layer is submitted over
+  it with `XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT` (Aurora leaves
+  each eye transparent outside the window; see OPENXR.md, "The immersive window").
   The quad is cropped to the snapshot Aurora letterboxes into the
   nearly square eye image (`OpenXRVirtualScreenContentRect`), or its black
   bands would frame the picture against the room. The manifest's `com.oculus.feature.PASSTHROUGH` is what lets Horizon
@@ -268,7 +271,8 @@ The app opens on `LauncherActivity` (`android/app/src/main/java/org/wiicompiled/
 a 2D Horizon OS panel modelled on the PC launcher, WheelWizard VR, and using its
 palette. **Home** has the Play button and reports a missing or incomplete `DATA`
 (the check is the runtime's own `IsDvdDataRoot`: `files/` and `sys/fst.bin`).
-**Settings** edits `Config.toml` in tabs: VR (Flat Screen mode, camera, rotation, driver hiding,
+**Settings** edits `Config.toml` in tabs: VR (race view: immersive, immersive window or flat
+screen, camera, rotation, driver hiding,
 seat, hand steering, lean back, render scale, VR interpolation, virtual screen
 size and distance),
 Graphics (resolution, widescreen, bloom, shader stutter), Controls (controller

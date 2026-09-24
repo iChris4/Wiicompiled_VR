@@ -511,5 +511,134 @@ TEST(StereoReplayTest, MirroringKeepsEachEyeOnItsOwnSide) {
   EXPECT_LT(ndcX[1], 0.0f);
 }
 
+Mat4x4<float> asymmetric_eye_frustum() {
+  Mat4x4<float> eyeFrustum{};
+  eyeFrustum.m0 = {1.15f, 0.0f, 0.08f, 0.0f};
+  eyeFrustum.m1 = {0.0f, 1.02f, -0.03f, 0.0f};
+  return eyeFrustum;
+}
+
+// A head turned and pitched a little, offset from the recorded center eye.
+Mat3x4<float> turned_head() {
+  const float yaw = 0.3f;
+  const float pitch = -0.12f;
+  const float cy = std::cos(yaw);
+  const float sy = std::sin(yaw);
+  const float cp = std::cos(pitch);
+  const float sp = std::sin(pitch);
+  // Pitch about X after yaw about Y.
+  Mat3x4<float> m{};
+  m.m0 = {cy, 0.0f, sy, 15.0f};
+  m.m1 = {sp * sy, cp, -sp * cy, -4.0f};
+  m.m2 = {-cp * sy, sp, cp * cy, 7.0f};
+  return m;
+}
+
+// Where a point of the center-eye space lands in the eye image, in NDC.
+std::array<float, 2> eye_ndc(const Mat4x4<float>& eyeFrustum, const Mat3x4<float>& viewFromCenter,
+                             const Vec4<float>& centerPoint) {
+  const float eyeX = dot4(viewFromCenter.m0, centerPoint);
+  const float eyeY = dot4(viewFromCenter.m1, centerPoint);
+  const float eyeZ = dot4(viewFromCenter.m2, centerPoint);
+  EXPECT_LT(eyeZ, 0.0f);
+  return {(eyeFrustum.m0[0] * eyeX + eyeFrustum.m0[2] * eyeZ) / -eyeZ,
+          (eyeFrustum.m1[1] * eyeY + eyeFrustum.m1[2] * eyeZ) / -eyeZ};
+}
+
+TEST(StereoReplayTest, WindowMaskFindsTheScreenThroughTheEye) {
+  const auto eyeFrustum = asymmetric_eye_frustum();
+  const auto viewFromCenter = turned_head();
+  const HudScreen screen{.halfWidth = 600.0f, .halfHeight = 337.5f, .distance = 1000.0f};
+  const auto mask = window_mask(eyeFrustum, viewFromCenter, screen);
+
+  // Corners, centre, and points just inside and outside the edges, in half extents.
+  const std::array<std::array<float, 2>, 9> points{{
+      {-1.0f, 1.0f},
+      {1.0f, 1.0f},
+      {-1.0f, -1.0f},
+      {1.0f, -1.0f},
+      {0.0f, 0.0f},
+      {0.95f, 0.2f},
+      {1.05f, 0.2f},
+      {-0.3f, -0.97f},
+      {-0.3f, -1.04f},
+  }};
+  for (const auto& point : points) {
+    const Vec4<float> centerPoint{point[0] * screen.halfWidth, point[1] * screen.halfHeight, -screen.distance, 1.0f};
+    const auto ndc = eye_ndc(eyeFrustum, viewFromCenter, centerPoint);
+    const auto h = mask.at(ndc[0], ndc[1]);
+    ASSERT_GT(h.z, 0.0f);
+    EXPECT_NEAR(h.x / h.z, point[0], 1e-4f);
+    EXPECT_NEAR(h.y / h.z, point[1], 1e-4f);
+  }
+}
+
+TEST(StereoReplayTest, WindowMaskCoincidesWithTheHudOnTheSameScreen) {
+  // The 2D layer is drawn on the window, so a HUD vertex must land at its own
+  // game NDC on the window: the mask and compose_hud_screen_projection agree.
+  const auto game = game_orthographic_projection();
+  const auto eyeFrustum = asymmetric_eye_frustum();
+  const auto viewFromCenter = turned_head();
+  const HudScreen screen{.halfWidth = 600.0f, .halfHeight = 337.5f, .distance = 1000.0f};
+  const auto composed = compose_hud_screen_projection(eyeFrustum, viewFromCenter, screen, game);
+  const auto mask = window_mask(eyeFrustum, viewFromCenter, screen);
+  for (const auto& v : kVertices) {
+    const float w = dot4(composed.m3, v);
+    ASSERT_GT(w, 0.0f);
+    const auto h = mask.at(dot4(composed.m0, v) / w, dot4(composed.m1, v) / w);
+    ASSERT_GT(h.z, 0.0f);
+    EXPECT_NEAR(h.x / h.z, dot4(game.m0, v), 1e-4f);
+    EXPECT_NEAR(h.y / h.z, dot4(game.m1, v), 1e-4f);
+  }
+}
+
+TEST(StereoReplayTest, WindowMaskShowsNothingBehindTheEye) {
+  const auto eyeFrustum = asymmetric_eye_frustum();
+  const HudScreen screen{.halfWidth = 600.0f, .halfHeight = 337.5f, .distance = 1000.0f};
+
+  // Turned right round: the screen is behind the eye, so no pixel's ray meets it.
+  Mat3x4<float> turnedAway{};
+  turnedAway.m0 = {-1.0f, 0.0f, 0.0f, 0.0f};
+  turnedAway.m1 = {0.0f, 1.0f, 0.0f, 0.0f};
+  turnedAway.m2 = {0.0f, 0.0f, -1.0f, 0.0f};
+  const auto away = window_mask(eyeFrustum, turnedAway, screen);
+  for (float x = -1.0f; x <= 1.0f; x += 0.25f) {
+    for (float y = -1.0f; y <= 1.0f; y += 0.25f) {
+      EXPECT_LE(away.at(x, y).z, 0.0f);
+    }
+  }
+
+  // Walked through the screen: every row is zero, so every pixel is outside.
+  Mat3x4<float> beyond = identity3x4();
+  beyond.m2[3] = screen.distance + 100.0f;
+  const auto through = window_mask(eyeFrustum, beyond, screen);
+  EXPECT_EQ(through.w, Vec3<float>{});
+  EXPECT_EQ(through.u, Vec3<float>{});
+
+  // No screen at all: nothing either.
+  const auto none = window_mask(eyeFrustum, identity3x4(), HudScreen{});
+  EXPECT_EQ(none.w, Vec3<float>{});
+}
+
+TEST(StereoReplayTest, WindowMaskStaysFixedInSpaceAsTheEyeMoves) {
+  // Stepping sideways moves the screen across the eye image the other way, as
+  // a real window would: the screen's centre is no longer at the image centre.
+  const auto eyeFrustum = eye_frustum(0.0f);
+  const HudScreen screen{.halfWidth = 600.0f, .halfHeight = 337.5f, .distance = 1000.0f};
+  Mat3x4<float> stepRight = identity3x4();
+  stepRight.m0[3] = -200.0f; // The eye moves +200 to the right, so the world moves back.
+  const auto mask = window_mask(eyeFrustum, stepRight, screen);
+  const auto centre = eye_ndc(eyeFrustum, stepRight, {0.0f, 0.0f, -screen.distance, 1.0f});
+  EXPECT_LT(centre[0], 0.0f);
+  const auto h = mask.at(centre[0], centre[1]);
+  ASSERT_GT(h.z, 0.0f);
+  EXPECT_NEAR(h.x / h.z, 0.0f, 1e-4f);
+  EXPECT_NEAR(h.y / h.z, 0.0f, 1e-4f);
+  // The image centre now looks through the right part of the screen.
+  const auto straight = mask.at(0.0f, 0.0f);
+  ASSERT_GT(straight.z, 0.0f);
+  EXPECT_NEAR(straight.x / straight.z, 200.0f / screen.halfWidth, 1e-4f);
+}
+
 } // namespace
 } // namespace aurora::gfx::stereo_replay

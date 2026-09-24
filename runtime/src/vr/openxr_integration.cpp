@@ -568,6 +568,10 @@ public:
         passthrough_.store(enabled, std::memory_order_relaxed);
     }
 
+    void SetImmersiveWindow(bool enabled) noexcept {
+        immersive_window_.store(enabled, std::memory_order_relaxed);
+    }
+
     void SetLeanBackDegrees(float degrees) noexcept {
         lean_back_degrees_.store(
             std::clamp(degrees, -RuntimeConfigFile::kVrLeanBackDegreesLimit,
@@ -846,10 +850,15 @@ private:
                 aurora_get_stereo_screen_aspects(&picture_aspect, &snapshot_aspect)) {
                 presentation.quad_content_aspect = snapshot_aspect;
             }
-            // The room around the menu screen and every other virtual screen, a
-            // Flat Screen race included; an immersive race is fully virtual, and the
-            // cameras are paused for it.
-            presentation.passthrough = !immersive && passthrough_.load(std::memory_order_relaxed);
+            // The immersive window: the race's stereo view seen through its 2D layer's screen.
+            // The flag travels with the packet, so the eyes Aurora masks and the layer the
+            // backend blends always belong to the same frame.
+            presentation.immersive_window = immersive && immersive_window_.load(std::memory_order_relaxed);
+            // The room around the menu screen and every other virtual screen, a Flat Screen
+            // race included, and around the immersive window; a fully immersive race is
+            // virtual all round, and the cameras are paused for it.
+            presentation.passthrough =
+                (!immersive || presentation.immersive_window) && passthrough_.load(std::memory_order_relaxed);
             // The settings panel gets a compositor layer of its own while it is
             // open, and Aurora leaves it out of the eyes. A backend that could
             // not make that layer has the panel drawn into the eyes instead.
@@ -1247,6 +1256,7 @@ private:
         destination.displayTimeNanos = DisplayTimeNanos(source.xr_frame.predicted_display_time);
         destination.mode = immersive ? AURORA_STEREO_FRAME_IMMERSIVE_REPLAY
                                       : AURORA_STEREO_FRAME_VIRTUAL_SCREEN;
+        destination.window = immersive && source.presentation.immersive_window;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             destination.eyes[eye].width = source.render_width[eye];
             destination.eyes[eye].height = source.render_height[eye];
@@ -1378,7 +1388,8 @@ private:
     // that space (in metres) to base + lean * p in the application space, so the
     // screen sits at base + lean * (0, 0, -distance), turned by the lean, its
     // height following the picture aspect as stereo_hud_screen's does. With the
-    // 2D layer stretched across the eyes there is no screen to point at.
+    // 2D layer stretched across the eyes there is no screen to point at, except
+    // in the immersive window, which is that screen and always carries the layer.
     OpenXRPointerScreen PointerScreen(const OpenXRBackendFrame& frame, const MkwVRPolicySnapshot& policy,
                                       bool immersive) const noexcept {
         OpenXRPointerScreen screen{};
@@ -1389,8 +1400,9 @@ private:
         }
 
         if (immersive) {
-            if (!aurora_get_stereo_hud_screen_enabled() || !(policy.config.hud_width_meters > 0.0f) ||
-                !RaceScreenPose(frame, policy, screen.pose)) {
+            // The immersive window always carries the 2D layer.
+            const bool on_screen = aurora_get_stereo_hud_screen_enabled() || frame.presentation.immersive_window;
+            if (!on_screen || !(policy.config.hud_width_meters > 0.0f) || !RaceScreenPose(frame, policy, screen.pose)) {
                 return screen;
             }
             screen.half_width_meters = 0.5f * policy.config.hud_width_meters;
@@ -1756,6 +1768,7 @@ private:
     std::atomic_bool recenter_requested_{false};
     std::atomic<float> lean_back_degrees_{RuntimeConfigFile::VrLeanBackDegrees()};
     std::atomic_bool passthrough_{RuntimeConfigFile::VrPassthrough()};
+    std::atomic_bool immersive_window_{RuntimeConfigFile::VrImmersiveWindow()};
     std::atomic_uint32_t frame_interpolation_fps_{RuntimeConfigFile::VrFrameInterpolationFps()};
     std::atomic_bool interpolation_available_{false};
     std::mutex interpolation_mutex_;
@@ -1872,6 +1885,14 @@ void OpenXRSetLeanBackDegrees(float degrees) noexcept {
 void OpenXRSetPassthrough(bool enabled) noexcept {
 #if MKW_OPENXR_GRAPHICS_BACKEND
     OpenXRIntegration::Get().SetPassthrough(enabled);
+#else
+    (void)enabled;
+#endif
+}
+
+void OpenXRSetImmersiveWindow(bool enabled) noexcept {
+#if MKW_OPENXR_GRAPHICS_BACKEND
+    OpenXRIntegration::Get().SetImmersiveWindow(enabled);
 #else
     (void)enabled;
 #endif

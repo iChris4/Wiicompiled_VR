@@ -34,5 +34,18 @@ int main() {
     Require(Parse("[vr]\nsingle_pass_eyes = true\n").vrSinglePassEyes == true);
     Require(Parse("[vr]\nsingle_pass_eyes = false\n").vrSinglePassEyes == false);
     Require(!Parse("[vr]\n").vrSinglePassEyes.has_value());
+
+    // [vr] immersive_window and flat_screen: one race view in two keys, Flat
+    // Screen mode winning, so a file that predates the window reads as before.
+    using RuntimeConfigFile::VrRaceView;
+    using RuntimeConfigFile::VrRaceViewOf;
+    Require(Parse("[vr]\nimmersive_window = true\n").vrImmersiveWindow == true);
+    Require(!Parse("[vr]\n").vrImmersiveWindow.has_value());
+    Require(VrRaceViewOf(Parse("[vr]\n")) == VrRaceView::Immersive);
+    Require(VrRaceViewOf(Parse("[vr]\nflat_screen = false\n")) == VrRaceView::Immersive);
+    Require(VrRaceViewOf(Parse("[vr]\nflat_screen = true\n")) == VrRaceView::FlatScreen);
+    Require(VrRaceViewOf(Parse("[vr]\nimmersive_window = true\n")) == VrRaceView::ImmersiveWindow);
+    Require(VrRaceViewOf(Parse("[vr]\nflat_screen = true\nimmersive_window = true\n")) == VrRaceView::FlatScreen);
+    Require(VrRaceViewOf(Parse("[vr]\nflat_screen = false\nimmersive_window = false\n")) == VrRaceView::Immersive);
     return 0;
 }

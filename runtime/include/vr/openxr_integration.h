@@ -61,10 +61,18 @@ void OpenXRRequestRecenter() noexcept;
 void OpenXRSetLeanBackDegrees(float degrees) noexcept;
 
 // Shows the room through the headset's cameras around the menu screen and every
-// other virtual screen, never during an immersive race. Only the standalone
-// (Quest) backend offers it; elsewhere this changes nothing. Callable from any
-// thread; applied on the XR pacing thread's next frame.
+// other virtual screen, and around the immersive window, never during a fully
+// immersive race. Only the standalone (Quest) backend offers it; elsewhere this
+// changes nothing. Callable from any thread; applied on the XR pacing thread's
+// next frame.
 void OpenXRSetPassthrough(bool enabled) noexcept;
+
+// The immersive window: an immersive race keeps its stereo view but is seen
+// only through the screen its 2D layer sits on, with the room (or, without
+// passthrough, black) around it. Callable from any thread; applied to the next
+// published frame. Flat Screen mode, which keeps races off the immersive path
+// altogether, makes it moot.
+void OpenXRSetImmersiveWindow(bool enabled) noexcept;
 
 // Live scene interpolation at the headset's own display deadlines.
 // 0 = Off, 1 = Auto, otherwise 72/90/120 as a rendering-rate ceiling.

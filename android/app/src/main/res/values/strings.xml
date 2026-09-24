@@ -508,8 +508,11 @@
 
     <!-- VR tab -->
     <string name="section_vr_camera">Camera</string>
-    <string name="vr_flat_screen">Flat Screen mode</string>
-    <string name="vr_flat_screen_helper">Plays races on the same flat screen as the menus instead of all around you. The camera settings below do not apply while it is on.</string>
+    <string name="vr_race_view">Race view</string>
+    <string name="vr_race_view_helper">Immersive plays races all around you in stereo. Immersive window keeps that stereo view but shows it only through a window where the menu screen sits, with your room around it. Flat screen plays races on the menu screen; the camera settings below do not apply to it.</string>
+    <string name="vr_race_view_immersive">Immersive</string>
+    <string name="vr_race_view_window">Immersive window</string>
+    <string name="vr_race_view_flat">Flat screen</string>
     <string name="vr_camera">Camera</string>
     <string name="vr_camera_helper">Ride behind the kart like the game, or sit in the driver\'s seat.</string>
     <string name="vr_camera_chase">Chase camera</string>
@@ -562,7 +565,7 @@
     <string name="vr_hud_width">Screen width</string>
     <string name="vr_hud_width_helper">How wide the menu screen and race HUD are.</string>
     <string name="vr_passthrough">Passthrough around the menu screen</string>
-    <string name="vr_passthrough_helper">Shows your room through the headset\'s cameras around the menus instead of black. Races stay fully virtual, except in Flat Screen mode.</string>
+    <string name="vr_passthrough_helper">Shows your room through the headset\'s cameras around the menus instead of black. Immersive races stay fully virtual; the immersive window and the flat screen race have the room around them too.</string>
 
     <!-- Graphics tab -->
     <string name="section_graphics">Rendering</string>

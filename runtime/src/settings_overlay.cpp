@@ -142,7 +142,11 @@ bool g_vrStopAtDisplayCopy = RuntimeConfigFile::VrStopAtDisplayCopy(true);
 bool g_vrSkipCopyClears = RuntimeConfigFile::VrSkipCopyClears(true);
 bool g_vrSinglePassEyes = RuntimeConfigFile::VrSinglePassEyes(true);
 bool g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
-bool g_vrFlatScreen = RuntimeConfigFile::VrFlatScreen();
+// Race view: Immersive, Immersive window or Flat screen (RuntimeConfigFile::VrRaceView), and
+// Flat Screen mode as the flag the race view rows below are disabled by.
+int g_vrRaceView = static_cast<int>(RuntimeConfigFile::GetVrRaceView());
+bool g_vrFlatScreen = g_vrRaceView == static_cast<int>(RuntimeConfigFile::VrRaceView::FlatScreen);
+constexpr std::array<const char*, 3> kVrRaceViewLabels{"Immersive", "Immersive window", "Flat screen"};
 #if defined(__ANDROID__)
 bool g_vrPassthrough = RuntimeConfigFile::VrPassthrough();
 // Menu labels for the foveation levels, index-matched to RuntimeConfigFile::kVrFoveationLevels and to
@@ -1444,7 +1448,8 @@ void DrawVrSettings() {
     }
     ImGui::Separator();
     ImGui::Text("VR 2D layer");
-    ImGui::BeginDisabled(g_vrFlatScreen);
+    ImGui::BeginDisabled(
+        g_vrFlatScreen || g_vrRaceView == static_cast<int>(RuntimeConfigFile::VrRaceView::ImmersiveWindow));
     if (ImGui::Checkbox("2D layer on a virtual screen", &g_vrHudVirtualScreen)) {
         ApplyVrHudVirtualScreen();
         RuntimeConfigFile::SetVrHudVirtualScreen(g_vrHudVirtualScreen);
@@ -1455,7 +1460,8 @@ void DrawVrSettings() {
             "Puts the minimap, race position, item roulette and the rest of the race HUD on a "
             "screen fixed ahead of the kart camera. Turn off to leave them stretched across "
             "the whole view. Its size and distance are the [vr] hud_width_meters and "
-            "hud_distance_meters read at launch.");
+            "hud_distance_meters read at launch. The immersive window is that screen, and "
+            "always carries them.");
     }
     ImGui::Separator();
     ImGui::Text("VR view");
@@ -1514,8 +1520,8 @@ void DrawVrSettings() {
         ImGui::SetTooltip(
             "Shows your room through the headset's cameras around the menu screen and every "
             "other screen outside an immersive race, instead of black. Immersive races stay "
-            "fully virtual; the Flat Screen race has the room around it too. "
-            "Applies immediately.");
+            "fully virtual; the immersive window and the Flat Screen race have the room "
+            "around them too. Applies immediately.");
     }
     // Shows the live level, which debug.wiicompiled.foveation can override.
     g_vrFoveation = static_cast<int>(aurora_get_stereo_foveation());
@@ -1539,16 +1545,23 @@ void DrawVrSettings() {
 #endif
     ImGui::Separator();
     ImGui::Text("VR camera");
-    if (ImGui::Checkbox("Flat Screen mode", &g_vrFlatScreen)) {
-        RuntimeConfigFile::SetVrFlatScreen(g_vrFlatScreen);
+    if (ImGui::Combo("Race view", &g_vrRaceView, kVrRaceViewLabels.data(),
+                     static_cast<int>(kVrRaceViewLabels.size()))) {
+        const auto view = static_cast<RuntimeConfigFile::VrRaceView>(g_vrRaceView);
+        g_vrFlatScreen = view == RuntimeConfigFile::VrRaceView::FlatScreen;
+        RuntimeConfigFile::SetVrRaceView(view);
         mkw::vr::MkwVRPolicySetImmersiveRaces(!g_vrFlatScreen);
+        mkw::vr::OpenXRSetImmersiveWindow(view == RuntimeConfigFile::VrRaceView::ImmersiveWindow);
         mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Plays races on the same flat screen as the menus, through the game's own camera, "
-            "instead of all around you in stereo. The first-person camera, hand steering and "
-            "the race view settings do not apply while it is on. Applies immediately.");
+            "Immersive plays races all around you in stereo. Immersive window keeps that "
+            "stereo view but shows it only through a window where the menu screen sits, with "
+            "your room around it on the Quest (black elsewhere); look through it from another "
+            "angle and the view shifts as through a real window. Flat screen plays races on "
+            "the menu screen through the game's own camera; the first-person camera, hand "
+            "steering and the race view settings do not apply to it. Applies immediately.");
     }
     // Everything below shapes the immersive race view, which Flat Screen mode replaces.
     ImGui::BeginDisabled(g_vrFlatScreen);
@@ -1704,7 +1717,8 @@ void DrawVrSettings() {
 }
 
 // The right-thumbstick click: flips the first-person camera exactly as its
-// checkbox does, so it does nothing in Flat Screen mode either. Game thread.
+// checkbox does, so it does nothing in Flat Screen mode either (it does in the
+// immersive window, which is still the stereo race view). Game thread.
 void ToggleFirstPersonCamera() {
     if (g_vrFlatScreen) {
         return;

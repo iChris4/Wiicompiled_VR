@@ -58,6 +58,7 @@ struct RuntimeUserConfig {
     std::optional<float> vrHudWidthMeters;
     std::optional<bool> vrHudVirtualScreen;
     std::optional<bool> vrFlatScreen;
+    std::optional<bool> vrImmersiveWindow;
     std::optional<bool> vrPassthrough;
     std::optional<bool> vrStopAtDisplayCopy;
     std::optional<bool> vrSkipCopyClears;
@@ -522,6 +523,11 @@ inline void EnsureConfigFile() {
               "# first-person camera or hand steering. Changeable live from the\n"
               "# F10 menu.\n"
               "flat_screen = false\n"
+              "# The immersive window keeps the stereo race view but shows it\n"
+              "# only through that screen, with the room around it on the\n"
+              "# Quest (black elsewhere). Flat Screen mode wins over it.\n"
+              "# Changeable live from the F10 menu.\n"
+              "immersive_window = false\n"
               "# EFB replay controls for the per-eye views, changeable live\n"
               "# from the F10 menu. stop_at_display_copy ends each eye at the\n"
               "# frame's final GXCopyDisp; skip_copy_clears drops the EFB\n"
@@ -778,6 +784,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     }
     config.vrHudVirtualScreen = FindConfigValue<bool>(document, "vr", "hud_virtual_screen");
     config.vrFlatScreen = FindConfigValue<bool>(document, "vr", "flat_screen");
+    config.vrImmersiveWindow = FindConfigValue<bool>(document, "vr", "immersive_window");
     config.vrPassthrough = FindConfigValue<bool>(document, "vr", "passthrough");
     config.vrStopAtDisplayCopy = FindConfigValue<bool>(document, "vr", "stop_at_display_copy");
     config.vrSkipCopyClears = FindConfigValue<bool>(document, "vr", "skip_copy_clears");
@@ -1100,6 +1107,11 @@ inline bool SetVrHudVirtualScreen(bool value) {
 inline bool SetVrFlatScreen(bool value) {
     Mutable().vrFlatScreen = value;
     return WriteSetting("vr", "flat_screen", value ? "true" : "false");
+}
+
+inline bool SetVrImmersiveWindow(bool value) {
+    Mutable().vrImmersiveWindow = value;
+    return WriteSetting("vr", "immersive_window", value ? "true" : "false");
 }
 
 inline bool SetVrPassthrough(bool value) {
@@ -1579,10 +1591,41 @@ inline bool VrFlatScreen(bool fallback = false) {
     return Get().vrFlatScreen.value_or(fallback);
 }
 
+// Races in stereo as usual, but seen only through the screen the race's 2D
+// layer sits on, with the room around it. Flat Screen mode wins over it.
+inline bool VrImmersiveWindow(bool fallback = false) {
+    return Get().vrImmersiveWindow.value_or(fallback);
+}
+
+// The race view the settings present as one choice, kept in the two keys
+// above so that a file without immersive_window reads as it always did.
+enum class VrRaceView : int {
+    Immersive = 0,
+    ImmersiveWindow = 1,
+    FlatScreen = 2,
+};
+
+inline VrRaceView VrRaceViewOf(const RuntimeUserConfig& config) {
+    if (config.vrFlatScreen.value_or(false)) {
+        return VrRaceView::FlatScreen;
+    }
+    return config.vrImmersiveWindow.value_or(false) ? VrRaceView::ImmersiveWindow : VrRaceView::Immersive;
+}
+
+inline VrRaceView GetVrRaceView() {
+    return VrRaceViewOf(Get());
+}
+
+inline bool SetVrRaceView(VrRaceView view) {
+    const bool flat = SetVrFlatScreen(view == VrRaceView::FlatScreen);
+    const bool window = SetVrImmersiveWindow(view == VrRaceView::ImmersiveWindow);
+    return flat && window;
+}
+
 // The room, through the headset's cameras, around the menu screen and every
-// other virtual screen, a Flat Screen race included (never an immersive
-// race). Only the Quest offers it; the launcher's Settings page shows the same
-// default.
+// other virtual screen, a Flat Screen race included, and around the immersive
+// window (never a fully immersive race). Only the Quest offers it; the
+// launcher's Settings page shows the same default.
 inline bool VrPassthrough(bool fallback = true) {
     return Get().vrPassthrough.value_or(fallback);
 }

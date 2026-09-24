@@ -34,6 +34,12 @@ if (AURORA_GPU_SMOKE_TESTS AND AURORA_ENABLE_GX AND WIN32)
   target_compile_definitions(cockpit_gpu_smoke PRIVATE AURORA TARGET_PC WEBGPU_DAWN)
   target_link_libraries(cockpit_gpu_smoke PRIVATE fmt::fmt xxhash absl::flat_hash_map absl::btree
                         dawn::webgpu_dawn dawn::dawncpp_headers TracyClient ${AURORA_SDL3_TARGET})
+  # The immersive window's mask over a filled eye, read back. Standalone like the cockpit's.
+  add_executable(window_mask_gpu_smoke window_mask_gpu_smoke.cpp)
+  target_include_directories(window_mask_gpu_smoke PRIVATE ../include ../lib)
+  target_compile_definitions(window_mask_gpu_smoke PRIVATE AURORA TARGET_PC WEBGPU_DAWN)
+  target_link_libraries(window_mask_gpu_smoke PRIVATE fmt::fmt xxhash absl::flat_hash_map absl::btree
+                        dawn::webgpu_dawn dawn::dawncpp_headers TracyClient ${AURORA_SDL3_TARGET})
 endif ()
 
 if (NOT TARGET gtest)

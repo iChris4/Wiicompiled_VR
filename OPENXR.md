@@ -46,6 +46,7 @@ hud_distance_meters = 2.0
 hud_width_meters = 2.4
 hud_virtual_screen = true
 flat_screen = false
+immersive_window = false
 stop_at_display_copy = true
 skip_copy_clears = true
 single_pass_eyes = true
@@ -146,14 +147,20 @@ immersive stereo: the whole race, 3D world and HUD alike, is the game's own pict
 in DolphinXR's Flat Screen mode. The first-person camera, hand steering, the lean-back angle, VR
 frame interpolation and `hud_virtual_screen` shape only the immersive race view, so none of them
 apply while it is on; the right-thumbstick first-person toggle is ignored rather than changing the saved
-setting. It is live, as **F10 → VR → Flat Screen mode** (the headset panel's VR tab) and the Quest
-launcher's Settings page, and turning it on or off mid-race switches on the next frame through the
-presentation policy's safety generation.
+setting. It is live, as **F10 → VR → Race view → Flat screen** (the headset panel's VR tab) and the
+Quest launcher's Settings page, and turning it on or off mid-race switches on the next frame through
+the presentation policy's safety generation.
+`immersive_window` (default off) is the third race view, between the two: the race keeps its
+immersive stereo view, head tracking and all, but is seen only through a window, with the room
+around it on the Quest; see [The immersive window](#the-immersive-window). `flat_screen` wins when
+both are set. The settings present the three as one choice, **Race view**: Immersive, Immersive
+window or Flat screen.
 `passthrough` (Quest only, default on) shows the room through the headset's cameras around the
 menu screen and every other virtual screen, instead of black: an `XR_FB_passthrough`
 reconstruction layer submitted under the screen's quad, as PPSSPP VR does, with the blend mode
-left `OPAQUE`. An immersive race never shows it, and the cameras are paused for the race; a race in
-`flat_screen` is a virtual screen like the menus, so the room shows around it too. It is
+left `OPAQUE`. A fully immersive race never shows it, and the cameras are paused for the race; a
+race in `flat_screen` is a virtual screen like the menus, so the room shows around it too, and so it
+does around the immersive window. It is
 live, from the headset panel's VR tab or the launcher's Settings page. The app declares
 `com.oculus.feature.PASSTHROUGH`, without which Horizon OS composites nothing for that layer.
 So that the room frames the picture rather than black bands, the Quest's menu quad shows only the
@@ -529,6 +536,8 @@ The runtime deliberately fails safe instead of guessing which Mario Kart camera 
   however complete the observations are. Changing it advances the safety generation like any
   other change of presentation, and the pacing thread still treats that race as a race: pipeline
   caches are not stored mid-race on the virtual screen either.
+- `immersive_window` is not a policy state: the race is `ImmersiveRace` either way, and only the
+  packet and the layer that shows it carry the window.
 
 Aurora records the original GX frame once and replays it for both OpenXR eyes. Perspective GX draws
 receive asymmetric headset projections, while the game's 2D layer goes on a fixed virtual screen
@@ -618,6 +627,41 @@ layer, and any draw whose matrix is not actually affine. Retained one-shot EFB b
 Kart Wii's minimap are treated as game art and remain eligible for the screen. A reprojected 2D draw
 uses the full eye viewport and scissor because its recorded rectangle no longer describes where it
 ended up; its original viewport is folded into the projection instead.
+
+## The immersive window
+
+`immersive_window` shows the immersive race through a window rather than all around you. The window
+is the race's 2D-layer screen: `hud_width_meters` across and `hud_distance_meters` ahead of the
+race origin latched at the race start, turned by the lean-back angle, its height following the
+picture's aspect. That is where the HUD, the Wii Remote pointer and the settings panel already sit
+in an immersive race, so the HUD lies on the window's plane and the pointer aims at it. The window
+always carries the 2D layer, whatever `hud_virtual_screen` says: stretched across the eye, the HUD
+would be cut by the window's edges. It sits straight ahead of the race's forward direction, as the
+HUD does, which is the reference space's forward rather than the heading the menu screen was
+anchored at, so after an in-game recenter while facing sideways the two can differ.
+
+Inside the window nothing changes: the eyes are the immersive race's, with their per-eye frusta,
+head tracking, first person, hand steering and VR frame interpolation. Moving your head therefore
+shifts the view through the window like a real window's, and geometry nearer than the window's
+plane is still cut by its edges, as a stereo picture's frame cuts it.
+
+How it is drawn: the pacing thread marks the stereo packet (`AuroraStereoFrame::window`), and after an
+eye's last draw Aurora covers the eye with one full-screen triangle (`aurora-main/lib/gfx/window_mask.hpp`)
+that keeps the colour inside the window with alpha 1 and leaves transparent black outside it, with a
+one-pixel ramp at the edge. The triangle carries, at each corner, where that pixel's ray meets the
+window's plane in homogeneous window coordinates (`stereo_replay::window_mask`), which interpolate
+exactly across the image. With `single_pass_eyes` it is drawn in the eye's own last render pass, so it
+adds no pass and no tile load; otherwise it takes a pass of its own, as the cockpit overlay does. The
+game still renders the whole eye: only its alpha changes. On the Quest the backend submits the
+passthrough layer, then the projection layer with `XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT`
+(premultiplied alpha), then the settings panel. The flag travels with the packet, so the eyes Aurora
+masked and the layer that blends them always belong to the same frame, and switching the race view
+mid-race needs no safety generation: presentation stays `ImmersiveRace`. The PC backends keep their
+projection layer opaque, so the window is surrounded by black there.
+
+`gx_fifo_tests` covers the window's geometry (its corners through an asymmetric eye frustum, its
+agreement with the HUD's placement, an eye turned away or beyond the window, a sideways step), and
+`mkw_vr_config_tests` how the two keys read as one race view.
 
 ## Foveated rendering
 
@@ -892,6 +936,9 @@ ends, including mid-frame flushes, so live setting changes cannot invalidate pen
   analog grips (Touch); the simple controller profile cannot grab.
 - The headset settings panel has no laser beam, only the cursor on the panel itself, and text fields
   cannot be typed into without a keyboard.
+- The immersive window renders the whole eye and only masks it, so it costs what a fully immersive
+  race costs, plus the passthrough's compositing. Hands and a separate VR wheel are masked with the
+  rest of the eye, so outside the window they are not seen.
 - The desktop window remains available as a mirror/fallback.
 
 OpenXR diagnostics are written to the normal run log under

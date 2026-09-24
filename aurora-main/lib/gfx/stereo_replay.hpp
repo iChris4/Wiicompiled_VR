@@ -1,6 +1,7 @@
 #pragma once
 
 #include <aurora/math.hpp>
+#include <algorithm>
 #include <cmath>
 
 namespace aurora::gfx::stereo_replay {
@@ -362,6 +363,110 @@ inline Mat4x4<float> overlay_panel_flat_projection(float widthFraction, float pa
   out.m2 = {0.0f, 0.0f, 0.0f, 0.5f};
   out.m3 = {0.0f, 0.0f, 0.0f, 1.0f};
   return out;
+}
+
+// The immersive window (AuroraStereoFrame::window): the 2D layer's screen as an
+// opening each eye sees the race through, the rest of the eye left transparent.
+//
+// Each row, applied to (x, y, 1) for a point of the eye image at NDC (x, y),
+// gives one of the homogeneous coordinates (u, v, w) of where that pixel's ray
+// meets the screen's plane: the point (u / w, v / w), in units of the screen's
+// half extents, so the screen covers -1..1 on both axes, lying in front of the
+// eye exactly when w > 0. The rows are linear in NDC, so a full-screen triangle
+// carrying their values at its corners interpolates them exactly. An eye on or
+// behind the screen's plane gets all-zero rows and sees nothing through it.
+struct WindowMask {
+  Vec3<float> u;
+  Vec3<float> v;
+  Vec3<float> w;
+
+  [[nodiscard]] Vec3<float> at(float x, float y) const noexcept {
+    return {u.x * x + u.y * y + u.z, v.x * x + v.y * y + v.z, w.x * x + w.y * y + w.z};
+  }
+};
+
+// The screen is the one compose_hud_screen_projection places the 2D layer on:
+// halfWidth by halfHeight, `distance` straight ahead in the recorded center-eye
+// view space, reached through viewFromCenter and the eye frustum's four terms.
+inline WindowMask window_mask(const Mat4x4<float>& eyeFrustum, const Mat3x4<float>& viewFromCenter,
+                              const HudScreen& screen) noexcept {
+  const float sx = eyeFrustum.m0[0];
+  const float sy = eyeFrustum.m1[1];
+  if (!screen.valid() || sx == 0.0f || sy == 0.0f) {
+    return {};
+  }
+  // The inverse of viewFromCenter's linear part L, by its adjugate.
+  const auto& r0 = viewFromCenter.m0;
+  const auto& r1 = viewFromCenter.m1;
+  const auto& r2 = viewFromCenter.m2;
+  float inverse[3][3] = {
+      {r1[1] * r2[2] - r1[2] * r2[1], r0[2] * r2[1] - r0[1] * r2[2], r0[1] * r1[2] - r0[2] * r1[1]},
+      {r1[2] * r2[0] - r1[0] * r2[2], r0[0] * r2[2] - r0[2] * r2[0], r0[2] * r1[0] - r0[0] * r1[2]},
+      {r1[0] * r2[1] - r1[1] * r2[0], r0[1] * r2[0] - r0[0] * r2[1], r0[0] * r1[1] - r0[1] * r1[0]},
+  };
+  const float determinant = r0[0] * inverse[0][0] + r0[1] * inverse[1][0] + r0[2] * inverse[2][0];
+  if (determinant == 0.0f) {
+    return {};
+  }
+  for (auto& row : inverse) {
+    for (float& value : row) {
+      value /= determinant;
+    }
+  }
+  // Window coordinates of an eye-space point p are q = A p + b: back into the
+  // center-eye space, moved to the screen's centre and divided by its half
+  // extents. The screen's plane is q.z = 0, its front facing the camera.
+  const float scale[3] = {1.0f / screen.halfWidth, 1.0f / screen.halfHeight, 1.0f};
+  const float t[3] = {r0[3], r1[3], r2[3]};
+  float A[3][3];
+  float b[3];
+  for (int row = 0; row < 3; ++row) {
+    float back = 0.0f;
+    for (int column = 0; column < 3; ++column) {
+      A[row][column] = inverse[row][column] * scale[row];
+      back += inverse[row][column] * t[column];
+    }
+    b[row] = (-back + (row == 2 ? screen.distance : 0.0f)) * scale[row];
+  }
+  if (!(b[2] > 0.0f)) {
+    return {};
+  }
+  // The pixel's ray is d = K (x, y, 1) with d.z = -1: the frustum maps an eye
+  // point to clip x = sx * x + m0[2] * z, y = sy * y + m1[2] * z, w = -z.
+  const float K[3][3] = {
+      {1.0f / sx, 0.0f, eyeFrustum.m0[2] / sx},
+      {0.0f, 1.0f / sy, eyeFrustum.m1[2] / sy},
+      {0.0f, 0.0f, -1.0f},
+  };
+  // a = M (x, y, 1) is the ray in window coordinates. It meets the plane at
+  // q = b + s a with s = -b.z / a.z, in front of the eye when s > 0, i.e. when
+  // a.z < 0, so (u, v, w) = (b.z a.x - b.x a.z, b.z a.y - b.y a.z, -a.z).
+  float M[3][3];
+  for (int row = 0; row < 3; ++row) {
+    for (int column = 0; column < 3; ++column) {
+      M[row][column] = A[row][0] * K[0][column] + A[row][1] * K[1][column] + A[row][2] * K[2][column];
+    }
+  }
+  float rows[3][3];
+  float largest = 0.0f;
+  for (int column = 0; column < 3; ++column) {
+    rows[0][column] = b[2] * M[0][column] - b[0] * M[2][column];
+    rows[1][column] = b[2] * M[1][column] - b[1] * M[2][column];
+    rows[2][column] = -M[2][column];
+    for (const auto& row : rows) {
+      largest = std::max(largest, std::abs(row[column]));
+    }
+  }
+  if (!(largest > 0.0f)) {
+    return {};
+  }
+  // Only the ratios matter; a positive scale keeps the values near one whatever
+  // the world units are.
+  const float normalize = 1.0f / largest;
+  const auto out = [&](const float (&row)[3]) {
+    return Vec3<float>{row[0] * normalize, row[1] * normalize, row[2] * normalize};
+  };
+  return {.u = out(rows[0]), .v = out(rows[1]), .w = out(rows[2])};
 }
 
 } // namespace aurora::gfx::stereo_replay

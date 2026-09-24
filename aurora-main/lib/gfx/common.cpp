@@ -11,6 +11,7 @@
 #include "pipeline_cache.hpp"
 #include "stereo_replay.hpp"
 #include "cockpit.hpp"
+#include "window_mask.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
 #include "texture_replacement.hpp"
@@ -355,6 +356,8 @@ struct SealedFrameData {
   std::vector<RenderPass> passes;
   LateStereoData stereo;
   uint32_t localPlayerCount = 1;
+  // The immersive window's screen as this frame's 2D layer was placed on it.
+  stereo_replay::HudScreen windowScreen{};
 };
 
 SealedFrame::SealedFrame() : m_data(std::make_unique<SealedFrameData>()) {}
@@ -1083,6 +1086,7 @@ void initialize() {
 
 void shutdown() {
   cockpit::shutdown();
+  window_mask::shutdown();
   shutdown_pipeline_cache();
   gx::clear_shader_module_cache();
   efb_ram::shutdown();
@@ -1331,11 +1335,9 @@ static void log_stereo_display_source_region(ClipRect region, bool foundDisplayC
 // ratio the game is currently presenting at: 4:3 while VILockAspectRatio holds
 // it there, otherwise the mirror window's own aspect, which is what Mario Kart
 // Wii's dynamic widescreen builds its projections from. Matching it keeps the
-// HUD unstretched on the screen.
-static stereo_replay::HudScreen stereo_hud_screen() noexcept {
-  if (!g_stereoHudScreenEnabled.load(std::memory_order_relaxed)) {
-    return {};
-  }
+// HUD unstretched on the screen. The immersive window is this same screen, and
+// has it whether or not the 2D layer is set to go on it.
+static stereo_replay::HudScreen stereo_window_screen() noexcept {
   const float width = g_stereoHudScreenWidth.load(std::memory_order_relaxed);
   const float distance = g_stereoHudScreenDistance.load(std::memory_order_relaxed);
   float aspect = 0.f;
@@ -1348,6 +1350,13 @@ static stereo_replay::HudScreen stereo_hud_screen() noexcept {
       .halfHeight = halfWidth / aspect,
       .distance = distance,
   };
+}
+
+static stereo_replay::HudScreen stereo_hud_screen() noexcept {
+  if (!g_stereoHudScreenEnabled.load(std::memory_order_relaxed)) {
+    return {};
+  }
+  return stereo_window_screen();
 }
 
 // Shared by the normal seal and headset-deadline replay. Head transforms are
@@ -1441,7 +1450,9 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
   // This is the producer-side preparation path; eye replay can query the pure
   // helper concurrently without touching this diagnostic state.
   log_stereo_display_source_region(displayRegion, displaySource.foundDisplayCopy);
-  const stereo_replay::HudScreen hudScreen = stereo_hud_screen();
+  // The immersive window always carries the 2D layer: stretched across the eye,
+  // it would be cut by the window's edges.
+  const stereo_replay::HudScreen hudScreen = stereoFrame.window ? stereo_window_screen() : stereo_hud_screen();
   // A draw is replayed per eye when it carries the game camera (perspective) or
   // when it is 2D content the virtual screen is claiming.
   const auto replayed = [&](const gx::UniformReplayLayout& layout) noexcept {
@@ -1782,6 +1793,11 @@ struct RenderInvocation {
   bool* sceneDrawn = nullptr;
   // An eye replay laid out by eye_pass_plan, replacing the one-render-pass-per-recorded-pass loop.
   const eye_pass_plan::Plan* eyePlan = nullptr;
+  // The immersive window's mask, drawn by a planned eye at the end of its last render pass
+  // (render_stereo_eye draws it otherwise).
+  const StereoReplayFrame* windowFrame = nullptr;
+  stereo_replay::HudScreen windowScreen{};
+  bool* windowDrawn = nullptr;
 };
 
 static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vector<RenderPass>& passes, u32 idx,
@@ -1858,6 +1874,11 @@ static void render_eye_planned(std::vector<RenderPass>& renderPasses, wgpu::Comm
     cockpit::render(*invocation.cockpitEncoder, *invocation.cockpitFrame, invocation.stereoEye,
                     invocation.cockpitDepth, &pass);
     *invocation.cockpitDrawn = true;
+  }
+  // Last of all, over everything the eye draws, in the same render pass.
+  if (invocation.windowFrame != nullptr && !*invocation.windowDrawn) {
+    window_mask::draw(pass, *invocation.windowFrame, invocation.stereoEye, invocation.windowScreen);
+    *invocation.windowDrawn = true;
   }
   pass.End();
 }
@@ -2061,6 +2082,7 @@ void seal_frame(SealedFrame& out) noexcept {
   recycle_render_passes(passes);
   passes.swap(g_renderPasses);
   g_currentRenderPass = UINT32_MAX;
+  out.data().windowScreen = stereo_window_screen();
 }
 
 void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedFrame, bool finalize,
@@ -2211,6 +2233,7 @@ void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const Ster
   }
   bool cockpitDrawn = false;
   bool sceneDrawn = false;
+  bool windowDrawn = false;
   const bool cockpitActive = stereoFrame.cockpit.active && cockpitDepth.valid;
   const bool skipCopyClears = get_stereo_skip_copy_clears();
   const eye_pass_plan::Plan* plan =
@@ -2234,6 +2257,9 @@ void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const Ster
                   .cockpitDrawn = &cockpitDrawn,
                   .sceneDrawn = &sceneDrawn,
                   .eyePlan = plan,
+                  .windowFrame = stereoFrame.window ? &stereoFrame : nullptr,
+                  .windowScreen = frame.data().windowScreen,
+                  .windowDrawn = &windowDrawn,
               });
   // A frame without a virtual-screen draw after its world still gets the
   // overlay, in a pass of its own over the finished eye. A planned eye draws it
@@ -2241,6 +2267,16 @@ void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const Ster
   if (cockpitActive && !cockpitDrawn) {
     cockpit::render(cmd, stereoFrame, eye, cockpitDepth);
   }
+  // Likewise the window's mask, which has to come after the cockpit.
+  if (stereoFrame.window && !windowDrawn) {
+    window_mask::render(cmd, stereoFrame, eye, frame.data().windowScreen);
+  }
+}
+
+void mask_stereo_eye_output(const SealedFrame& frame, wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame,
+                            uint32_t eye, const wgpu::TextureView& output, wgpu::Extent3D size) {
+  CHECK(eye < AURORA_STEREO_EYE_COUNT, "invalid stereo eye {}", eye);
+  window_mask::render_output(cmd, stereoFrame, eye, output, size, frame.data().windowScreen);
 }
 
 void render(wgpu::CommandEncoder& cmd, int32_t interpolatedFrame, bool finalize) {

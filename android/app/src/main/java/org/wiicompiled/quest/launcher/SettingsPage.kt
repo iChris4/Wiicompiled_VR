@@ -116,14 +116,28 @@ class SettingsPage(
     private fun buildVr() {
         // Flat Screen mode keeps races on the menu screen, which none of the race view rows reach.
         val immersive = { c: TomlConfig -> !(c.bool("vr", "flat_screen") ?: false) }
+        // The immersive window is still the stereo race view, seen through the race HUD's screen.
+        val window = { c: TomlConfig -> immersive(c) && (c.bool("vr", "immersive_window") ?: false) }
         val firstPerson = { c: TomlConfig -> immersive(c) && (c.bool("vr", "first_person") ?: false) }
         // The steering wheel and hand steering belong to the cockpit seat.
         val cockpit = { c: TomlConfig -> firstPerson(c) && stringIndex(c, "vr", "first_person_seat", SEATS) == 0 }
         section(R.string.section_vr_camera) {
-            toggle(
-                R.string.vr_flat_screen, R.string.vr_flat_screen_helper,
-                read = { !immersive(it) },
-                write = { c, value -> c.setBool("vr", "flat_screen", value) },
+            // One setting in two keys, read as runtime_config.h's VrRaceView reads them: Flat
+            // Screen mode wins over the immersive window.
+            choice(
+                R.string.vr_race_view, R.string.vr_race_view_helper,
+                listOf(R.string.vr_race_view_immersive, R.string.vr_race_view_window, R.string.vr_race_view_flat),
+                read = {
+                    when {
+                        !immersive(it) -> 2
+                        window(it) -> 1
+                        else -> 0
+                    }
+                },
+                write = { c, index ->
+                    c.setBool("vr", "flat_screen", index == 2)
+                    c.setBool("vr", "immersive_window", index == 1)
+                },
             )
             choice(
                 R.string.vr_camera, R.string.vr_camera_helper,
@@ -217,11 +231,12 @@ class SettingsPage(
             )
         }
         section(R.string.section_vr_screen) {
+            // The immersive window is that screen and always carries the HUD.
             toggle(
                 R.string.vr_hud_screen, R.string.vr_hud_screen_helper,
                 read = { it.bool("vr", "hud_virtual_screen") ?: true },
                 write = { c, value -> c.setBool("vr", "hud_virtual_screen", value) },
-                enabledIf = immersive,
+                enabledIf = { immersive(it) && !window(it) },
             )
             slider(
                 R.string.vr_hud_distance, R.string.vr_hud_distance_helper, 0.5, 5.0, 0.1,

@@ -132,9 +132,15 @@ struct OpenXRPresentation {
     bool quad_anchored = false;
     XrPosef quad_pose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
 
-    // Show the room through the headset's cameras around the virtual screen
-    // (OpenXRPassthrough). Taken when the presentation is handed to the backend,
-    // which starts or pauses the view then; a backend without one ignores it.
+    // Used only by ImmersiveProjection: Aurora left each eye transparent outside
+    // the race's 2D-layer screen (AuroraStereoFrame::window), so the projection
+    // layer is blended by its alpha over whatever is under it.
+    bool immersive_window = false;
+
+    // Show the room through the headset's cameras around the virtual screen or
+    // the immersive window (OpenXRPassthrough). Taken when the presentation is
+    // handed to the backend, which starts or pauses the view then; a backend
+    // without one ignores it.
     bool passthrough = false;
 
     OpenXRPanelLayer panel;

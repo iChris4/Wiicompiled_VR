@@ -321,6 +321,9 @@ struct StereoReplayFrame {
   std::array<StereoReplayEye, AURORA_STEREO_EYE_COUNT> eyes;
   // VR hands and synthetic wheel, drawn per eye after the world (gfx/cockpit.hpp).
   AuroraCockpit cockpit{};
+  // The immersive window (AuroraStereoFrame::window): each eye is masked to the
+  // 2D layer's screen after its last draw (gfx/window_mask.hpp).
+  bool window = false;
 };
 
 void end_frame(const wgpu::CommandEncoder& cmd);
@@ -380,6 +383,12 @@ int32_t last_pass_feeding_replay(const SealedFrame& frame) noexcept;
 // mutated by stereo replay.
 void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd,
                        const StereoReplayFrame& stereoFrame, uint32_t eye, bool finalize = false);
+// The immersive window's mask on an eye image that holds the duplicated mono
+// picture instead of a replay (a windowed frame whose stereo replay could not
+// be prepared), so the compositor never blends an undefined alpha channel.
+void mask_stereo_eye_output(const SealedFrame& frame, wgpu::CommandEncoder& cmd,
+                            const StereoReplayFrame& stereoFrame, uint32_t eye,
+                            const wgpu::TextureView& output, wgpu::Extent3D size);
 
 // Encode the frame that is still being recorded. Only for the synchronous
 // EFB-readback split path, which runs on the producer thread.

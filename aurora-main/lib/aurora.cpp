@@ -815,6 +815,7 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, 
   std::memcpy(&anchorFromScene, sceneAnchor.anchorFromScene.data(), sizeof(anchorFromScene));
   gfx::StereoReplayFrame replay{};
   replay.cockpit = input.cockpit;
+  replay.window = input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && input.window;
   // The sealed guest frame owns its scale. The packet may have been sampled
   // just before a change of scale (a character swap, a lightning strike), so
   // only its head/IPD translation is rescaled to the frame's.
@@ -2216,6 +2217,10 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
       encode_virtual_screen_eye(encoder, completedMono, eye);
       const auto& output = g_stereoEyeTargets[eye].output();
       stereo_overlay::composite_flat(encoder, output.view, output.size, eye);
+      // An immersive packet that could not be replayed still goes out as a windowed layer.
+      if (ctx.stereoReplay->window) {
+        gfx::mask_stereo_eye_output(sealedFrame, encoder, *ctx.stereoReplay, eye, output.view, output.size);
+      }
     }
     if (mirrorPlan == MirrorPlan::Black && !headsetOnly) {
       encode_presentation_snapshot(encoder, ctx.presentSource, *finalImage, true, MirrorPlan::Black,

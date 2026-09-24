@@ -942,7 +942,10 @@ public:
             views[eye].subImage.imageArrayIndex = 0;
         }
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
-        projection.layerFlags = 0;
+        // The immersive window's eyes are transparent outside the window (premultiplied alpha), so
+        // the room shows around it; otherwise the race covers the whole view and alpha is ignored.
+        projection.layerFlags =
+            frame.presentation.immersive_window ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0;
         projection.space = runtime_->AppSpace();
         projection.viewCount = kOpenXREyeCount;
         projection.views = views.data();
@@ -950,16 +953,18 @@ public:
     }
 
     // Ends the compositor frame with the scene's layer: over the room's camera
-    // view while that runs and the scene is the virtual screen (never under the
-    // race's projection, which covers the whole view), and, while the retained
-    // frame rendered it, under the settings panel's layer.
+    // view while that runs and the scene is the virtual screen or the immersive
+    // window (never under a fully immersive race's projection, which covers the
+    // whole view), and, while the retained frame rendered it, under the settings
+    // panel's layer.
     bool EndFrameWithPanel(const OpenXRBackendFrame& frame, const XrCompositionLayerBaseHeader* scene) {
         const auto& panel = frame.presentation.panel;
         XrCompositionLayerQuad panel_quad{};
         const XrCompositionLayerBaseHeader* layers[3] = {};
         uint32_t count = 0;
         if (const XrCompositionLayerBaseHeader* passthrough = passthrough_.Layer();
-            passthrough != nullptr && frame.presentation.mode == OpenXRFrameMode::VirtualScreen) {
+            passthrough != nullptr && (frame.presentation.mode == OpenXRFrameMode::VirtualScreen ||
+                                       frame.presentation.immersive_window)) {
             layers[count++] = passthrough;
         }
         layers[count++] = scene;

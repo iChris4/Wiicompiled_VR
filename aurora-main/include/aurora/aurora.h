@@ -180,6 +180,13 @@ typedef struct {
   uint64_t displayTimeNanos;
   // Optional; inactive when zero-initialised.
   AuroraCockpit cockpit;
+  // Immersive replay only: shows the race through a window rather than all
+  // around. Each eye keeps what it sees through the 2D layer's screen
+  // (aurora_set_stereo_hud_screen's rectangle, on which the 2D layer is then
+  // always placed), with premultiplied alpha 1 there, and is transparent black
+  // everywhere else, for the host's compositor to show its own background
+  // (the room, on a headset with passthrough) around it.
+  bool window;
 } AuroraStereoFrame;
 
 /**
