@@ -136,6 +136,10 @@ struct OpenXRPresentation {
     // the race's 2D-layer screen (AuroraStereoFrame::window), so the projection
     // layer is blended by its alpha over whatever is under it.
     bool immersive_window = false;
+    // The immersive window's eyes were aimed through the window itself, so each
+    // is only the window: its image is render_width x render_height, the
+    // top-left part of the eye's swapchain image the layer shows.
+    bool window_eyes = false;
 
     // Show the room through the headset's cameras around the virtual screen or
     // the immersive window (OpenXRPassthrough). Taken when the presentation is

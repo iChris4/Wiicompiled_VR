@@ -935,10 +935,12 @@ public:
             views[eye].pose.position = frame.xr_frame.views[eye].pose.position;
             views[eye].fov = frame.xr_frame.views[eye].fov;
             views[eye].subImage.swapchain = retained_swapchains_[eye].handle;
+            // The part of the image the eye was rendered into: all of it, except for the immersive
+            // window's eyes, which are only the window (OpenXRPresentation::window_eyes).
             views[eye].subImage.imageRect = {
                 {0, 0},
-                {static_cast<int32_t>(retained_swapchains_[eye].width),
-                 static_cast<int32_t>(retained_swapchains_[eye].height)}};
+                {static_cast<int32_t>(std::min(frame.render_width[eye], retained_swapchains_[eye].width)),
+                 static_cast<int32_t>(std::min(frame.render_height[eye], retained_swapchains_[eye].height))}};
             views[eye].subImage.imageArrayIndex = 0;
         }
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};

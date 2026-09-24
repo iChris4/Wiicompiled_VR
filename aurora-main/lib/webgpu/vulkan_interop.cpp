@@ -255,11 +255,13 @@ public:
   }
 
 private:
+  // An eye may be smaller than its buffer (the immersive window's eyes are the window only): it is
+  // copied into the buffer's top-left corner, and the OpenXR side shows just that rectangle.
   Import* EnsureImport(uint32_t eye, const stereo::EyeImage& source) noexcept {
     const auto& target = m_targets[eye];
-    if (source.texture == nullptr || source.format != m_auroraFormat ||
-        source.size.width != target.width || source.size.height != target.height) {
-      Log.error("Stereo image {} does not match its OpenXR Vulkan target ({}x{} vs {}x{})", eye,
+    if (source.texture == nullptr || source.format != m_auroraFormat || source.size.width == 0 ||
+        source.size.height == 0 || source.size.width > target.width || source.size.height > target.height) {
+      Log.error("Stereo image {} does not fit its OpenXR Vulkan target ({}x{} in {}x{})", eye,
                 source.size.width, source.size.height, target.width, target.height);
       return nullptr;
     }
@@ -421,7 +423,7 @@ private:
           .origin = {},
           .aspect = wgpu::TextureAspect::All,
       };
-      const wgpu::Extent3D extent{import.width, import.height, 1};
+      const wgpu::Extent3D extent{sources[eye].size.width, sources[eye].size.height, 1};
       encoder.CopyTextureToTexture(&source, &destination, &extent);
       m_encodedImports[eye] = imports[eye];
     }

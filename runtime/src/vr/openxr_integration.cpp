@@ -87,6 +87,16 @@ using GraphicsBackend = OpenXRVulkanBackend;
 inline constexpr const char* kGraphicsBackendName = "Vulkan";
 #endif
 
+// Whether the immersive window's eyes can be aimed through the window, so that only the window is
+// rendered: the backend has to show just the part of each eye image they fill. The Quest's shared
+// buffers and projection layer do; the PC backends copy whole eyes, so there the window's eyes stay
+// full size and are only masked.
+#if defined(__ANDROID__)
+inline constexpr bool kWindowShapedEyesSupported = true;
+#else
+inline constexpr bool kWindowShapedEyesSupported = false;
+#endif
+
 struct Quaternion {
     float x = 0.0f;
     float y = 0.0f;
@@ -866,6 +876,7 @@ private:
             aurora_set_stereo_panel_layer(panel_layer);
             PollEyePassesOverride();
             PollFoveationOverride();
+            PollWindowEyesOverride();
             presentation.panel.requested = panel_layer && OpenXRSettingsPanelOpen();
 
             // Pipeline caches are stored where their stall is least visible: once when a race
@@ -968,8 +979,7 @@ private:
                 // configured diorama scale. Head translation and IPD are the
                 // only things this multiplies, so a one-frame disagreement with
                 // the camera's own switch is not observable.
-                BuildPublishedFrame(frame, immersive, policy.EffectiveUnitsPerMeter(),
-                                    policy.content_tag);
+                BuildPublishedFrame(frame, immersive, policy);
                 diagnostics::OnPacketPublished();
                 published_.store(&published_frame_, std::memory_order_release);
             }
@@ -1131,7 +1141,7 @@ private:
         {
             const diagnostics::ScopedStage publish_timer(diagnostics::Stage::Publish);
             std::lock_guard lock(published_mutex_);
-            BuildPublishedFrame(packet, immersive, policy.EffectiveUnitsPerMeter(), policy.content_tag);
+            BuildPublishedFrame(packet, immersive, policy);
             diagnostics::OnPacketPublished();
             published_.store(&published_frame_, std::memory_order_release);
         }
@@ -1246,8 +1256,11 @@ private:
         return true;
     }
 
-    void BuildPublishedFrame(const OpenXRBackendFrame& source, bool immersive,
-                             float units_per_meter, uint64_t content_tag) noexcept {
+    // Also aims the immersive window's eyes through the window, in `source` itself, so that the layer
+    // later built from it shows the eyes as they were rendered.
+    void BuildPublishedFrame(OpenXRBackendFrame& source, bool immersive, const MkwVRPolicySnapshot& policy) noexcept {
+        const float units_per_meter = policy.EffectiveUnitsPerMeter();
+        const uint64_t content_tag = policy.content_tag;
         ApplyPendingReferenceSpaceChange(source.xr_frame);
         auto& destination = published_frame_.frame;
         destination = {};
@@ -1279,6 +1292,13 @@ private:
             base_position_valid_ = true;
         }
         last_immersive_ = true;
+        if (source.presentation.immersive_window && WindowShapedEyes()) {
+            source.presentation.window_eyes = AimEyesThroughWindow(source, policy);
+            for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
+                destination.eyes[eye].width = source.render_width[eye];
+                destination.eyes[eye].height = source.render_height[eye];
+            }
+        }
         // Read once so both eyes are built from the same angle even if the
         // settings slider moves between them.
         const float lean_back_radians =
@@ -1334,6 +1354,83 @@ private:
             target.squeeze = from.squeeze;
             std::copy(from.seat_from_grip.begin(), from.seat_from_grip.end(), target.seatFromGrip);
         }
+    }
+
+    // The immersive window's eyes, aimed through the window itself: each keeps its position but looks
+    // square-on at the window's plane, through an off-axis frustum just around the window, so its
+    // image is the window and nothing outside it is rendered. The image keeps the display's pixel
+    // density at the window's size seen from the race origin (fixed while the window's geometry is),
+    // plus a two-pixel border that Aurora's mask leaves transparent, so the compositor finds nothing
+    // at the image's edge. The frame's views carry this pose and field of view to the projection
+    // layer, which the compositor reprojects like any other. False, with nothing changed, when the
+    // window cannot be placed or an eye is not in front of it.
+    bool AimEyesThroughWindow(OpenXRBackendFrame& frame, const MkwVRPolicySnapshot& policy) const noexcept {
+        const float distance = policy.config.hud_distance_meters;
+        const float half_width = 0.5f * policy.config.hud_width_meters;
+        XrPosef window{};
+        if (!(half_width > 0.0f) || !(distance > 0.0f) || !RaceScreenPose(frame, policy, window)) {
+            return false;
+        }
+        float picture_aspect = 0.0f;
+        float snapshot_aspect = 0.0f;
+        if (!aurora_get_stereo_screen_aspects(&picture_aspect, &snapshot_aspect) || !(picture_aspect > 0.0f)) {
+            picture_aspect = 16.0f / 9.0f; // stereo_hud_screen's own fallback
+        }
+        const float half_height = half_width / picture_aspect;
+        const Quaternion to_window =
+            Conjugate(Normalize({window.orientation.x, window.orientation.y, window.orientation.z, window.orientation.w}));
+        constexpr uint32_t kBorder = 2;
+        std::array<XrFovf, kOpenXREyeCount> fov{};
+        std::array<uint32_t, kOpenXREyeCount> width{};
+        std::array<uint32_t, kOpenXREyeCount> height{};
+        for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
+            const XrView& view = frame.xr_frame.views[eye];
+            // The eye in the window's frame, whose +Z faces the viewer.
+            const std::array<float, 3> at = Rotate(
+                to_window, {view.pose.position.x - window.position.x, view.pose.position.y - window.position.y,
+                            view.pose.position.z - window.position.z});
+            const float located_x = std::tan(view.fov.angleRight) - std::tan(view.fov.angleLeft);
+            const float located_y = std::tan(view.fov.angleUp) - std::tan(view.fov.angleDown);
+            if (!(at[2] > 0.05f) || !(located_x > 0.0f) || !(located_y > 0.0f) || frame.render_width[eye] <= 2 * kBorder ||
+                frame.render_height[eye] <= 2 * kBorder) {
+                return false;
+            }
+            // The display's pixels per unit of tangent, as the eye was located, across the window's
+            // tangent extent seen straight on from the race origin.
+            const auto pixels = [&](uint32_t full, float located, float half_extent) {
+                const float content = std::floor(static_cast<float>(full) / located * (2.0f * half_extent / distance));
+                return std::clamp<uint32_t>(static_cast<uint32_t>(std::max(content, 1.0f)) + 2 * kBorder, 2 * kBorder + 1,
+                                            full);
+            };
+            width[eye] = pixels(frame.render_width[eye], located_x, half_width);
+            height[eye] = pixels(frame.render_height[eye], located_y, half_height);
+            // This frame's frustum: the window's edges seen from where the eye is, widened by the border.
+            const float left = (-half_width - at[0]) / at[2];
+            const float right = (half_width - at[0]) / at[2];
+            const float down = (-half_height - at[1]) / at[2];
+            const float up = (half_height - at[1]) / at[2];
+            const float border_x = (right - left) * kBorder / static_cast<float>(width[eye] - 2 * kBorder);
+            const float border_y = (up - down) * kBorder / static_cast<float>(height[eye] - 2 * kBorder);
+            fov[eye].angleLeft = std::atan(left - border_x);
+            fov[eye].angleRight = std::atan(right + border_x);
+            fov[eye].angleUp = std::atan(up + border_y);
+            fov[eye].angleDown = std::atan(down - border_y);
+        }
+        for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
+            frame.xr_frame.views[eye].pose.orientation = window.orientation;
+            frame.xr_frame.views[eye].fov = fov[eye];
+            frame.render_width[eye] = width[eye];
+            frame.render_height[eye] = height[eye];
+        }
+        return true;
+    }
+
+    bool WindowShapedEyes() const noexcept {
+#if defined(__ANDROID__)
+        return kWindowShapedEyesSupported && !window_eyes_forced_off_;
+#else
+        return kWindowShapedEyesSupported;
+#endif
     }
 
     // The seated frame the controllers are located in for hand steering: the
@@ -1532,6 +1629,27 @@ private:
 #endif
     }
 
+    // Android: `adb shell setprop debug.wiicompiled.window_eyes 0` renders the immersive window's eyes
+    // whole and only masks them, as the PC does, to compare the cost within one session; an empty
+    // value aims them through the window again. Read about once a second.
+    void PollWindowEyesOverride() noexcept {
+#if defined(__ANDROID__)
+        if (window_eyes_poll_ != 0) {
+            --window_eyes_poll_;
+            return;
+        }
+        window_eyes_poll_ = 72;
+        char value[PROP_VALUE_MAX] = {};
+        const bool off = __system_property_get("debug.wiicompiled.window_eyes", value) > 0 && value[0] == '0';
+        if (off != window_eyes_forced_off_) {
+            window_eyes_forced_off_ = off;
+            RT_LOG(RT_TAG_RUNTIME) << "OpenXR: immersive window eyes "
+                                   << (off ? "rendered whole and masked" : "aimed through the window")
+                                   << " (debug.wiicompiled.window_eyes)" << std::endl;
+        }
+#endif
+    }
+
     // The settings panel's layer hangs exactly where its pointer hits are
     // tested, the rectangle it used to cover in the eyes.
     static void PlacePanelLayer(OpenXRBackendFrame& frame, const OpenXRPointerScreen& screen) noexcept {
@@ -1645,7 +1763,9 @@ private:
         if (diagnostics::ConsumeSessionInfoRequest()) {
             LogDiagnosticSession(frame);
         }
-        if (frame.xr_frame.should_render && frame.xr_frame.views_valid) {
+        // The immersive window's eyes are aimed through the window, so their fields of view follow
+        // the head and are no longer the headset's.
+        if (frame.xr_frame.should_render && frame.xr_frame.views_valid && !frame.presentation.window_eyes) {
             diagnostics::OnViewGeometry(DiagnosticViewGeometry(frame));
         }
     }
@@ -1759,6 +1879,8 @@ private:
     int eye_passes_override_ = -1;
     uint32_t foveation_poll_ = 0;
     int foveation_override_ = -1;
+    uint32_t window_eyes_poll_ = 0;
+    bool window_eyes_forced_off_ = false;
 #endif
     std::unique_ptr<OpenXRInput> input_;
     std::thread pacing_thread_;

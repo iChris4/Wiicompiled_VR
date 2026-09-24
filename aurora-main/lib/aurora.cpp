@@ -841,7 +841,9 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, 
         .msaaSamples = webgpu::g_graphicsConfig.msaaSamples,
         .depthFormat = owned.depth.format,
     };
-    if (input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY) {
+    // Not the immersive window's eyes: the host may aim them through the window, whose field of
+    // view then changes with every head movement and would rebuild the density map each frame.
+    if (input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && !input.window) {
       view.target.foveatedColorView = foveated_eye_view(eye, input.eyes[eye]);
     }
     std::memcpy(&view.projection, input.eyes[eye].projection, sizeof(view.projection));

@@ -651,13 +651,47 @@ that keeps the colour inside the window with alpha 1 and leaves transparent blac
 one-pixel ramp at the edge. The triangle carries, at each corner, where that pixel's ray meets the
 window's plane in homogeneous window coordinates (`stereo_replay::window_mask`), which interpolate
 exactly across the image. With `single_pass_eyes` it is drawn in the eye's own last render pass, so it
-adds no pass and no tile load; otherwise it takes a pass of its own, as the cockpit overlay does. The
-game still renders the whole eye: only its alpha changes. On the Quest the backend submits the
-passthrough layer, then the projection layer with `XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT`
-(premultiplied alpha), then the settings panel. The flag travels with the packet, so the eyes Aurora
-masked and the layer that blends them always belong to the same frame, and switching the race view
-mid-race needs no safety generation: presentation stays `ImmersiveRace`. The PC backends keep their
-projection layer opaque, so the window is surrounded by black there.
+adds no pass and no tile load; otherwise it takes a pass of its own, as the cockpit overlay does. On
+the Quest the backend submits the passthrough layer, then the projection layer with
+`XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT` (premultiplied alpha), then the settings panel.
+The flag travels with the packet, so the eyes Aurora masked and the layer that blends them always
+belong to the same frame, and switching the race view mid-race needs no safety generation:
+presentation stays `ImmersiveRace`. The PC backends keep their projection layer opaque, so the window
+is surrounded by black there.
+
+**Only the window is rendered on the Quest.** Rather than render the whole eye and mask most of it,
+the pacing thread aims each eye through the window itself (`AimEyesThroughWindow` in
+`openxr_integration.cpp`): the eye keeps its position but looks square-on at the window's plane, through
+an off-axis frustum just around the window, so the image is the window. It keeps the display's pixel
+density (the swapchain's pixels per unit of tangent as the eye is located) at the window's size seen
+from the race origin, which is fixed while the window's geometry is: about 680 x 380 per eye with the
+default window at `render_scale` 0.8, against 1344 x 1408 for a whole eye. A two-pixel border around
+the window is left transparent by the mask. The frame's views carry that pose and field of view to the
+projection layer, whose `imageRect` is the rendered part of the swapchain image, and the compositor
+reprojects it like any other. Aurora copies the smaller eye into the corner of the shared buffer
+(`vulkan_interop.cpp`), and does not foveate these eyes: their field of view follows the head, which
+would rebuild the density map every frame, and they are small already. The PC backends copy whole eyes
+into the swapchain, so there the window's eyes stay full size and masked.
+`adb shell setprop debug.wiicompiled.window_eyes 0` renders them whole and masked on the Quest too, to
+compare the two within one session.
+
+Measured on a Quest 3 with a Retro Rewind race paused (the same 439 draw calls every frame,
+`render_scale` 1.0, 60 FPS throughout), switching the race view from the headset panel:
+
+| Race view | GPU level and clock | App GPU per frame | Both eyes | GPU load | Compositor |
+| --- | --- | --- | --- | --- | --- |
+| Immersive window | 1, 456 MHz | 11.0 ms | 8.4 ms | 82% | 1.6 ms |
+| Immersive | 3, 599 to 640 MHz | 13.4 ms | 10.3 ms | 88% | 0.7 ms |
+
+The headset raised the GPU's level for the fully immersive race and it still took longer: in clock
+cycles the window's frame is about 42% cheaper (5.0 against 8.6 million), which lets the Quest keep the
+GPU at its lowest level. The compositor's extra time is the passthrough. During a race at `render_scale`
+0.8, switching `debug.wiicompiled.window_eyes`, both eyes took 6.3 to 7.5 ms through the window against
+9.1 to 9.5 ms whole and masked at similar draw counts (the compositor's `SF` field read 0.31 against
+0.80), with the clock wandering between 350 and 600 MHz. The saving is smaller than the eye's pixels
+(about 13% of a whole eye's) would suggest because much of an eye's cost is the geometry of every draw,
+which each eye still processes; it grows with `render_scale`. Read the VrApi line's
+`CPU4/GPU=<levels>,<clocks>MHz` before comparing two timings.
 
 `gx_fifo_tests` covers the window's geometry (its corners through an asymmetric eye frustum, its
 agreement with the HUD's placement, an eye turned away or beyond the window, a sideways step), and
@@ -936,9 +970,8 @@ ends, including mid-frame flushes, so live setting changes cannot invalidate pen
   analog grips (Touch); the simple controller profile cannot grab.
 - The headset settings panel has no laser beam, only the cursor on the panel itself, and text fields
   cannot be typed into without a keyboard.
-- The immersive window renders the whole eye and only masks it, so it costs what a fully immersive
-  race costs, plus the passthrough's compositing. Hands and a separate VR wheel are masked with the
-  rest of the eye, so outside the window they are not seen.
+- On the PC the immersive window renders the whole eye and only masks it, so it costs what a fully
+  immersive race costs. Hands and a separate VR wheel are seen only through the window.
 - The desktop window remains available as a mirror/fallback.
 
 OpenXR diagnostics are written to the normal run log under
