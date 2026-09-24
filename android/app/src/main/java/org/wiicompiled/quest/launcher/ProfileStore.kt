@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import java.io.IOException
@@ -16,9 +15,9 @@ import org.wiicompiled.quest.R
 /**
  * What the profiles page and the sidebar's profile card show: the licences of Retro Rewind's save
  * and their Miis, which one is primary, and what Retro WFC knows of them (the Miis they last played
- * with, who is in a room now, their VR history), plus WheelWizard's badges. Files are read and the
- * network asked off the main thread, and every answer arrives on it. What Retro WFC saw of a Mii is
- * also kept on disk, so the sidebar shows it at once, even offline.
+ * with, their VR history), plus WheelWizard's badges; who is online comes from [LiveRooms]. Files
+ * are read and the network asked off the main thread, and every answer arrives on it. What Retro
+ * WFC saw of a Mii is also kept on disk, so the sidebar shows it at once, even offline.
  */
 object ProfileStore {
 
@@ -40,8 +39,6 @@ object ProfileStore {
     private const val IMAGE_DIRECTORY = "profile-miis"
     /** SettingValues.NoName: the name the game's guest Miis carry. */
     private const val GUEST_NAME = "no name"
-    /** Who is in a room is asked again after this long; WheelWizard polls its live rooms similarly. */
-    private const val ONLINE_REFRESH_MS = 30_000L
 
     private val worker = Executors.newFixedThreadPool(2) { runnable -> Thread(runnable, "Profiles").apply { isDaemon = true } }
     private val main by lazy { Handler(Looper.getMainLooper()) }
@@ -50,8 +47,6 @@ object ProfileStore {
     private val remotes = HashMap<String, Remote>()
     private val remotesAsked = HashSet<String>()
     private val waiting = HashMap<String, MutableList<(Remote?) -> Unit>>()
-    private var online: Set<String> = emptySet()
-    private var onlineAt = 0L
     private var badges: Map<String, List<RetroWfc.Badge>>? = null
 
     /** Reads Retro Rewind's save; [done] gets null when there is none, or it is not readable. */
@@ -209,29 +204,6 @@ object ProfileStore {
     private fun decode(bytes: ByteArray): Bitmap? = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 
     private val NONE = ByteArray(0)
-
-    /** The friend codes in a room now, asked again when the last answer is old; the last known ones when that fails. */
-    fun online(done: (Set<String>) -> Unit) {
-        if (onlineAt != 0L && SystemClock.elapsedRealtime() - onlineAt < ONLINE_REFRESH_MS) {
-            done(online)
-            return
-        }
-        worker.execute {
-            val fresh = try {
-                RetroWfc.onlineFriendCodes()
-            } catch (e: IOException) {
-                Log.i(TAG, "Retro WFC's rooms are unavailable: ${e.message}")
-                null
-            }
-            main.post {
-                if (fresh != null) {
-                    online = fresh
-                    onlineAt = SystemClock.elapsedRealtime()
-                }
-                done(online)
-            }
-        }
-    }
 
     /** WheelWizard's badges by friend code, fetched once a session. */
     fun badges(done: (Map<String, List<RetroWfc.Badge>>) -> Unit) {

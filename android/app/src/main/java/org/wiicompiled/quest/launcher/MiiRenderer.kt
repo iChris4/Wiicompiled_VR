@@ -35,9 +35,11 @@ object MiiRenderer {
         val cameraX: Float,
         val cameraY: Float,
         val cameraZ: Float,
+        /** The camera's distance as a share of the PC's (its CameraZoom): below 1 the Mii fills more. */
+        val zoom: Float = 1f,
     ) {
         /** Tells pictures of the same Mii in different poses apart. */
-        val key: String get() = "$characterX,$characterY,$characterZ,$cameraX,$cameraY,$cameraZ"
+        val key: String get() = "$characterX,$characterY,$characterZ,$cameraX,$cameraY,$cameraZ,$zoom"
 
         companion object {
             /** Straight ahead, as My Miis and the editor show a Mii. */
@@ -50,11 +52,18 @@ object MiiRenderer {
 
     /**
      * The Mii at [size] x [size], as non-premultiplied ARGB colours, transparent around it: the
-     * head, with the upper body below it when [bodies] are given.
+     * head, with the upper body below it when [bodies] are given, or with [fullBody] the whole Mii
+     * (the PC's all_body) when they are.
      */
     @Throws(IOException::class)
-    fun render(resource: FflResource, mii: Mii, size: Int, pose: Pose = Pose.FRONT, bodies: MiiBodies? = null): IntArray =
-        render(resource, FflCharInfo.of(mii), size, pose = pose, bodies = bodies)
+    fun render(
+        resource: FflResource,
+        mii: Mii,
+        size: Int,
+        pose: Pose = Pose.FRONT,
+        bodies: MiiBodies? = null,
+        fullBody: Boolean = false,
+    ): IntArray = render(resource, FflCharInfo.of(mii), size, pose = pose, bodies = bodies, fullBody = fullBody)
 
     @Throws(IOException::class)
     internal fun render(
@@ -64,6 +73,7 @@ object MiiRenderer {
         expression: Int = 0,
         pose: Pose = Pose.FRONT,
         bodies: MiiBodies? = null,
+        fullBody: Boolean = false,
     ): IntArray {
         require(size in 16..4096 && size % 2 == 0) { "Unsupported picture size $size" }
         val resolution = if (size <= 384) 256 else 512
@@ -76,8 +86,10 @@ object MiiRenderer {
         // The PC's face view: 15 degrees of field of view on the head, the camera orbiting it
         // (CalculateCameraOrbitPosition) and the head turned about its own origin. With a body
         // the head sits on its shoulders, and the camera rises with it; the body turns about its feet.
-        val y = 4.805f / 0.14f
-        val z = 57.553f / 0.14f
+        // Its all_body view stands further back, looking at the whole Mii from a fixed place.
+        val wholeBody = fullBody && body != null
+        val y = if (wholeBody) 90f else 4.805f / 0.14f
+        val z = (if (wholeBody) 760f else 57.553f / 0.14f) * pose.zoom
         val camera = radians(pose.cameraX, pose.cameraY, pose.cameraZ)
         val position = floatArrayOf(
             z * -sin(camera[1]) * cos(camera[0]),
@@ -85,8 +97,8 @@ object MiiRenderer {
             z * cos(camera[1]) * cos(camera[0]),
         )
         position[1] += y
-        val lookAt = floatArrayOf(0f, y, 0f)
-        if (body != null) {
+        val lookAt = floatArrayOf(0f, if (wholeBody) 95f else y, 0f)
+        if (body != null && !wholeBody) {
             for (c in 0 until 3) {
                 position[c] += body.headTranslation[c]
                 lookAt[c] += body.headTranslation[c]

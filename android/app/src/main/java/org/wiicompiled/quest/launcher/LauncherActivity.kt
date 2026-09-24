@@ -30,8 +30,8 @@ import org.wiicompiled.quest.R
  * The app's entry point on the headset: a 2D panel modelled on the PC launcher (WheelWizard VR),
  * with a Home page that sets up and starts the game, a My profiles page that shows the licences
  * of Retro Rewind's save, a Patches page that finds mods for Retro Rewind on GameBanana or imports
- * them, a My Miis page that makes and edits the game's Miis, and a Settings page that edits
- * Config.toml.
+ * them, a My Miis page that makes and edits the game's Miis, a Settings page that edits
+ * Config.toml, and under Online a Rooms page that shows who plays on Retro WFC now.
  *
  * The APK carries no game code. Playing needs two things the player owns: the game files (DATA,
  * extracted from their disc image here or on a PC) and the game itself (libmain.so, built from
@@ -44,7 +44,7 @@ import org.wiicompiled.quest.R
  */
 class LauncherActivity : Activity() {
 
-    private enum class Page { Home, Profiles, Patches, Miis, Settings }
+    private enum class Page { Home, Profiles, Patches, Miis, Settings, Rooms }
 
     /** What Home's main and secondary buttons do. */
     private enum class Action { Play, Resume, SelectDisc, ImportGame, BuildGame, DownloadModPack, Reset }
@@ -54,11 +54,14 @@ class LauncherActivity : Activity() {
     private lateinit var navPatches: View
     private lateinit var navMiis: View
     private lateinit var navSettings: View
+    private lateinit var navRooms: View
+    private lateinit var navRoomsCount: TextView
     private lateinit var homePage: View
     private lateinit var profilesView: View
     private lateinit var patchesView: View
     private lateinit var miisView: View
     private lateinit var settingsView: View
+    private lateinit var roomsView: View
     private lateinit var trails: WheelTrailsView
     private lateinit var playButton: View
     private lateinit var playIcon: ImageView
@@ -77,6 +80,18 @@ class LauncherActivity : Activity() {
     private lateinit var miis: MiisPage
     private lateinit var profilesPage: ProfilesPage
     private lateinit var sidebarProfile: SidebarProfileCard
+    private lateinit var rooms: RoomsPage
+
+    /** The sidebar's count of players online (WheelWizard's UpdatePlayerCount). */
+    private val playersOnline: () -> Unit = {
+        val count = LiveRooms.playerCount
+        navRoomsCount.text = count.toString()
+        navRoomsCount.tooltipText = if (count == 0) {
+            getString(R.string.launcher_players_online_none)
+        } else {
+            resources.getQuantityString(R.plurals.launcher_players_online, count, count)
+        }
+    }
 
     /** The games this APK carries a kit for, and the one the player picked. */
     private val profiles: List<GameProfile> by lazy { GameProfile.available(this) }
@@ -114,11 +129,14 @@ class LauncherActivity : Activity() {
         navPatches = findViewById(R.id.nav_patches)
         navMiis = findViewById(R.id.nav_miis)
         navSettings = findViewById(R.id.nav_settings)
+        navRooms = findViewById(R.id.nav_rooms)
+        navRoomsCount = findViewById(R.id.nav_rooms_count)
         homePage = findViewById(R.id.page_home)
         profilesView = findViewById(R.id.page_profiles)
         patchesView = findViewById(R.id.page_patches)
         miisView = findViewById(R.id.page_miis)
         settingsView = findViewById(R.id.page_settings)
+        roomsView = findViewById(R.id.page_rooms)
         trails = findViewById(R.id.home_trails)
         playButton = findViewById(R.id.home_play)
         playIcon = findViewById(R.id.home_play_icon)
@@ -162,6 +180,9 @@ class LauncherActivity : Activity() {
         )
         sidebarProfile = SidebarProfileCard(this, findViewById(R.id.sidebar_profile)) { showPage(Page.Profiles) }
         profilesPage = ProfilesPage(this, profilesView) { snapshot -> sidebarProfile.show(snapshot) }
+        rooms = RoomsPage(this, roomsView)
+        LiveRooms.addListener(playersOnline)
+        playersOnline()
         savedInstanceState?.getString(KEY_TAB)?.let { name ->
             SettingsPage.Tab.entries.firstOrNull { it.name == name }?.let(settings::select)
         }
@@ -171,6 +192,7 @@ class LauncherActivity : Activity() {
         navPatches.setOnClickListener { showPage(Page.Patches) }
         navMiis.setOnClickListener { showPage(Page.Miis) }
         navSettings.setOnClickListener { showPage(Page.Settings) }
+        navRooms.setOnClickListener { showPage(Page.Rooms) }
         playButton.setOnClickListener { perform(mainAction) }
         secondary.setOnClickListener { secondaryAction?.let(::perform) }
         cancel.setOnClickListener { GameSetup.cancel() }
@@ -208,6 +230,7 @@ class LauncherActivity : Activity() {
         // so does the Mii editor on My Miis.
         if (page == Page.Patches && patches.back()) return
         if (page == Page.Miis && miis.back()) return
+        if (page == Page.Rooms && rooms.back()) return
         @Suppress("DEPRECATION")
         super.onBackPressed()
     }
@@ -225,6 +248,9 @@ class LauncherActivity : Activity() {
         // The game may have changed the save while it ran; the profiles page reads it again itself.
         if (page != Page.Profiles) sidebarProfile.refresh()
         profilesPage.setVisible(page == Page.Profiles)
+        // Who plays online is followed while the launcher is on screen, for the sidebar's count.
+        LiveRooms.start()
+        rooms.setVisible(page == Page.Rooms)
         // The game's process can take a moment to go away after its activity
         // closes, which would still read as running.
         val runningAtResume = isGameRunning()
@@ -237,7 +263,14 @@ class LauncherActivity : Activity() {
         GameSetup.removeListener(setupListener)
         patches.detach()
         profilesPage.setVisible(false)
+        rooms.setVisible(false)
+        LiveRooms.stop()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        LiveRooms.removeListener(playersOnline)
+        super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -287,12 +320,15 @@ class LauncherActivity : Activity() {
         navPatches.isSelected = target == Page.Patches
         navMiis.isSelected = target == Page.Miis
         navSettings.isSelected = target == Page.Settings
+        navRooms.isSelected = target == Page.Rooms
         homePage.visibility = if (target == Page.Home) View.VISIBLE else View.GONE
         profilesView.visibility = if (target == Page.Profiles) View.VISIBLE else View.GONE
         patchesView.visibility = if (target == Page.Patches) View.VISIBLE else View.GONE
         miisView.visibility = if (target == Page.Miis) View.VISIBLE else View.GONE
         profilesPage.setVisible(target == Page.Profiles)
         settingsView.visibility = if (target == Page.Settings) View.VISIBLE else View.GONE
+        roomsView.visibility = if (target == Page.Rooms) View.VISIBLE else View.GONE
+        rooms.setVisible(target == Page.Rooms)
         if (target == Page.Home) {
             trailsAway = true
         }
@@ -306,6 +342,8 @@ class LauncherActivity : Activity() {
             Page.Patches -> patches.refresh()
             Page.Miis -> miis.refresh()
             Page.Settings -> settings.refresh()
+            // Rooms follow Retro WFC's answers by themselves.
+            Page.Rooms -> Unit
         }
     }
 

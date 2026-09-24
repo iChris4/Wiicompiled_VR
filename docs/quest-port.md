@@ -227,9 +227,8 @@ save only (`riivolution/save/RetroWFC/RMCP/rksys.dat`): the four licences with t
 name, friend code (derived from the profile ID as `FriendCodeGenerator` does), VR, BR
 and race counts, the VR and BR replaced by Pulsar's `RRRating.pul` in the NAND when it
 knows the profile, as the PC's `RRratingReader` does. Retro WFC's public API gives the
-rest: a licence is Online (card glow) while its friend code is in a room
-(`/api/roomstatus`, asked again every 30 s while the page is shown), its VR history
-comes from `/api/leaderboard/player/<fc>/history?days=N`, and
+rest: a licence is Online (card glow) while its friend code is in a room of the Rooms
+page's live rooms (below), its VR history comes from `/api/leaderboard/player/<fc>/history?days=N`, and
 `/api/leaderboard/player/<fc>` gives the Mii it last played with, as the 74-byte
 `miiData` and a 64-pixel PNG, kept on disk. The Mii is drawn as the PC draws it,
 turned three-quarters (`CurrentUserSideProfile`) by My Miis' renderer (below): the
@@ -278,10 +277,32 @@ three-quarter ones differed in at most 32 edge pixels of 160,000. One deliberate
 fix: the PC colours a beard with the hair colour, here with the facial hair colour,
 as the Wii does. The editor's choices are drawn from the same parts, the flat parts
 from their textures in the Mii's colours and hairstyles, head shapes and beards as
-the Mii's head without its body, where the PC shows icons of its own. On a Quest 3 the 424-pixel face in the
-editor takes about 150 ms, drawn in four bands of rows in parallel, and a choice
-about 40 ms. `MiiDataTest`, `MiiDatabaseTest`, `MiiIdsTest`, `MiiBodiesTest` and
-`MiiRendererTest` (on made-up parts and body files) cover it.
+the Mii's head without its body, where the PC shows icons of its own. On a Quest 3
+the 424-pixel face in the editor takes about 150 ms, drawn in four bands of rows in
+parallel, and a choice about 40 ms. `MiiDataTest`, `MiiDatabaseTest`, `MiiIdsTest`,
+`MiiBodiesTest` and `MiiRendererTest` (on made-up parts and body files) cover it.
+
+**Rooms**, under Online after Settings, is the PC's RoomsPage and RoomDetailsPage
+(`RoomsPage`), fed by `LiveRooms`, the PC's RRLiveRooms: while the launcher is on
+screen it asks Retro WFC every 40 s for `/api/roomstatus` and the top 50 of
+`/api/leaderboard/top/50` (kept 90 s, the last ones reused when it fails), splits
+the rooms Retro WFC merged by mistake where their players' connection maps are not
+linked both ways (the PC's SplitMergedRooms, checked against it on a real answer),
+and marks top-50 players with their place. The same answers drive the sidebar's
+player count and the profiles' Online glow. The room status is read as Retro WFC
+sends it now (`isSuspended`, a Mii object of `data` and `name`) as well as the PC's
+older fields. The page lists rooms with their game mode (the PC's `rk` names), ID,
+time online and player count, or with a search the players whose name or friend
+code holds it; a room opens its details (ID, time online, mode, average VR, and its
+players with their Mii, VR, badges, place and open host), and a player there Copy
+Friend Code, View Mii and View Profile. View Mii is the PC's MiiCarouselWindow: the
+whole Mii in the renderer's `all_body` view, turned by dragging and zoomed with the
+thumbstick, small while it moves and sharp once it rests. View Profile is the PC's
+PlayerProfileWindow, with the VR history of My profiles (`VrHistoryPanel`, one
+`view_vr_history` layout for both). The PC's Add Friend waits for the Friends page,
+which reads and writes the save's friend list. Rows are `TapRow`s, which take every
+tap so a tooltip or the badge strip inside cannot swallow one, while the pointer's
+hover still shows their tips. `LiveRoomsTest` and `RetroWfcTest` cover it.
 
 The launcher follows the runtime's rules exactly. `TomlConfig` edits one line
 the way `RuntimeConfigFile::WriteSetting` does, and every edit re-reads the file,

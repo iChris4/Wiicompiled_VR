@@ -33,17 +33,89 @@ class RetroWfcTest {
     }
 
     @Test
-    fun onlineIsBeingInARoomNow() {
+    fun roomsAreReadWithTheirPlayersAndMiis() {
+        val mii = MiiData.serialize(MiiFactory.male("Racer").apply { miiId = 0x80000001L })
         val json = """
             {"rooms": [
-               {"id": "XESURM", "players": []},
-               {"id": "A", "players": [{"pid": "166930", "friendCode": "4123-1702-7346", "mii": {"data": "", "name": "x"}},
-                                       {"pid": "204981", "friendCode": "4939-2144-4021"}]},
-               {"id": "B", "players": [{"pid": "1", "friendCode": null}]}],
-             "totalPlayers": 3}
+               {"id": "EVFAQV", "type": "anybody", "created": "2026-09-23T22:48:15.1641988Z", "host": "29", "rk": "vs_10",
+                "players": [
+                  {"pid": "166930", "name": "Racer", "friendCode": "1111-2222-3333", "vr": 13967, "br": 9999, "isOpenHost": true,
+                   "isSuspended": false, "mii": {"data": "${Base64.getEncoder().encodeToString(mii)}", "name": "Racer"},
+                   "connectionMap": ["0", "1"], "slotId": "29"},
+                  {"pid": 204981, "name": "Other", "friendCode": "4444-5555-6666", "vr": null, "mii": [{"data": "AAEC"}],
+                   "connectionMap": []}],
+                "averageVR": 13967, "race": {"num": 10, "course": 324, "cc": 2, "trackName": "GCN Wario Colosseum"},
+                "roomType": "Retro Tracks", "isPublic": true, "isJoinable": false, "isSuspended": true},
+               {"id": "XESURM", "type": "private", "created": "2026-09-13T18:56:58Z", "rk": "unknown", "players": [], "suspend": false},
+               {"type": "anybody", "created": "2026-09-13T18:56:58Z", "players": []},
+               {"id": "BADDAY", "type": "anybody", "created": "not a date", "players": []}],
+             "timestamp": "2026-09-23T23:22:18.9478744Z", "totalPlayers": 2}
         """.trimIndent()
-        assertEquals(setOf("4123-1702-7346", "4939-2144-4021"), RetroWfc.parseOnlineFriendCodes(json))
-        assertEquals(emptySet<String>(), RetroWfc.parseOnlineFriendCodes("""{"rooms": null}"""))
+        val rooms = RetroWfc.parseRoomStatus(json)
+        // Rooms without their ID or creation time are left out, as the PC could not read them.
+        assertEquals(listOf("EVFAQV", "XESURM"), rooms.map { it.id })
+        val room = rooms[0]
+        assertEquals("anybody", room.type)
+        assertEquals(Instant.parse("2026-09-23T22:48:15.1641988Z").toEpochMilli(), room.created)
+        assertEquals("vs_10", room.rk)
+        assertEquals(true, room.suspended)
+        val (racer, other) = room.players
+        assertEquals("166930", racer.pid)
+        assertEquals("Racer", racer.name)
+        assertEquals("1111-2222-3333", racer.friendCode)
+        assertEquals(13967, racer.vr)
+        assertEquals(9999, racer.br)
+        assertEquals(true, racer.isOpenHost)
+        assertArrayEquals(mii, racer.mii)
+        assertEquals(listOf("0", "1"), racer.connectionMap)
+        // A numeric ID, no VR, and a Mii too short to be one.
+        assertEquals("204981", other.pid)
+        assertNull(other.vr)
+        assertNull(other.br)
+        assertNull(other.mii)
+        assertEquals(false, rooms[1].suspended)
+        assertEquals(emptyList<RetroWfc.Room>(), RetroWfc.parseRoomStatus("""{"rooms": null}"""))
+    }
+
+    @Test
+    fun theLeaderboardGivesRanksByProfileAndFriendCode() {
+        val json = """
+            [{"pid": "592986326", "name": "s", "friendCode": "1111-2222-3333", "vr": 161570, "rank": 1, "isSuspicious": false},
+             {"pid": "2", "friendCode": "", "rank": null, "activeRank": 7},
+             {"name": "no pid", "rank": 3}]
+        """.trimIndent()
+        val entries = RetroWfc.parseLeaderboard(json)
+        assertEquals(listOf("592986326", "2"), entries.map { it.pid })
+        assertEquals(1, entries[0].rank)
+        assertEquals("1111-2222-3333", entries[0].friendCode)
+        assertNull(entries[1].rank)
+        assertEquals(7, entries[1].activeRank)
+    }
+
+    @Test
+    fun aPlayersProfileIsReadAsThePcReadsIt() {
+        val mii = MiiData.serialize(MiiFactory.female("Profile"))
+        val json = """
+            {"pid": "601298307", "name": "Profile", "friendCode": "1111-2222-3333", "vr": 6050, "rank": 38439,
+             "lastSeen": "2026-09-21T02:43:42.584862Z", "isSuspicious": true,
+             "vrStats": {"last24Hours": 0, "lastWeek": -4967, "lastMonth": 257},
+             "miiImageBase64": null, "miiData": "${Base64.getEncoder().encodeToString(mii)}", "badges": null}
+        """.trimIndent()
+        val profile = RetroWfc.parsePlayerProfile(json)
+        assertEquals("Profile", profile.name)
+        assertEquals("1111-2222-3333", profile.friendCode)
+        assertEquals(6050, profile.vr)
+        assertEquals(38439, profile.rank)
+        assertEquals(Instant.parse("2026-09-21T02:43:42.584862Z").toEpochMilli(), profile.lastSeen)
+        assertEquals(true, profile.isSuspicious)
+        assertEquals(-4967, profile.vrStats!!.lastWeek)
+        assertEquals(257, profile.vrStats!!.lastMonth)
+        assertArrayEquals(mii, profile.mii)
+        // A profile without stats or a Mii still reads.
+        val bare = RetroWfc.parsePlayerProfile("""{"name": "x", "friendCode": "1111-2222-3333"}""")
+        assertNull(bare.vrStats)
+        assertNull(bare.mii)
+        assertNull(bare.lastSeen)
     }
 
     @Test
@@ -87,6 +159,7 @@ class RetroWfcTest {
     fun requestsAreTheOnesWheelWizardMakes() {
         assertEquals("https://rwfc.net/api/leaderboard/player/0349-6103-6675", RetroWfc.profileUrl("0349-6103-6675"))
         assertEquals("https://rwfc.net/api/leaderboard/player/0349-6103-6675/history?days=30", RetroWfc.historyUrl("0349-6103-6675", 30))
+        assertEquals("https://rwfc.net/api/leaderboard/top/50", RetroWfc.topUrl(50))
     }
 
     @Test

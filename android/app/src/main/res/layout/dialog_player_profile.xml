@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WheelWizard's PlayerProfileWindow (Views/Popups/PlayerProfileWindow.axaml): what Retro WFC
+     knows of a player, with their VR history. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="380dp"
+    android:paddingStart="24dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="24dp">
+
+    <LinearLayout
+        android:id="@+id/player_loading"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center_horizontal"
+        android:orientation="vertical">
+
+        <ProgressBar
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:indeterminateTint="@color/neutral_600" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/player_profile_loading"
+            android:textColor="@color/neutral_300"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/player_error"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_warning"
+            android:tint="@color/danger_600" />
+
+        <TextView
+            android:id="@+id/player_error_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center"
+            android:maxWidth="440dp"
+            android:textColor="@color/danger_600"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/player_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="4dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:layout_width="84dp"
+                    android:layout_height="84dp"
+                    android:background="@drawable/bg_mii_circle"
+                    android:clipToOutline="true">
+
+                    <ImageView
+                        android:id="@+id/player_profile_placeholder"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:layout_gravity="center"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_user"
+                        android:tint="@color/neutral_600" />
+
+                    <ImageView
+                        android:id="@+id/player_profile_mii"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:importantForAccessibility="no" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/player_profile_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:textColor="@color/neutral_300"
+                        android:textSize="20sp" />
+
+                    <TextView
+                        android:id="@+id/player_profile_code"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textColor="@color/neutral_400"
+                        android:textSize="12sp" />
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/player_profile_rank"
+                            style="@style/Launcher.StateBox"
+                            android:layout_marginEnd="6dp"
+                            android:background="@drawable/bg_state_box_success"
+                            android:textColor="@color/primary_200" />
+
+                        <TextView
+                            android:id="@+id/player_profile_suspicious"
+                            style="@style/Launcher.StateBox"
+                            android:background="@drawable/bg_state_box_danger"
+                            android:text="@string/player_profile_suspicious"
+                            android:textColor="@color/danger_200" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:background="@color/neutral_700" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Launcher.FieldLabel"
+                        android:layout_marginBottom="2dp"
+                        android:text="@string/room_vr"
+                        android:tooltipText="@string/room_vr_full" />
+
+                    <TextView
+                        android:id="@+id/player_profile_vr"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/neutral_100"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/Launcher.FieldLabel"
+                        android:layout_marginTop="10dp"
+                        android:layout_marginBottom="2dp"
+                        android:text="@string/player_profile_vr_week" />
+
+                    <TextView
+                        android:id="@+id/player_profile_week"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/neutral_100"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Launcher.FieldLabel"
+                        android:layout_marginBottom="2dp"
+                        android:text="@string/player_profile_last_seen" />
+
+                    <TextView
+                        android:id="@+id/player_profile_seen"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/neutral_100"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        style="@style/Launcher.FieldLabel"
+                        android:layout_marginTop="10dp"
+                        android:layout_marginBottom="2dp"
+                        android:text="@string/player_profile_vr_month" />
+
+                    <TextView
+                        android:id="@+id/player_profile_month"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/neutral_100"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Launcher.FieldLabel"
+                        android:layout_marginBottom="2dp"
+                        android:text="@string/player_profile_vr_day" />
+
+                    <TextView
+                        android:id="@+id/player_profile_day"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/neutral_100"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:background="@color/neutral_700" />
+
+            <include
+                android:id="@+id/player_profile_history"
+                layout="@layout/view_vr_history"
+                android:layout_width="match_parent"
+                android:layout_height="270dp"
+                android:layout_marginTop="12dp" />
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

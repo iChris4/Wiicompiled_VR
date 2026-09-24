@@ -188,6 +188,21 @@ class MiiRendererTest {
     }
 
     @Test
+    fun theWholeMiiIsSeenFromFurtherBack() {
+        val mii = MiiFactory.male("Square").apply { faceShape = 5 }
+        val face = MiiRenderer.render(resource(), mii, 64, bodies = bodies())
+        val whole = MiiRenderer.render(resource(), mii, 64, bodies = bodies(), fullBody = true)
+        // From further back the Mii is smaller, all of it in the picture...
+        assertTrue(!whole.contentEquals(face))
+        assertTrue(opaqueIn(whole, 0 until 64) < opaqueIn(face, 0 until 64))
+        // ...and without a body there is no whole Mii to show: the face view stands in.
+        assertTrue(MiiRenderer.render(resource(), mii, 64, fullBody = true).contentEquals(MiiRenderer.render(resource(), mii, 64)))
+        // Nearer is bigger.
+        val near = MiiRenderer.render(resource(), mii, 64, MiiRenderer.Pose(0f, 0f, 0f, 0f, 0f, 0f, zoom = 0.5f), bodies(), fullBody = true)
+        assertTrue(opaqueIn(near, 0 until 64) > opaqueIn(whole, 0 until 64))
+    }
+
+    @Test
     fun aMiiWithoutItsFacelineCannotBeDrawn() {
         val mii = MiiFactory.male("Missing").apply { faceShape = 1 }
         assertThrows(java.io.IOException::class.java) { MiiRenderer.render(resource(), mii, 64) }

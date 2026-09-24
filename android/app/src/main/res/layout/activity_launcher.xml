@@ -180,6 +180,39 @@
                 android:text="@string/launcher_nav_settings" />
         </LinearLayout>
 
+        <TextView
+            style="@style/Launcher.SectionLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginBottom="6dp"
+            android:text="@string/launcher_section_online" />
+
+        <!-- A TapRow, so a tap on the count opens the page while the pointer still shows its tip. -->
+        <org.wiicompiled.quest.launcher.TapRow
+            android:id="@+id/nav_rooms"
+            style="@style/Launcher.NavItem">
+
+            <ImageView
+                style="@style/Launcher.NavIcon"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_room_users" />
+
+            <TextView
+                style="@style/Launcher.NavLabel"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="@string/launcher_nav_rooms" />
+
+            <!-- WheelWizard's BoxText: the players online now. -->
+            <TextView
+                android:id="@+id/nav_rooms_count"
+                style="@style/Launcher.StateBox"
+                android:drawableStart="@drawable/ic_user_couple"
+                android:text="0" />
+        </org.wiicompiled.quest.launcher.TapRow>
+
         <Space
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -228,6 +261,11 @@
         <include
             android:id="@+id/page_settings"
             layout="@layout/page_settings"
+            android:visibility="gone" />
+
+        <include
+            android:id="@+id/page_rooms"
+            layout="@layout/page_rooms"
             android:visibility="gone" />
     </FrameLayout>
 </LinearLayout>

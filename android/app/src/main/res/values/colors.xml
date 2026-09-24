@@ -31,9 +31,12 @@
     <color name="warning_600">#D19200</color>
     <color name="warning_700">#A66802</color>
     <color name="warning_800">#89510A</color>
+    <color name="danger_200">#FFC5CF</color>
     <color name="danger_300">#FF9DAF</color>
     <color name="danger_400">#FF6581</color>
     <color name="danger_500">#FE2048</color>
+    <color name="danger_600">#EC163D</color>
+    <color name="danger_700">#C70E2F</color>
 
     <!-- The mod browser's look for mods that use patches (Views/Patterns/ModBrowserListItem.axaml). -->
     <color name="patches_item">#173726</color>

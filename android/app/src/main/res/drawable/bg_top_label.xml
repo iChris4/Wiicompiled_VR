@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PlayerListItem's leaderboard place, such as #12. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/primary_600" />
+    <corners android:radius="8dp" />
+</shape>

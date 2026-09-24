@@ -3,28 +3,16 @@ package org.wiicompiled.quest.launcher
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.graphics.PointF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Handler
-import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.RadioButton
-import android.widget.Spinner
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import java.text.NumberFormat
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import org.wiicompiled.quest.R
 
 /**
@@ -63,23 +51,7 @@ class ProfilesPage(
     private val statsPage: View = root.findViewById(R.id.profiles_stats)
     private val dots: List<View> = listOf(root.findViewById(R.id.profiles_dot0), root.findViewById(R.id.profiles_dot1))
 
-    private val historyStart: TextView = root.findViewById(R.id.history_start)
-    private val historyEnd: TextView = root.findViewById(R.id.history_end)
-    private val historyChange: TextView = root.findViewById(R.id.history_change)
-    private val historyRange: TextView = root.findViewById(R.id.history_range)
-    private val historyLoading: View = root.findViewById(R.id.history_loading)
-    private val historyMatches: Switch = root.findViewById(R.id.history_matches)
-    private val historyGraph: View = root.findViewById(R.id.history_graph)
-    private val historyEmpty: View = root.findViewById(R.id.history_empty)
-    private val historyEmptyMessage: TextView = root.findViewById(R.id.history_empty_message)
-    private val historyMax: TextView = root.findViewById(R.id.history_max)
-    private val historyMin: TextView = root.findViewById(R.id.history_min)
-    private val historyChart: VrHistoryChart = root.findViewById(R.id.history_chart)
-    private val historyLabels: List<TextView> = listOf(
-        root.findViewById(R.id.history_label_start),
-        root.findViewById(R.id.history_label_mid),
-        root.findViewById(R.id.history_label_end),
-    )
+    private val history = VrHistoryPanel(activity, historyPage)
 
     private val statsVr: TextView = root.findViewById(R.id.stats_vr)
     private val statsBr: TextView = root.findViewById(R.id.stats_br)
@@ -89,23 +61,11 @@ class ProfilesPage(
     private var snapshot: ProfileStore.Snapshot? = null
     private var slot = -1
     private val current: RksysProfiles.License? get() = snapshot?.licenses?.getOrNull(slot)
-    private var online: Set<String> = emptySet()
     private var badges: Map<String, List<RetroWfc.Badge>> = emptyMap()
     private var carouselPage = 0
-    private var days = DEFAULT_DAYS
-    private var history: RetroWfc.History? = null
-    /** The friend code and period the history on screen, or on its way, is for. */
-    private var historyFor: Pair<String, Int>? = null
-    private var historyGeneration = 0
 
-    private val main = Handler(Looper.getMainLooper())
     private var visible = false
-    private val onlineTicker = object : Runnable {
-        override fun run() {
-            refreshOnline()
-            main.postDelayed(this, ONLINE_REFRESH_MS)
-        }
-    }
+    private val roomsChanged: () -> Unit = { renderOnline() }
 
     private val slotTabs: List<TextView> = (0 until RksysProfiles.SLOTS).map { index ->
         TextView(activity).apply {
@@ -134,38 +94,19 @@ class ProfilesPage(
         root.findViewById<View>(R.id.profiles_previous).setOnClickListener { moveCarousel(-1) }
         root.findViewById<View>(R.id.profiles_next).setOnClickListener { moveCarousel(1) }
 
-        PatchesWidgets.styleSwitch(activity, historyMatches)
-        historyMatches.setOnCheckedChangeListener { _, _ -> renderHistory() }
-        root.findViewById<View>(R.id.history_matches_row).setOnClickListener { historyMatches.toggle() }
-
-        root.findViewById<Spinner>(R.id.history_days).apply {
-            background = activity.getDrawable(R.drawable.bg_dropdown)
-            setPopupBackgroundDrawable(activity.getDrawable(R.drawable.bg_dropdown_popup))
-            dropDownVerticalOffset = dp(4)
-            adapter = ArrayAdapter(activity, R.layout.item_dropdown, DAY_LABELS.map { activity.getString(it) }).apply {
-                setDropDownViewResource(R.layout.item_dropdown_popup)
-            }
-            setSelection(DAY_OPTIONS.indexOf(DEFAULT_DAYS), false)
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    val chosen = DAY_OPTIONS[position]
-                    if (chosen == days) return
-                    days = chosen
-                    current?.let(::loadHistory)
-                }
-
-                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-            }
-        }
         renderCarousel()
     }
 
-    /** While the page is on screen, who is online is asked again now and then, as the PC polls its rooms. */
+    /** While the page is on screen, who is online follows Retro WFC's rooms, as the PC's does. */
     fun setVisible(shown: Boolean) {
         if (shown == visible) return
         visible = shown
-        main.removeCallbacks(onlineTicker)
-        if (shown) main.post(onlineTicker)
+        if (shown) {
+            LiveRooms.addListener(roomsChanged)
+            renderOnline()
+        } else {
+            LiveRooms.removeListener(roomsChanged)
+        }
     }
 
     /** Reads the save again, which the game may have changed since, and shows the licence chosen. */
@@ -173,8 +114,7 @@ class ProfilesPage(
         ProfileStore.load(activity) { loaded ->
             if (activity.isDestroyed) return@load
             snapshot = loaded
-            // VrHistoryGraph reloads each time it is shown: races since then count.
-            historyFor = null
+            history.forget()
             val licenses = loaded?.licenses.orEmpty()
             if (licenses.getOrNull(slot) == null) {
                 // UserProfilePage opens on the focused user, here the primary licence.
@@ -216,7 +156,7 @@ class ProfilesPage(
         statsBr.text = license.br.toString()
         statsWins.text = license.wins.toString()
         statsRaces.text = license.races.toString()
-        loadHistory(license)
+        history.show(license.friendCode)
     }
 
     /** The licence's Mii, drawn at the size it is shown at (UserProfilePage's CurrentUserSideProfile). */
@@ -238,16 +178,10 @@ class ProfilesPage(
 
     // Online, as UserProfilePage.UpdateOnlineBorders shows it.
 
-    private fun refreshOnline() {
-        ProfileStore.online { codes ->
-            online = codes
-            if (!activity.isDestroyed) renderOnline()
-        }
-    }
-
     private fun renderOnline() {
+        if (activity.isDestroyed) return
         val license = current ?: return
-        val isOnline = license.friendCode.isNotEmpty() && license.friendCode in online
+        val isOnline = license.friendCode.isNotEmpty() && license.friendCode in LiveRooms.onlineFriendCodes
         card.background = box(R.color.neutral_900, if (isOnline) R.color.primary_400 else R.color.neutral_900, 8)
         face.background = box(R.color.neutral_950, if (isOnline) R.color.primary_400 else R.color.neutral_600, 4)
         glow.visibility = if (isOnline) View.VISIBLE else View.GONE
@@ -300,108 +234,6 @@ class ProfilesPage(
         }
     }
 
-    // VR history, as VrHistoryGraph loads and draws it.
-
-    private fun loadHistory(license: RksysProfiles.License) {
-        val friendCode = license.friendCode
-        if (historyFor == friendCode to days) return
-        historyFor = friendCode to days
-        val generation = ++historyGeneration
-        history = null
-        if (friendCode.isEmpty() || friendCode.none { it in '1'..'9' }) {
-            // SetNoFriendCodeState: a licence never taken online has nothing to show.
-            historyLoading.visibility = View.GONE
-            showHistoryState(activity.getString(R.string.history_no_code))
-            historyRange.text = ""
-            return
-        }
-        historyLoading.visibility = View.VISIBLE
-        ProfileStore.history(friendCode, days) { result ->
-            if (generation != historyGeneration || activity.isDestroyed) return@history
-            historyLoading.visibility = View.GONE
-            result.onSuccess { loaded ->
-                history = loaded
-                renderHistory()
-            }.onFailure { failure ->
-                historyRange.text = ""
-                showHistoryState(failure.message ?: failure.toString())
-            }
-        }
-    }
-
-    /** VrHistoryGraph.ApplyHistoryData: the totals, the range, then the plot by time or by match. */
-    private fun renderHistory() {
-        val data = history ?: return
-        historyStart.text = grouped(data.starting)
-        historyEnd.text = grouped(data.ending)
-        historyChange.text = if (data.totalChange > 0) "+${grouped(data.totalChange)}" else grouped(data.totalChange)
-        historyChange.setTextColor(
-            activity.getColor(
-                when {
-                    data.totalChange > 0 -> R.color.primary_400
-                    data.totalChange < 0 -> R.color.danger_400
-                    else -> R.color.neutral_100
-                },
-            ),
-        )
-        historyRange.text = if (days == LIFETIME_DAYS) {
-            activity.getString(R.string.history_range_all)
-        } else {
-            val fromPattern = if (year(data.from) != year(data.to)) "MMM d, yyyy" else "MMM d"
-            activity.getString(R.string.history_range, days, date(data.from, fromPattern), date(data.to, "MMM d"))
-        }
-
-        val entries = data.entries
-        if (entries.isEmpty()) {
-            showHistoryState(activity.getString(R.string.history_none_range))
-            return
-        }
-        historyGraph.visibility = View.VISIBLE
-        historyEmpty.visibility = View.GONE
-        val start = entries.first().time
-        val span = maxOf(1_000L, entries.last().time - start)
-        val lowest = entries.minOf { it.total }
-        val highest = entries.maxOf { it.total }
-        val vrRange = maxOf(1, highest - lowest).toFloat()
-        historyMax.text = grouped(highest)
-        historyMin.text = grouped(lowest)
-        val byMatch = historyMatches.isChecked
-        val labels = if (byMatch) {
-            listOf(1, entries.size / 2 + 1, entries.size).map { activity.getString(R.string.history_match, it) }
-        } else {
-            val pattern = if (days >= 7) "MMM d" else "MMM d HH:mm"
-            listOf(start, start + span / 2, entries.last().time).map { date(it, pattern) }
-        }
-        historyLabels.zip(labels).forEach { (view, text) -> view.text = text }
-        historyChart.setPoints(
-            entries.mapIndexed { index, entry ->
-                val x = if (byMatch) {
-                    if (entries.size > 1) index.toFloat() / (entries.size - 1) else 0f
-                } else {
-                    (entry.time - start).toFloat() / span
-                }
-                PointF(x, (entry.total - lowest) / vrRange)
-            },
-        )
-    }
-
-    /** VrHistoryGraph's empty and error states, which share one look. */
-    private fun showHistoryState(message: String) {
-        historyGraph.visibility = View.GONE
-        historyEmpty.visibility = View.VISIBLE
-        historyEmptyMessage.text = message
-        for (view in listOf(historyStart, historyEnd, historyChange)) view.text = "0"
-        historyChange.setTextColor(activity.getColor(R.color.neutral_100))
-        historyChart.setPoints(emptyList())
-    }
-
-    private fun grouped(value: Int): String = NumberFormat.getIntegerInstance(Locale.getDefault()).format(value)
-
-    private fun date(time: Long, pattern: String): String =
-        DateTimeFormatter.ofPattern(pattern, Locale.getDefault()).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(time))
-
-    private fun year(time: Long): Int = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).year
-
     private fun box(fill: Int, stroke: Int, radius: Int) = GradientDrawable().apply {
         setColor(activity.getColor(fill))
         setStroke(dp(1), activity.getColor(stroke))
@@ -414,12 +246,5 @@ class ProfilesPage(
         /** The Mii picture's frame in page_profiles.xml. */
         const val PICTURE_DP = 320
         const val CAROUSEL_PAGES = 2
-        const val DEFAULT_DAYS = 30
-        /** What VrHistoryGraph asks for "Lifetime". */
-        const val LIFETIME_DAYS = 999
-        val DAY_OPTIONS = listOf(1, 7, 30, 60, LIFETIME_DAYS)
-        val DAY_LABELS = listOf(R.string.history_days_1, R.string.history_days_7, R.string.history_days_30, R.string.history_days_60, R.string.history_days_all)
-        /** How often who is online is asked again while the page is shown. */
-        const val ONLINE_REFRESH_MS = 30_000L
     }
 }

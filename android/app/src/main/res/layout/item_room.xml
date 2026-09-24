@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A room on the Rooms page (RoomsPage's item template): open or locked, its game mode and ID,
+     how long it has been open, and its player count. -->
+<org.wiicompiled.quest.launcher.TapRow xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_browser_item"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="7dp"
+    android:paddingEnd="7dp">
+
+    <ImageView
+        android:id="@+id/room_icon"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:layout_marginTop="3dp"
+        android:layout_marginBottom="3dp"
+        android:padding="4dp"
+        android:importantForAccessibility="no"
+        android:tint="@color/neutral_500" />
+
+    <LinearLayout
+        android:layout_width="180dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/room_mode"
+            style="@style/Launcher.FieldLabel"
+            android:layout_marginBottom="0dp"
+            android:ellipsize="end"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/room_code"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/neutral_400"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            style="@style/Launcher.FieldLabel"
+            android:layout_marginBottom="0dp"
+            android:text="@string/rooms_time_online" />
+
+        <TextView
+            android:id="@+id/room_age"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/neutral_400"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/room_count"
+        style="@style/Launcher.StateBox"
+        android:layout_marginEnd="10dp"
+        android:background="@drawable/bg_state_box_dark"
+        android:drawableStart="@drawable/ic_user_couple"
+        android:textColor="@color/neutral_200" />
+</org.wiicompiled.quest.launcher.TapRow>

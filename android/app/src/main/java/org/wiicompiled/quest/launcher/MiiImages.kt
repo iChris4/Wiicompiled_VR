@@ -29,6 +29,10 @@ object MiiImages {
     private val previewGeneration = AtomicLong()
     /** Changes with [clear]: a picture drawn before is shown but not kept. */
     private val cacheGeneration = AtomicInteger()
+    private val viewer = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "MiiViewer").apply { isDaemon = true } }
+    private val viewGeneration = AtomicLong()
+    /** The newest View Mii picture shown; main thread only. */
+    private var viewShown = 0L
     private val main by lazy { Handler(Looper.getMainLooper()) }
 
     /**
@@ -99,6 +103,37 @@ object MiiImages {
                 MiiRenderer.render(resource, copy, size, bodies = MiiRenderResource.bodies(app))
             }
             main.post { if (previewGeneration.get() == generation) done(bitmap) }
+        }
+    }
+
+    /**
+     * The View Mii window's picture: the whole Mii turned as [pose], [size] pixels square, for
+     * [done] on the main thread (null when it cannot be drawn). Requests overtaken by newer ones
+     * are skipped and nothing is kept, so dragging the Mii round costs one render at a time.
+     */
+    fun view(context: Context, mii: Mii, size: Int, pose: MiiRenderer.Pose, done: (Bitmap?) -> Unit) {
+        val app = context.applicationContext
+        val generation = viewGeneration.incrementAndGet()
+        val copy = mii.copy()
+        viewer.execute {
+            if (viewGeneration.get() != generation) return@execute
+            val bitmap = try {
+                MiiRenderResource.load(app)?.let { resource ->
+                    val pixels = MiiRenderer.render(resource, copy, size, pose, MiiRenderResource.bodies(app), fullBody = true)
+                    Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot draw a Mii picture", e)
+                null
+            }
+            main.post {
+                // Each picture is newer than the one before it: a render still running when the
+                // drag moved on is shown on the way.
+                if (generation > viewShown) {
+                    viewShown = generation
+                    done(bitmap)
+                }
+            }
         }
     }
 
