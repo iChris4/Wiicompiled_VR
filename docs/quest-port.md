@@ -151,6 +151,30 @@ Changing the level is live. The launch decides whether the device has density
 maps at all, because every pipeline carries the flag and Dawn's pipeline cache
 keys on it: the first launch with foveation on recompiles every pipeline once.
 
+Measured on the Quest 3 on 2026-09-24. The game was launched with `foveation = "medium"` and
+`debug.wiicompiled.fpslog 1`, then taken by injected presses to Luigi Circuit's Grand Prix
+start, first-person cockpit, player idle. Settings were set through
+`debug.wiicompiled.eye_passes` and `debug.wiicompiled.foveation`, interleaved in 11 s windows
+over three or four rounds. Each 5 s `GPU ms/frame` line was assigned to the setting active for
+all of it, using the runtime's own switch log lines. The GPU stayed at clock level 3 (492 MHz)
+at 0.8, and 492 to 525 MHz at 1.3, the unfoveated windows running at the higher clocks.
+
+- `render_scale` 0.8 (1344x1408): eyes 5.82 ms with one render pass per recorded pass
+  (the race's 4 EFB passes), 5.11 ms merged into one (-12%). Low, Medium and High gave 5.09,
+  5.36 and 5.11 ms: no change beyond the spread between windows (up to ±0.4 ms). Compositor app GPU
+  time went from 8.31 to 7.66 ms with the merge, and the headset held 60 FPS throughout.
+- `render_scale` 1.3 (2184x2288): 6.32 ms split, 5.81 ms merged (-8%); Low, Medium and High
+  gave 5.33, 5.00 and 4.56 ms (-8, -14 and -22%), each window within ±0.2 ms of its
+  setting's mean. The compositor showed about 35 FPS at every setting: that scale is too heavy
+  for other reasons, the copies of such large eyes among them.
+- A compositor screenshot (`TAKE_SCREENSHOT`, headset still on a desk) at High shows 4x4 pixel
+  blocks on the kart body at the bottom of the view, and smooth shading with foveation off.
+
+So at the default render scale an eye's time is mostly geometry and full-resolution tile stores,
+which a density map does not reduce (the stores stay full size for non-subsampled images).
+Foveation stays off by default; it pays when `render_scale` is raised. Heavy Retro Rewind tracks
+such as SNES Ghost Valley 2 were not measured.
+
 ### Controllers
 
 Quest Touch controllers are not HID gamepads, so `openxr_input.cpp` syncs an
@@ -1062,8 +1086,8 @@ or `EndAccess` errors); a black mirror too points at Aurora itself.
   (about half a minute); later runs load Dawn's pipeline cache from `Cache/`
   next to `DATA`. `render_scale` defaults to 0.8 here (1.0 on
   PC); lower it further if the compositor reports missed frames.
-  Foveated rendering (above) is off by default until its device measurements
-  pick a level.
+  Foveated rendering (above) is off by default: at `render_scale` 0.8 it saves
+  nothing measurable, above that 8 to 22% of the eyes' GPU time.
 - **Lifecycle.** Backgrounding (the Quest menu, guardian) pauses the session
   through the ordinary `STOPPING`/`READY` events; SDL's Android surface loss is
   handled by Aurora's existing Android paths. Neither has been exercised.

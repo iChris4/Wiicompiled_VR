@@ -657,6 +657,21 @@ enabled" at startup, one "eye foveation" line per eye and level with the map's s
 replay plan" lines. `debug.wiicompiled.foveation <0-3>` overrides the level for A/B timing, and
 `debug.wiicompiled.fdm 0` launches without density maps at all (`docs/quest-port.md`).
 
+What it saves depends on how much of an eye's cost is shading pixels. The numbers below are from a
+Quest 3 at Luigi Circuit's Grand Prix start: GPU time of both eyes per frame, all settings
+interleaved within one session (`docs/quest-port.md` has the method).
+
+| `render_scale` (eye size) | One pass per recorded pass | `single_pass_eyes` | `low` | `medium` | `high` |
+| --- | --- | --- | --- | --- | --- |
+| 0.8 (1344x1408) | 5.82 ms | 5.11 ms | 5.09 ms | 5.36 ms | 5.11 ms |
+| 1.3 (2184x2288) | 6.32 ms | 5.81 ms | 5.33 ms | 5.00 ms | 4.56 ms |
+
+At the Quest's default 0.8 an eye's time goes mostly to geometry and to storing its tiles at full
+resolution. The Wii's shading is cheap, so foveation saves nothing measurable there, although the
+density map verifiably applies (4x4 blocks at the view's edges on High). That is why it defaults to
+`off`. At higher render scales it takes 8 to 22% off the eyes, which is where it earns its keep,
+bought with a softer periphery.
+
 ## Diagnostics
 
 **F10 > Diagnostics** holds two bug-report aids.
