@@ -15,7 +15,8 @@
         android:layout_height="100dp"
         android:background="@drawable/bg_mii_tile"
         android:clipToOutline="true"
-        android:duplicateParentState="true">
+        android:duplicateParentState="true"
+        android:foreground="@drawable/fg_mii_tile">
 
         <ImageView
             android:id="@+id/mii_placeholder"
@@ -36,8 +37,8 @@
             android:tint="@color/neutral_500"
             android:visibility="gone" />
 
-        <!-- Wider than the tile and raised, the shoulders on its bottom edge: WheelWizard's
-             ImageOnlyMargin (-4,-9,-4,0) on its 90-pixel tile. -->
+        <!-- Wider than the tile and raised, the shoulders on its bottom edge under the border (the
+             tile's foreground): WheelWizard's ImageOnlyMargin (-4,-9,-4,0) on its 90-pixel tile. -->
         <ImageView
             android:id="@+id/mii_picture"
             android:layout_width="109dp"
