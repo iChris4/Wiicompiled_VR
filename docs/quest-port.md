@@ -89,13 +89,67 @@ marker, a lost device above all, ends the session. Three hundred skipped copies
 in a row end it too.
 
 The cost is one extra GPU copy per eye per frame, a few hundred microseconds
-at Quest eye resolutions; the benefit is that stock Dawn is used unchanged
-and the OpenXR device outlives Aurora's, which is exactly the failure DolphinXR
-hit on Vulkan when a game's device was destroyed under the compositor.
+at Quest eye resolutions; the benefit is that the bridge needs nothing from
+Dawn beyond its public API, and the OpenXR device outlives Aurora's, which is
+exactly the failure DolphinXR hit on Vulkan when a game's device was destroyed
+under the compositor. (The Quest's Dawn carries Aurora's patches for foveated
+rendering only; see below.)
 
 `gpu.cpp` steers Aurora to an RGBA8 surface format under `xrInterop` on Android
 (there is no BGRA `AHardwareBuffer` format) and requests the two Dawn features
 the bridge needs.
+
+### Foveated rendering
+
+`[vr] foveation` (`OPENXR.md`, Foveated rendering) shades the edges of the
+immersive eyes more coarsely under a `VK_EXT_fragment_density_map`. The Quest 3
+(Adreno 740, Vulkan 1.3) exposes it with non-subsampled attachments, as well as
+dynamic rendering, `VK_EXT_fragment_density_map2`,
+`VK_QCOM_fragment_density_map_offset` and `VK_KHR_fragment_shading_rate`
+(`adb shell cmd gpu vkjson`).
+
+`XR_FB_foveation` cannot be used: its maps only shape render passes that draw
+into the runtime's swapchain images on the runtime's device, and the eyes reach
+that device through the copy above. The map has to be attached to Dawn's own eye
+passes, which the stock package cannot do. So `Build-Quest.ps1` first runs
+`android/Build-QuestDawn.ps1`, which builds the pinned Dawn revision
+(`13abc3bc`, the stock package's) with `aurora-main/patches/dawn`, then links it
+instead of the stock package:
+
+- The patch (`aurora_fdm.inc`, applied by `apply.py`) adds the extension to
+  Dawn's Vulkan backend and enables it only when Aurora asks before creating
+  the device, and only for dynamic rendering. It then flags every render
+  pipeline for density-mapped passes, and chains a density map into any render
+  pass whose first color attachment is a texture view bound to one. Maps are raw
+  `VkImage`s uploaded once through Dawn's queue. They are read on the CPU when a
+  render pass is recorded, so a map is used only after its upload has completed.
+  Its C ABI is `aurora-main/include/aurora/dawn_fdm_abi.h`.
+- The build mirrors the dawn-build CI's Android configuration (NDK
+  `29.0.14206865`, `android-28`, static monolithic library, samples, tests and
+  tools off, `llvm-strip --strip-debug`). It also sets `DAWN_BUILD_PROTOBUF=OFF`:
+  the stock CI hands the build a host `protoc`, and without one the build tried
+  to run the `protoc` it had cross-compiled for Android.
+- The package lands in `.scratch/quest-dawn/package` with an `aurora-dawn.json`
+  recording the revision, the patch files' hash, the NDK and the flags. A later
+  run with the same inputs reuses it and takes no time. That matters: the game
+  kit fingerprints the Dawn archive, so a rebuilt one would make every player
+  rebuild their game. The first build compiles all of Dawn and Tint and takes a
+  while; a patch change re-extracts `src/` and rebuilds Dawn's own sources
+  only, keeping the fetched `third_party/`.
+- `AuroraDawnProvider.cmake` reads that manifest. Only when `AuroraFdmAbi` is
+  present does `aurora_core` compile against the ABI (`AURORA_DAWN_FDM`), so
+  `Build-Quest.ps1 -StockDawn` still builds, with foveation unavailable.
+
+Aurora (`lib/webgpu/fdm.cpp`, `lib/gfx/foveation.hpp`) builds one map per eye,
+32 pixels per texel (42x44 for 1344x1408 eyes). The map is centred on that eye's
+forward direction and rebuilt when the eye's size, field of view or level
+changes. It is bound to a second view of the eye texture that only a
+single-render-pass immersive eye renders through (`single_pass_eyes`). Density
+bytes are 255, 127 and 63: a fragment covers 1/density pixels rounded down to a
+supported size, so a half written as 128 could round back to one pixel.
+Changing the level is live. The launch decides whether the device has density
+maps at all, because every pipeline carries the flag and Dawn's pipeline cache
+keys on it: the first launch with foveation on recompiles every pipeline once.
 
 ### Controllers
 
@@ -642,6 +696,9 @@ Android facts this design rests on, all measured on a Quest 3:
   android-aarch64 package (digest pinned in `AuroraDawnProvider.cmake`, which
   also rewrites the package's absolute `liblog.so` path and looks the package
   up with `NO_CMAKE_FIND_ROOT_PATH` so the NDK sysroot rule does not hide it),
+  or, as `Build-Quest.ps1` passes it (`-PmkwQuestDawnDir`, turned into
+  `FETCHCONTENT_SOURCE_DIR_DAWN_PREBUILT` by `android/app/src/main/cpp/CMakeLists.txt`),
+  the same revision built with Aurora's patches (Foveated rendering, above),
   SDL3 built shared (or `-DAURORA_SDL3_PROVIDER=system` for the AAR prefab),
   tests off, products built as `libmain.so` / `libmain_retro_rewind.so`,
   `-mcpu=cortex-a77` (Quest 2's XR2 Gen 1; Quest 3/Pro are supersets).
@@ -683,7 +740,7 @@ installer's `BuildWorkspace/generated`, produced by the normal Windows pipeline)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File android/Prepare-QuestDependencies.ps1        # SDL3 3.4.4 AAR into android/app/libs
-powershell -ExecutionPolicy Bypass -File android/Build-Quest.ps1 -Install             # the app, its game kit and toolchain, debug-signed
+powershell -ExecutionPolicy Bypass -File android/Build-Quest.ps1 -Install             # the app, its game kit and toolchain, debug-signed (the first run also builds Dawn from source)
 powershell -ExecutionPolicy Bypass -File android/Build-QuestGame.ps1 -Install         # your game, against that kit, into Import (or WheelWizard VR's Build for Quest)
 powershell -ExecutionPolicy Bypass -File android/Build-QuestGame.ps1 -Product retro_rewind -Mod <RetroRewind6> -Install  # the mod and its pack (needs translate-mod output with --retro-wfc-payload)
 adb push MarioKart.iso /sdcard/Download/                                               # then Select disc image in the launcher
@@ -810,6 +867,8 @@ the app:
 | `debug.wiicompiled.validation 1` | Keeps WebGPU validation and robustness on in release builds |
 | `debug.wiicompiled.panel_layer 0` | Draws the headset settings panel into the eye images instead of on its own quad layer (`OPENXR.md`, Settings in the headset); read about once a second, so it can be switched while the panel is open |
 | `debug.wiicompiled.eye_passes 0` | Replays each eye in one render pass per recorded pass, as before `single_pass_eyes` (`OPENXR.md`); `1` forces the single pass and an empty value restores the setting. Read about once a second, for A/B timing inside one session |
+| `debug.wiicompiled.foveation <0-3>` | Overrides the foveation level (off, low, medium, high) within one session; an empty value restores the setting. Needs a session launched with foveation on. Read about once a second |
+| `debug.wiicompiled.fdm 0` | Launches without fragment density maps at all, whatever `foveation` says, which also drops their flag from every pipeline; `1` asks for them even with `foveation = "off"` |
 | `debug.wiicompiled.inject <n>:<button>` | Presses `a`, `b`, `x`, `y`, `start`, `up`, `down`, `left` or `right` for 12 XR frames each time `<n>` changes. As a Wii Remote, `x`/`y`/`start` are 1/2/+, the directions push the Nunchuk stick, and `home`, `c` and `z` also exist. `panel` presses the settings panel's button (left Y, or both thumbsticks as a gamepad), opening or closing it (see `OPENXR.md`) |
 | `debug.wiicompiled.fpslog 1` | Logs the game's rendered frame rate every 5 s, with per-frame averages of the producer's waits for the frame worker's DONE and SEALED phases and of the worker's seal, permit wait, prepare and encode stretches, and of the draw calls the recorded frame holds and the primitives that merged into them (an overlay that stops draws merging shows up there first). A third line reports the GX thread's command ring (records, waits, busy share). A second line gives the GPU time per frame from timestamp queries on every pass (`mono` native render, `eyeL`/`eyeR` replays, `screen`, `panel`, `efbcopy`, `palette`, `peek`, plus `passes-span` from the first pass begin to the last pass end and `between-passes` for copies and idle gaps). The compositor's `VrApi` log line gives headset FPS, `GPU%`, `CPU%`, clock levels and app GPU time (`App=`) |
 
@@ -1003,7 +1062,8 @@ or `EndAccess` errors); a black mirror too points at Aurora itself.
   (about half a minute); later runs load Dawn's pipeline cache from `Cache/`
   next to `DATA`. `render_scale` defaults to 0.8 here (1.0 on
   PC); lower it further if the compositor reports missed frames.
-  `XR_FB_foveation` is not used yet.
+  Foveated rendering (above) is off by default until its device measurements
+  pick a level.
 - **Lifecycle.** Backgrounding (the Quest menu, guardian) pauses the session
   through the ordinary `STOPPING`/`READY` events; SDL's Android surface loss is
   handled by Aurora's existing Android paths. Neither has been exercised.

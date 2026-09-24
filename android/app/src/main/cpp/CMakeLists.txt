@@ -36,6 +36,18 @@ if(DEFINED MKW_DEPENDENCIES_DIR AND IS_DIRECTORY "${MKW_DEPENDENCIES_DIR}")
     endforeach()
 endif()
 
+# The Dawn package android/Build-QuestDawn.ps1 built with Aurora's patches (fragment density maps for
+# foveated rendering) stands in for the stock prebuilt one. The override lives in this build
+# directory's cache, so a build without the package clears it rather than keep the last one.
+if(DEFINED MKW_QUEST_DAWN_PACKAGE_DIR AND NOT MKW_QUEST_DAWN_PACKAGE_DIR STREQUAL "")
+    if(NOT EXISTS "${MKW_QUEST_DAWN_PACKAGE_DIR}/aurora-dawn.json")
+        message(FATAL_ERROR "No patched Dawn package at ${MKW_QUEST_DAWN_PACKAGE_DIR}; run android/Build-QuestDawn.ps1")
+    endif()
+    set(FETCHCONTENT_SOURCE_DIR_DAWN_PREBUILT "${MKW_QUEST_DAWN_PACKAGE_DIR}" CACHE PATH "" FORCE)
+else()
+    unset(FETCHCONTENT_SOURCE_DIR_DAWN_PREBUILT CACHE)
+endif()
+
 find_package(SDL3 REQUIRED CONFIG)
 set(AURORA_SDL3_PROVIDER system CACHE STRING "" FORCE)
 set(AURORA_SDL3_LINKAGE shared CACHE STRING "" FORCE)

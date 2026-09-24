@@ -177,6 +177,11 @@ its CPU and GPU domains: `boost`, `sustained_high`, `sustained_low`, `power_savi
 request (see `docs/quest-port.md`); desktop runtimes rarely offer the extension, and the setting
 then does nothing. It is read at launch, and the session log records whether the runtime accepted
 it and any later performance notification (a thermal or rendering warning).
+`foveation` (Quest only, default `off`) shades the edges of the immersive race view more coarsely:
+`off`, `low`, `medium` or `high`, see [Foveated rendering](#foveated-rendering). A session launched
+with it off runs without fragment density maps, so going from `off` to a level takes a restart;
+between levels, and back to `off`, it is live from the headset panel's VR tab. The launcher's
+Settings page has it too.
 
 ## Controllers
 
@@ -613,6 +618,44 @@ layer, and any draw whose matrix is not actually affine. Retained one-shot EFB b
 Kart Wii's minimap are treated as game art and remain eligible for the screen. A reprojected 2D draw
 uses the full eye viewport and scissor because its recorded rectangle no longer describes where it
 ended up; its original viewport is folded into the projection instead.
+
+## Foveated rendering
+
+On the Quest, `foveation` shades the edges of the immersive race view in 2x2, then 4x4 pixel
+blocks, where the headset's lenses blur the picture anyway, and gives the GPU time back for a
+higher `render_scale` or a steadier frame rate. Each eye's render pass runs under a fragment
+density map (`VK_EXT_fragment_density_map`, attached through dynamic rendering). The map is centred
+on that eye's forward direction, which the asymmetric frustum places off the image centre, towards
+the nose. Its rings are angles from that direction (`aurora-main/lib/gfx/foveation.hpp`):
+
+| Level | Full rate | Half (2x2) | Quarter (4x4) |
+| --- | --- | --- | --- |
+| `low` | within 30° | beyond | never |
+| `medium` | within 25° | 25° to 40° | beyond 40° |
+| `high` | within 18° | 18° to 34° | beyond 34° |
+
+The HUD is drawn in the same render pass as the world and is foveated with it. `low` and `medium`
+keep the default HUD screen (2.4 m wide at 2 m) at half rate or better while you look straight
+ahead; `high` coarsens its corners. Menus and every other virtual screen, the settings panel, and
+anything drawn outside an immersive race are never foveated.
+
+`XR_FB_foveation`, the extension DolphinXR uses by default, cannot help here. The runtime's density
+maps only shape render passes that draw into its swapchain images, and on the Quest Dawn draws each
+eye on its own device and hands it to the OpenXR device, which copies it into the swapchain. So the
+map has to go into Dawn's own eye passes. The stock Dawn package has no such feature, so the Quest
+build links a Dawn built with Aurora's patches (`aurora-main/patches/dawn`, built by
+`android/Build-QuestDawn.ps1`, see `docs/quest-port.md`). The patch enables the extension only when
+Aurora asks for it at device creation, and every render pipeline then carries the density-map
+pipeline flag. That is why the launch decides.
+
+A density map forces Adreno into binned rendering, where every extra render pass in an eye stores
+and reloads the whole eye. DolphinXR measured foveation as a net loss on Mario Kart Wii for exactly
+that reason (its bloom chain splits the frame about 20 times). An eye is therefore foveated only
+when it is drawn in a single render pass (`single_pass_eyes`); an eye that a partial clear still
+splits is drawn at full rate. The session log reports what happened: "Fragment density maps:
+enabled" at startup, one "eye foveation" line per eye and level with the map's size, and the "Eye
+replay plan" lines. `debug.wiicompiled.foveation <0-3>` overrides the level for A/B timing, and
+`debug.wiicompiled.fdm 0` launches without density maps at all (`docs/quest-port.md`).
 
 ## Diagnostics
 

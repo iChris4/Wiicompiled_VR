@@ -3,6 +3,7 @@
 #ifdef AURORA_ENABLE_GX
 #include "gfx/common.hpp"
 #include "gfx/efb_ram_copy.hpp"
+#include "gfx/foveation.hpp"
 #include "gfx/stereo_replay.hpp"
 #include "gx/fifo.hpp"
 #include "gx/shader_info.hpp"
@@ -11,6 +12,7 @@
 #include "stereo_mirror.hpp"
 #include "stereo_interpolation.hpp"
 #include "stereo_overlay.hpp"
+#include "webgpu/fdm.hpp"
 #include "webgpu/gpu.hpp"
 #include <webgpu/webgpu_cpp.h>
 #endif
@@ -612,11 +614,26 @@ struct StereoEyeTarget {
   // Built on demand for the desktop mirror only, and dropped with the rest of
   // the target when ensure_stereo_eye_target replaces the textures.
   wgpu::BindGroup copyBindGroup;
+  // Foveated rendering: a second view of `color` for the immersive eye passes,
+  // which the patched Dawn binds to this eye's fragment density map
+  // (webgpu/fdm.hpp), and what that map was built for.
+  wgpu::TextureView foveatedView;
+  uint64_t densityMap = 0;
+  std::array<int32_t, 7> densityKey{};
 
   const webgpu::TextureWithSampler& output() const noexcept { return resolvedColor.texture ? resolvedColor : color; }
 };
 std::array<StereoEyeTarget, AURORA_STEREO_EYE_COUNT> g_stereoEyeTargets;
 stereo::MirrorState g_stereoMirrorState;
+
+// The map's binding holds the foveated view, and with it the eye texture, until it is released.
+void release_eye_density_map(StereoEyeTarget& target) noexcept {
+  if (target.densityMap != 0) {
+    webgpu::fdm::release_map(target.densityMap);
+    target.densityMap = 0;
+  }
+  target.densityKey = {};
+}
 
 // The eye targets outlive a frame, so the mirror samples them through a bind
 // group cached beside them rather than one built per presentation slot.
@@ -637,6 +654,7 @@ void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height
     return;
   }
 
+  release_eye_density_map(target);
   target = {};
   target.color = webgpu::create_render_texture(width, height, samples > 1);
   if (samples > 1) {
@@ -663,6 +681,56 @@ void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height
   target.samples = samples;
   target.colorFormat = target.color.format;
   target.depthFormat = target.depth.format;
+}
+
+// The view an immersive eye's passes render through while foveated, or none. The eye's fragment
+// density map is rebuilt whenever its size, field of view or level changes (a map is immutable), and
+// is used once its upload has completed.
+wgpu::TextureView foveated_eye_view(uint32_t eyeIndex, const AuroraStereoEye& input) {
+  auto& target = g_stereoEyeTargets[eyeIndex];
+  const auto level = static_cast<gfx::foveation::Level>(gfx::get_stereo_foveation());
+  if (level == gfx::foveation::Level::Off || target.samples > 1 || !webgpu::fdm::available()) {
+    return {};
+  }
+  const auto fov = gfx::foveation::fov_from_projection(input.projection);
+  // Hundredths of a tangent: finer than a map texel, coarse enough to ignore pose noise.
+  const auto hundredths = [](float value) { return static_cast<int32_t>(std::lround(value * 100.0f)); };
+  const std::array<int32_t, 7> key{static_cast<int32_t>(target.color.size.width),
+                                   static_cast<int32_t>(target.color.size.height),
+                                   static_cast<int32_t>(level),
+                                   hundredths(fov.tanLeft),
+                                   hundredths(fov.tanRight),
+                                   hundredths(fov.tanDown),
+                                   hundredths(fov.tanUp)};
+  if (key != target.densityKey) {
+    release_eye_density_map(target);
+    target.densityKey = key;
+    if (!target.foveatedView) {
+      const wgpu::TextureViewDescriptor descriptor{
+          .label = eyeIndex == 0 ? "Foveated left eye" : "Foveated right eye",
+          .usage = wgpu::TextureUsage::RenderAttachment,
+      };
+      target.foveatedView = target.color.texture.CreateView(&descriptor);
+    }
+    gfx::foveation::Map map;
+    gfx::foveation::build(target.color.size.width, target.color.size.height, webgpu::fdm::texel_size(), fov, level,
+                          map);
+    target.densityMap = webgpu::fdm::create_map(map.width, map.height, map.rg8.data());
+    if (target.densityMap != 0 && !webgpu::fdm::bind(target.foveatedView, target.densityMap)) {
+      webgpu::fdm::release_map(target.densityMap);
+      target.densityMap = 0;
+    }
+    static constexpr std::array<const char*, gfx::foveation::kLevelCount> kLevelNames{"off", "low", "medium", "high"};
+    if (target.densityMap != 0) {
+      Log.info("{} eye foveation {}: {}x{} density map, {} pixels per texel", eyeIndex == 0 ? "Left" : "Right",
+               kLevelNames[static_cast<uint32_t>(level)], map.width, map.height, webgpu::fdm::texel_size());
+    } else {
+      Log.warn("{} eye foveation {}: the {}x{} density map could not be created", eyeIndex == 0 ? "Left" : "Right",
+               kLevelNames[static_cast<uint32_t>(level)], map.width, map.height);
+    }
+  }
+  return target.densityMap != 0 && webgpu::fdm::map_ready(target.densityMap) ? target.foveatedView
+                                                                             : wgpu::TextureView{};
 }
 
 std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame, uint64_t contentTag) noexcept {
@@ -772,6 +840,9 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, 
         .msaaSamples = webgpu::g_graphicsConfig.msaaSamples,
         .depthFormat = owned.depth.format,
     };
+    if (input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY) {
+      view.target.foveatedColorView = foveated_eye_view(eye, input.eyes[eye]);
+    }
     std::memcpy(&view.projection, input.eyes[eye].projection, sizeof(view.projection));
     std::memcpy(&view.viewFromCenter, input.eyes[eye].viewFromCenter, sizeof(view.viewFromCenter));
     if (unitRatio != 1.f) {
@@ -1702,6 +1773,9 @@ void shutdown() noexcept {
   stop_frame_worker();
 #ifdef AURORA_ENABLE_GX
   stop_presenter();
+  for (auto& target : g_stereoEyeTargets) {
+    release_eye_density_map(target);
+  }
   g_stereoEyeTargets = {};
   g_stereoMirrorState.Reset();
   g_presentationImagePools = {};
@@ -2859,6 +2933,11 @@ void aurora_set_stereo_skip_copy_clears(bool enabled) { aurora::gfx::set_stereo_
 bool aurora_get_stereo_skip_copy_clears() { return aurora::gfx::get_stereo_skip_copy_clears(); }
 void aurora_set_stereo_single_pass_eyes(bool enabled) { aurora::gfx::set_stereo_single_pass_eyes(enabled); }
 bool aurora_get_stereo_single_pass_eyes() { return aurora::gfx::get_stereo_single_pass_eyes(); }
+void aurora_set_stereo_foveation(uint32_t level) {
+  aurora::gfx::set_stereo_foveation(std::min(level, aurora::gfx::foveation::kLevelCount - 1));
+}
+uint32_t aurora_get_stereo_foveation() { return aurora::gfx::get_stereo_foveation(); }
+bool aurora_stereo_foveation_available() { return aurora::webgpu::fdm::available(); }
 void aurora_set_stereo_hud_screen(bool enabled, float width, float distance) {
   aurora::gfx::set_stereo_hud_screen(enabled, width, distance);
 }

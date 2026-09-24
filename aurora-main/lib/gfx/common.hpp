@@ -284,6 +284,10 @@ bool resume_frame();
 void abort_frame() noexcept;
 struct ReplayTarget {
   wgpu::TextureView colorView;
+  // A view of the same texture that a fragment density map is bound to (webgpu/fdm.hpp), set when
+  // this frame's eyes are foveated. Only an eye drawn in a single render pass renders through it: a
+  // later render pass would load the eye back under the density map.
+  wgpu::TextureView foveatedColorView;
   wgpu::TextureView resolveView;
   wgpu::TextureView depthView;
   wgpu::Texture copySourceTexture;
@@ -409,6 +413,10 @@ bool get_stereo_skip_copy_clears() noexcept;
 // default and live, like the two above.
 void set_stereo_single_pass_eyes(bool value) noexcept;
 bool get_stereo_single_pass_eyes() noexcept;
+// Foveated rendering level for the immersive eyes (gfx/foveation.hpp Level). Live: the next frame's
+// eyes use it, provided the device has fragment density maps.
+void set_stereo_foveation(uint32_t level) noexcept;
+uint32_t get_stereo_foveation() noexcept;
 
 // Places orthographic draws on a fixed virtual screen during immersive replay.
 // `width` and `distance` are in game world units; the screen's height follows

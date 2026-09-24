@@ -12,6 +12,9 @@ val mkwGeneratedDir = providers.gradleProperty("mkwGeneratedDir").orNull
 // Optional: a directory of already-fetched dependency sources (the installer's
 // BuildWorkspace/Dependencies) so the native configure does not download them.
 val mkwDependenciesDir = providers.gradleProperty("mkwDependenciesDir").orNull
+// Optional: the Dawn package android/Build-QuestDawn.ps1 built with Aurora's patches (fragment density
+// maps for foveated rendering). Without it the stock prebuilt Dawn is used and foveation is off.
+val mkwQuestDawnDir = providers.gradleProperty("mkwQuestDawnDir").orNull
 // Optional: a directory holding a second SDL3 AAR/prefab is not needed; the
 // AAR in app/libs is produced by Prepare-QuestDependencies.ps1.
 val mkwRepoRoot = rootProject.file("..").canonicalFile
@@ -135,6 +138,9 @@ android {
                 if (mkwDependenciesDir != null) {
                     arguments += "-DMKW_DEPENDENCIES_DIR=${File(mkwDependenciesDir).canonicalPath.replace('\\', '/')}"
                 }
+                // Always passed, empty when absent, so the native build drops a previous override.
+                arguments += "-DMKW_QUEST_DAWN_PACKAGE_DIR=" +
+                    (mkwQuestDawnDir?.let { File(it).canonicalPath.replace('\\', '/') } ?: "")
             }
         }
     }

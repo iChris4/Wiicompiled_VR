@@ -87,6 +87,7 @@ struct RuntimeUserConfig {
     std::optional<float> vrWheelTrackingGrace;
     std::optional<bool> vrWheelHaptics;
     std::optional<std::string> vrPerformanceLevel;
+    std::optional<std::string> vrFoveation;
     std::optional<std::string> vrRecenterKey;
     std::optional<float> vrLeanBackDegrees;
     // F10 > Diagnostics: OpenXR pacing and presentation logging in console.log.
@@ -246,6 +247,24 @@ inline constexpr const char* kVrPerformanceLevelDefault = "boost";
 inline bool IsSupportedVrPerformanceLevel(std::string_view value) {
     return value == "default" || value == "power_savings" || value == "sustained_low" ||
            value == "sustained_high" || value == "boost";
+}
+// Fixed foveated rendering of the immersive eyes on the Quest, in the order of
+// aurora_set_stereo_foveation's levels: the periphery is shaded in 2x2, then
+// 4x4 pixel blocks, the higher the level the closer to the centre. Whether the
+// GPU device gets fragment density maps at all is decided at launch, so going
+// from "off" to a level takes a restart; between levels and back to "off" it is
+// live.
+inline constexpr const char* kVrFoveationDefault = "off";
+inline constexpr std::array<std::string_view, 4> kVrFoveationLevels{"off", "low", "medium", "high"};
+
+inline bool IsSupportedVrFoveation(std::string_view value) {
+    return std::find(kVrFoveationLevels.begin(), kVrFoveationLevels.end(), value) != kVrFoveationLevels.end();
+}
+
+// The level aurora_set_stereo_foveation takes; anything unknown is off.
+inline uint32_t VrFoveationLevelIndex(std::string_view value) {
+    const auto it = std::find(kVrFoveationLevels.begin(), kVrFoveationLevels.end(), value);
+    return it == kVrFoveationLevels.end() ? 0u : static_cast<uint32_t>(it - kVrFoveationLevels.begin());
 }
 // What the desktop window shows while the headset is running: "normal" leaves
 // the ordinary desktop view alone, "both", "left" and "right" mirror the
@@ -801,6 +820,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         value && IsSupportedVrPerformanceLevel(*value)) {
         config.vrPerformanceLevel = *value;
     }
+    if (auto value = FindConfigValue<std::string>(document, "vr", "foveation");
+        value && IsSupportedVrFoveation(*value)) {
+        config.vrFoveation = *value;
+    }
     if (auto value = FindConfigValue<std::string>(document, "vr", "mirror_view");
         value && IsSupportedVrMirrorView(*value)) {
         config.vrMirrorView = *value;
@@ -1187,6 +1210,14 @@ inline bool SetVrPerformanceLevel(std::string value) {
     }
     Mutable().vrPerformanceLevel = value;
     return WriteSetting("vr", "performance_level", FormatString(value));
+}
+
+inline bool SetVrFoveation(std::string value) {
+    if (!IsSupportedVrFoveation(value)) {
+        return false;
+    }
+    Mutable().vrFoveation = value;
+    return WriteSetting("vr", "foveation", FormatString(value));
 }
 
 inline bool SetVrFirstPersonSeat(std::string value) {
@@ -1639,6 +1670,11 @@ inline std::string VrFirstPersonRotation(std::string fallback = kVrFirstPersonRo
 inline std::string VrPerformanceLevel(std::string fallback = kVrPerformanceLevelDefault) {
     const auto& value = Get().vrPerformanceLevel;
     return value && IsSupportedVrPerformanceLevel(*value) ? *value : std::move(fallback);
+}
+
+inline std::string VrFoveation(std::string fallback = kVrFoveationDefault) {
+    const auto& value = Get().vrFoveation;
+    return value && IsSupportedVrFoveation(*value) ? *value : std::move(fallback);
 }
 
 inline int32_t VrFirstPersonHiddenModel(int32_t fallback = kVrFirstPersonHiddenModelDefault) {

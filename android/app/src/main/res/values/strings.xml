@@ -543,6 +543,12 @@
     <string name="vr_performance_level_sustained_low">Sustained low</string>
     <string name="vr_performance_level_power_savings">Power savings</string>
     <string name="vr_performance_level_default">Headset default</string>
+    <string name="vr_foveation">Foveated rendering</string>
+    <string name="vr_foveation_helper">Shades the edges of the race view in coarser blocks, where the lenses blur the picture anyway, to free GPU time for a higher render scale or a steadier frame rate. Higher levels start closer to the centre; High also coarsens the corners of the HUD. Menus are never foveated.</string>
+    <string name="vr_foveation_off">Off</string>
+    <string name="vr_foveation_low">Low</string>
+    <string name="vr_foveation_medium">Medium</string>
+    <string name="vr_foveation_high">High</string>
     <string name="vr_interpolation">VR frame interpolation</string>
     <string name="vr_interpolation_helper">Experimental. Renders extra frames between game frames at the headset\'s rate. Needs GPU headroom and adds one game frame of latency.</string>
     <string name="vr_interpolation_off">Off</string>

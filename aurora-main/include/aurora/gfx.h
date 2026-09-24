@@ -107,6 +107,18 @@ bool aurora_get_stereo_skip_copy_clears();
 void aurora_set_stereo_single_pass_eyes(bool enabled);
 bool aurora_get_stereo_single_pass_eyes();
 
+// Fixed foveated rendering of the immersive eyes: 0 off, 1 low, 2 medium, 3
+// high. Each eye's render pass runs under a fragment density map that shades
+// the periphery in 2x2, then 4x4 pixel blocks, the higher the level the closer
+// to the centre. Only an eye drawn in a single render pass (single_pass_eyes)
+// is foveated; menus on the virtual screen never are. Live, but it needs a
+// device created with AuroraConfig::xrFragmentDensityMap and a Dawn built with
+// Aurora's patches (the Quest build); aurora_stereo_foveation_available says
+// whether this session has both.
+void aurora_set_stereo_foveation(uint32_t level);
+uint32_t aurora_get_stereo_foveation();
+bool aurora_stereo_foveation_available();
+
 // Places orthographic GX draws (menus, HUD, 2D overlays) on a fixed virtual
 // screen during immersive replay instead of stretching them across the whole
 // eye viewport. The screen hangs `distance` world units straight ahead of the

@@ -56,6 +56,7 @@ if (AURORA_ENABLE_GX)
     stereo_interpolation_test.cpp
     stereo_mirror_test.cpp
     eye_pass_plan_test.cpp
+    foveation_test.cpp
     native_wheel_test.cpp
     cockpit_geometry_test.cpp
     texture_bind_group_cache_key_test.cpp

@@ -45,6 +45,12 @@ if (AURORA_ENABLE_GX)
     # integration links everywhere.
     target_sources(aurora_core PRIVATE lib/webgpu/vulkan_interop.cpp)
     target_link_libraries(aurora_core PRIVATE dawn::webgpu_dawn)
+    # Fragment density maps for foveated eye rendering, from a Dawn built with Aurora's patches; the
+    # value is the package's ABI version (include/aurora/dawn_fdm_abi.h).
+    target_sources(aurora_core PRIVATE lib/webgpu/fdm.cpp)
+    if (AURORA_DAWN_FDM_ABI)
+        target_compile_definitions(aurora_core PRIVATE AURORA_DAWN_FDM=${AURORA_DAWN_FDM_ABI})
+    endif ()
     if (DAWN_ENABLE_VULKAN)
         target_compile_definitions(aurora_core PRIVATE DAWN_ENABLE_BACKEND_VULKAN)
     endif ()

@@ -15,13 +15,19 @@
 # Prerequisites (see docs/quest-port.md): JDK 17, the Android SDK with NDK
 # 29.0.14206865 and CMake 3.22.1, and android/Prepare-QuestDependencies.ps1
 # having staged the SDL3 AAR.
+#
+# Dawn is built from source with Aurora's patches (android/Build-QuestDawn.ps1:
+# fragment density maps for foveated rendering) and cached under
+# .scratch/quest-dawn; the first build takes a while. -StockDawn links the
+# stock prebuilt package instead, which leaves foveated rendering unavailable.
 [CmdletBinding()]
 param(
     [string]$Generated = '',
     [string]$Dependencies = '',
     [string]$CMakeDir = '',
     [ValidateSet('debug', 'release')] [string]$Configuration = 'debug',
-    [switch]$Install
+    [switch]$Install,
+    [switch]$StockDawn
 )
 $ErrorActionPreference = 'Stop'
 
@@ -79,6 +85,11 @@ $gradleArgs = @(
     "-PmkwGeneratedDir=$Generated"
 )
 if ($Dependencies) { $gradleArgs += "-PmkwDependenciesDir=$Dependencies" }
+if (-not $StockDawn) {
+    $dawnWork = Join-Path $repo '.scratch\quest-dawn'
+    & (Join-Path $root 'Build-QuestDawn.ps1') -WorkDirectory $dawnWork
+    $gradleArgs += "-PmkwQuestDawnDir=$(Join-Path $dawnWork 'package')"
+}
 $gradleArgs += $task
 Write-Host "gradlew $($gradleArgs -join ' ')"
 & (Join-Path $root 'gradlew.bat') @gradleArgs

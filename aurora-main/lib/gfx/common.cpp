@@ -221,6 +221,8 @@ static std::atomic_bool g_stereoSkipCopyClears{true};
 // Replays each eye in as few render passes as its clears allow (eye_pass_plan.hpp) rather than one
 // per recorded pass. Same image, fewer tile loads and stores.
 static std::atomic_bool g_stereoSinglePassEyes{true};
+// foveation::Level of the immersive eyes.
+static std::atomic_uint32_t g_stereoFoveation{0};
 
 void set_stereo_stop_at_display_copy(bool value) noexcept {
   g_stereoStopAtDisplayCopy.store(value, std::memory_order_relaxed);
@@ -234,6 +236,10 @@ void set_stereo_single_pass_eyes(bool value) noexcept {
   g_stereoSinglePassEyes.store(value, std::memory_order_relaxed);
 }
 bool get_stereo_single_pass_eyes() noexcept { return g_stereoSinglePassEyes.load(std::memory_order_relaxed); }
+void set_stereo_foveation(uint32_t level) noexcept {
+  g_stereoFoveation.store(level, std::memory_order_relaxed);
+}
+uint32_t get_stereo_foveation() noexcept { return g_stereoFoveation.load(std::memory_order_relaxed); }
 
 // The fixed virtual screen orthographic draws are placed on during immersive
 // replay, in game world units. Written from the settings overlay and read by
@@ -1789,6 +1795,10 @@ static void render_eye_planned(std::vector<RenderPass>& renderPasses, wgpu::Comm
   const bool stereoStencil = target.depthFormat == wgpu::TextureFormat::Depth24PlusStencil8;
   const GpuTimingCategory timingCategory =
       invocation.stereoEye == 0 ? GpuTimingCategory::EyeLeft : GpuTimingCategory::EyeRight;
+  // Foveated only as a single render pass: loading a finished eye back under a density map costs a
+  // full tile load per split, which is what made foveation a net loss in DolphinXR.
+  const wgpu::TextureView& colorView =
+      target.foveatedColorView && plan.renderPasses == 1 ? target.foveatedColorView : target.colorView;
   wgpu::RenderPassEncoder pass;
   for (const auto& step : plan.steps) {
     const auto& passInfo = renderPasses[step.pass];
@@ -1797,7 +1807,7 @@ static void render_eye_planned(std::vector<RenderPass>& renderPasses, wgpu::Comm
         pass.End();
       }
       const wgpu::RenderPassColorAttachment colorAttachment{
-          .view = target.colorView,
+          .view = colorView,
           .resolveTarget = target.resolveView,
           .loadOp = step.clearColor ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
           .storeOp = wgpu::StoreOp::Store,

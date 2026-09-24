@@ -145,6 +145,11 @@ bool g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
 bool g_vrFlatScreen = RuntimeConfigFile::VrFlatScreen();
 #if defined(__ANDROID__)
 bool g_vrPassthrough = RuntimeConfigFile::VrPassthrough();
+// Menu labels for the foveation levels, index-matched to RuntimeConfigFile::kVrFoveationLevels and to
+// aurora_set_stereo_foveation.
+constexpr std::array<const char*, 4> kVrFoveationLabels{"Off", "Low", "Medium", "High"};
+static_assert(kVrFoveationLabels.size() == RuntimeConfigFile::kVrFoveationLevels.size());
+int g_vrFoveation = static_cast<int>(RuntimeConfigFile::VrFoveationLevelIndex(RuntimeConfigFile::VrFoveation()));
 #endif
 bool g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson(false);
 bool g_vrFirstPersonToggleClick = RuntimeConfigFile::VrFirstPersonToggleClick();
@@ -1512,6 +1517,25 @@ void DrawVrSettings() {
             "fully virtual; the Flat Screen race has the room around it too. "
             "Applies immediately.");
     }
+    // Shows the live level, which debug.wiicompiled.foveation can override.
+    g_vrFoveation = static_cast<int>(aurora_get_stereo_foveation());
+    if (ImGui::Combo("Foveated rendering", &g_vrFoveation, kVrFoveationLabels.data(),
+                     static_cast<int>(kVrFoveationLabels.size()))) {
+        aurora_set_stereo_foveation(static_cast<uint32_t>(g_vrFoveation));
+        RuntimeConfigFile::SetVrFoveation(
+            std::string(RuntimeConfigFile::kVrFoveationLevels[static_cast<size_t>(g_vrFoveation)]));
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "%s", aurora_stereo_foveation_available()
+                      ? "Shades the edges of the race view in 2x2, then 4x4 pixel blocks, where the "
+                        "lenses blur the picture anyway, to free GPU time for a higher render scale or a "
+                        "steadier frame rate. Higher levels start closer to the centre; High also "
+                        "coarsens the corners of the HUD. Menus are never foveated. Applies immediately."
+                      : "Shades the edges of the race view in 2x2, then 4x4 pixel blocks, where the "
+                        "lenses blur the picture anyway, to free GPU time. This session started with it "
+                        "off, or without a GPU that supports it: a new level applies after a restart.");
+    }
 #endif
     ImGui::Separator();
     ImGui::Text("VR camera");
@@ -2331,6 +2355,9 @@ void InitializeRuntimeSettings() noexcept {
     aurora_set_stereo_stop_at_display_copy(g_vrStopAtDisplayCopy);
     aurora_set_stereo_skip_copy_clears(g_vrSkipCopyClears);
     aurora_set_stereo_single_pass_eyes(g_vrSinglePassEyes);
+#if defined(__ANDROID__)
+    aurora_set_stereo_foveation(static_cast<uint32_t>(g_vrFoveation));
+#endif
     aurora_set_stereo_mirror_view(static_cast<AuroraStereoMirrorView>(g_vrMirrorView));
     mkw::vr::OpenXRSetControllerMode(static_cast<mkw::vr::OpenXRControllerMode>(g_vrControllerMode));
     ApplyVrHudVirtualScreen();

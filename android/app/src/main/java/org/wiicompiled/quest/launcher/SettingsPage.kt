@@ -201,6 +201,15 @@ class SettingsPage(
                 write = { c, index -> c.setString("vr", "performance_level", PERFORMANCE_LEVELS[index]) },
             )
             choice(
+                R.string.vr_foveation, R.string.vr_foveation_helper,
+                listOf(
+                    R.string.vr_foveation_off, R.string.vr_foveation_low,
+                    R.string.vr_foveation_medium, R.string.vr_foveation_high,
+                ),
+                read = { stringIndex(it, "vr", "foveation", FOVEATION_LEVELS) },
+                write = { c, index -> c.setString("vr", "foveation", FOVEATION_LEVELS[index]) },
+            )
+            choice(
                 R.string.vr_interpolation, R.string.vr_interpolation_helper,
                 listOf(activity.getString(R.string.vr_interpolation_off), activity.getString(R.string.vr_interpolation_auto), "72 FPS", "90 FPS", "120 FPS"),
                 read = { INTERPOLATION_FPS.indexOf(vrInterpolationFps(it)) },
@@ -725,6 +734,8 @@ class SettingsPage(
         val SEATS = listOf("cockpit", "custom")
         // The runtime's default ("boost") first: an absent key reads as index 0.
         val PERFORMANCE_LEVELS = listOf("boost", "sustained_high", "sustained_low", "power_savings", "default")
+        // runtime_config.h's kVrFoveationLevels, the default ("off") first.
+        val FOVEATION_LEVELS = listOf("off", "low", "medium", "high")
         val CONTROLLER_MODES = listOf("wii_remote", "gamepad")
         val INTERPOLATION_FPS = listOf(0L, 1L, 72L, 90L, 120L)
         val RESOLUTIONS = listOf(1.0, 1.5, 2.0, 3.0, 4.0)

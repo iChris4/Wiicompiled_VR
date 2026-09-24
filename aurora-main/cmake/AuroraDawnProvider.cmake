@@ -265,6 +265,20 @@ elseif (_aurora_dawn_provider STREQUAL "package")
       "The package must be a Dawn install tree built with DAWN_ENABLE_INSTALL=ON.")
   endif ()
 
+  # A package built with Aurora's patches (android/Build-QuestDawn.ps1) describes them in
+  # aurora-dawn.json. Only such a package has the fragment density map ABI
+  # (include/aurora/dawn_fdm_abi.h); aurora_core compiles its callers against it.
+  set(AURORA_DAWN_FDM_ABI 0 PARENT_SCOPE)
+  if (EXISTS "${_dawn_pkg_dir}/aurora-dawn.json")
+    file(READ "${_dawn_pkg_dir}/aurora-dawn.json" _aurora_dawn_manifest)
+    string(JSON _aurora_dawn_fdm_abi ERROR_VARIABLE _aurora_dawn_manifest_error
+      GET "${_aurora_dawn_manifest}" AuroraFdmAbi)
+    if (NOT _aurora_dawn_manifest_error AND _aurora_dawn_fdm_abi GREATER 0)
+      set(AURORA_DAWN_FDM_ABI ${_aurora_dawn_fdm_abi} PARENT_SCOPE)
+      message(STATUS "aurora: Dawn package carries the fragment density map ABI ${_aurora_dawn_fdm_abi}")
+    endif ()
+  endif ()
+
   _aurora_dawn_set_platform_backends()
 
   get_target_property(_dawn_pkg_type dawn::webgpu_dawn TYPE)

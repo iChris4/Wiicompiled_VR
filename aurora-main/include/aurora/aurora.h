@@ -245,6 +245,11 @@ typedef struct {
   // Enables renderer features needed by an external XR compositor. The normal
   // desktop path is unchanged when false.
   bool xrInterop;
+  // Asks for fragment density maps on the Vulkan device, for foveated eye
+  // rendering (aurora_set_stereo_foveation). Only a Dawn built with Aurora's
+  // patches has them (the Quest build). Every render pipeline is then built to
+  // run under a density map, so set it only when foveation may be used.
+  bool xrFragmentDensityMap;
   // Optional OpenXR-selected D3D adapter. Supplying the runtime's LUID before
   // device creation keeps Dawn and the compositor on the same physical GPU.
   bool hasD3D12AdapterLuid;

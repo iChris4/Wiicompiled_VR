@@ -18,6 +18,7 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include "../android_debug.hpp"
+#include "fdm.hpp"
 #include "../gfx/common.hpp"
 #include "../internal.hpp"
 #include "../window.hpp"
@@ -823,6 +824,13 @@ bool initialize(AuroraBackend auroraBackend) {
                                              g_deviceLostReason.store(reason, std::memory_order_relaxed);
                                              g_deviceLost.store(true, std::memory_order_release);
                                            });
+#if defined(__ANDROID__)
+    // Foveated eye rendering (fdm.hpp). `adb shell setprop debug.wiicompiled.fdm 0` keeps the density
+    // maps off, and their pipeline flag with them, whatever the settings say; 1 asks for them anyway.
+    const int fdmOverride = android_debug::property_int("debug.wiicompiled.fdm", -1);
+    fdm::request(g_backendType == wgpu::BackendType::Vulkan &&
+                 (fdmOverride >= 0 ? fdmOverride == 1 : g_config.xrFragmentDensityMap));
+#endif
     const auto future =
         g_adapter.RequestDevice(&deviceDescriptor, wgpu::CallbackMode::WaitAnyOnly,
                                 [](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
@@ -860,6 +868,7 @@ bool initialize(AuroraBackend auroraBackend) {
       }
       Log.report(level, "WebGPU message: {}", message);
     });
+    fdm::device_created();
   }
   g_queue = g_device.GetQueue();
 

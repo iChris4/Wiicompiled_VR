@@ -618,6 +618,11 @@ private:
     void ApplyGraphicsRequirements(AuroraConfig& aurora_config) {
         aurora_config.desiredBackend = kRequiredAuroraBackend;
         aurora_config.xrInterop = true;
+#if defined(__ANDROID__)
+        // Foveated rendering: fragment density maps are decided with the device. They put a flag on
+        // every render pipeline, so a session launched with foveation off does without them.
+        aurora_config.xrFragmentDensityMap = RuntimeConfigFile::VrFoveation() != "off";
+#endif
 #if defined(_WIN32)
         if (kRequiredAuroraBackend != BACKEND_D3D12) return;
         const auto& requirements = backend_->GraphicsRequirements();
@@ -851,6 +856,7 @@ private:
             const bool panel_layer = backend_->PanelLayerAvailable() && !PanelLayerForcedOff();
             aurora_set_stereo_panel_layer(panel_layer);
             PollEyePassesOverride();
+            PollFoveationOverride();
             presentation.panel.requested = panel_layer && OpenXRSettingsPanelOpen();
 
             // Pipeline caches are stored where their stall is least visible: once when a race
@@ -1481,6 +1487,39 @@ private:
 #endif
     }
 
+    // Android: `adb shell setprop debug.wiicompiled.foveation <0-3>` overrides the foveation level
+    // (off, low, medium, high) within one session, for A/B timing; an empty value hands it back to
+    // the settings. Levels need a session launched with foveation on (see VrFoveation). Read about
+    // once a second.
+    void PollFoveationOverride() noexcept {
+#if defined(__ANDROID__)
+        if (foveation_poll_ != 0) {
+            --foveation_poll_;
+            return;
+        }
+        foveation_poll_ = 72;
+        char value[PROP_VALUE_MAX] = {};
+        int override_value = -1;
+        if (__system_property_get("debug.wiicompiled.foveation", value) > 0 && value[0] >= '0' &&
+            value[0] <= '3' && value[1] == '\0') {
+            override_value = value[0] - '0';
+        }
+        if (override_value == foveation_override_) {
+            return;
+        }
+        foveation_override_ = override_value;
+        const uint32_t level = override_value >= 0
+                                   ? static_cast<uint32_t>(override_value)
+                                   : RuntimeConfigFile::VrFoveationLevelIndex(RuntimeConfigFile::VrFoveation());
+        aurora_set_stereo_foveation(level);
+        RT_LOG(RT_TAG_RUNTIME) << "OpenXR: foveation " << RuntimeConfigFile::kVrFoveationLevels[level]
+                               << (override_value >= 0 ? " (debug.wiicompiled.foveation)"
+                                                       : " (debug.wiicompiled.foveation cleared)")
+                               << (aurora_stereo_foveation_available() ? "" : "; unavailable in this session")
+                               << std::endl;
+#endif
+    }
+
     // The settings panel's layer hangs exactly where its pointer hits are
     // tested, the rectangle it used to cover in the eyes.
     static void PlacePanelLayer(OpenXRBackendFrame& frame, const OpenXRPointerScreen& screen) noexcept {
@@ -1706,6 +1745,8 @@ private:
     bool panel_layer_forced_off_ = false;
     uint32_t eye_passes_poll_ = 0;
     int eye_passes_override_ = -1;
+    uint32_t foveation_poll_ = 0;
+    int foveation_override_ = -1;
 #endif
     std::unique_ptr<OpenXRInput> input_;
     std::thread pacing_thread_;
