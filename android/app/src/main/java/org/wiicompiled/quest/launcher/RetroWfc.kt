@@ -84,8 +84,17 @@ object RetroWfc {
         val players: List<RoomPlayer>,
     )
 
-    /** A row of the leaderboard (RwfcLeaderboardEntry), as far as the rooms use it. */
-    class LeaderboardEntry(val pid: String, val friendCode: String, val rank: Int?, val activeRank: Int?)
+    /** A row of the leaderboard (RwfcLeaderboardEntry); [mii] is the 74 bytes of their Mii. */
+    class LeaderboardEntry(
+        val pid: String,
+        val friendCode: String,
+        val rank: Int?,
+        val activeRank: Int?,
+        val name: String = "",
+        val vr: Int? = null,
+        val isSuspicious: Boolean = false,
+        val mii: ByteArray? = null,
+    )
 
     /** RwfcLeaderboardVrStats: the VR won or lost lately. */
     class VrStats(val last24Hours: Int, val lastWeek: Int, val lastMonth: Int)
@@ -189,7 +198,7 @@ object RetroWfc {
         }
     }
 
-    /** The top of the leaderboard, best first. */
+    /** The top of the leaderboard, in Retro WFC's order. */
     fun parseLeaderboard(json: String): List<LeaderboardEntry> = parsing {
         objects(JSONArray(json)).mapNotNull { entry ->
             LeaderboardEntry(
@@ -197,6 +206,10 @@ object RetroWfc {
                 friendCode = entry.opt("friendCode") as? String ?: "",
                 rank = (entry.opt("rank") as? Number)?.toInt(),
                 activeRank = (entry.opt("activeRank") as? Number)?.toInt(),
+                name = entry.opt("name") as? String ?: "",
+                vr = (entry.opt("vr") as? Number)?.toInt(),
+                isSuspicious = entry.opt("isSuspicious") as? Boolean ?: false,
+                mii = miiBytes(entry.text("miiData")),
             )
         }
     }

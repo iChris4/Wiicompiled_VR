@@ -2,7 +2,6 @@ package org.wiicompiled.quest.launcher
 
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import java.io.IOException
 import java.util.concurrent.Executors
@@ -10,15 +9,12 @@ import java.util.concurrent.Executors
 /**
  * Who plays on Retro WFC now, for the Rooms page, the sidebar's player count and the profiles'
  * Online glow: WheelWizard's RRLiveRooms. While the launcher is on screen it asks every 40 seconds
- * for the open rooms and the top 50 of the leaderboard, splits the rooms Retro WFC merged by
- * mistake, and marks the players of the top 50 with their rank.
+ * for the open rooms and the top 50 of the leaderboard ([Leaderboard], shared with its page),
+ * splits the rooms Retro WFC merged by mistake, and marks the players of the top 50 with their rank.
  */
 object LiveRooms {
     private const val TAG = "WiiCompiledLauncher"
     private const val REFRESH_MS = 40_000L
-    private const val TOP_PLAYERS = 50
-    /** RrLeaderboardSingletonService keeps the top players this long, and the last ones when Retro WFC fails. */
-    private const val LEADERBOARD_FRESH_MS = 90_000L
 
     /** A player in a room (RrPlayer). Two are the same player when their profile and friend code are. */
     class Player(
@@ -67,10 +63,6 @@ object LiveRooms {
     /** Everyone in a room, as GameLicenseService.RefreshOnlineStatus finds a licence online. */
     val onlineFriendCodes: Set<String> get() = rooms.flatMap { room -> room.players.map { it.friendCode } }.toSet()
 
-    // The leaderboard's cache, on the worker thread only.
-    private var leaderboard: List<RetroWfc.LeaderboardEntry>? = null
-    private var leaderboardAt = 0L
-
     private val ticker = object : Runnable {
         override fun run() {
             fetch()
@@ -117,18 +109,12 @@ object LiveRooms {
         }
     }
 
-    private fun topPlayers(): List<RetroWfc.LeaderboardEntry>? {
-        val now = SystemClock.elapsedRealtime()
-        leaderboard?.let { if (now - leaderboardAt < LEADERBOARD_FRESH_MS) return it }
-        return try {
-            RetroWfc.topPlayers(TOP_PLAYERS).also {
-                leaderboard = it
-                leaderboardAt = now
-            }
-        } catch (e: IOException) {
-            Log.i(TAG, "Retro WFC's leaderboard is unavailable: ${e.message}")
-            leaderboard
-        }
+    /** The rooms go on without ranks while the leaderboard is unavailable. */
+    private fun topPlayers(): List<RetroWfc.LeaderboardEntry>? = try {
+        Leaderboard.top()
+    } catch (e: IOException) {
+        Log.i(TAG, "Retro WFC's leaderboard is unavailable: ${e.message}")
+        null
     }
 
     // What the pages show, worked out apart from Android so it can be tested.

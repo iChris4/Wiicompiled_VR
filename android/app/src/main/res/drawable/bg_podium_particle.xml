@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A LeaderboardPodiumCard sparkle, its edge softened as the PC blurs it. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <gradient
+        android:centerColor="#AAFFFFFF"
+        android:endColor="#00FFFFFF"
+        android:gradientRadius="50%"
+        android:startColor="#AAFFFFFF"
+        android:type="radial" />
+</shape>

@@ -213,6 +213,20 @@
                 android:text="0" />
         </org.wiicompiled.quest.launcher.TapRow>
 
+        <LinearLayout
+            android:id="@+id/nav_leaderboard"
+            style="@style/Launcher.NavItem">
+
+            <ImageView
+                style="@style/Launcher.NavIcon"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_award" />
+
+            <TextView
+                style="@style/Launcher.NavLabel"
+                android:text="@string/launcher_nav_leaderboard" />
+        </LinearLayout>
+
         <Space
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -266,6 +280,11 @@
         <include
             android:id="@+id/page_rooms"
             layout="@layout/page_rooms"
+            android:visibility="gone" />
+
+        <include
+            android:id="@+id/page_leaderboard"
+            layout="@layout/page_leaderboard"
             android:visibility="gone" />
     </FrameLayout>
 </LinearLayout>

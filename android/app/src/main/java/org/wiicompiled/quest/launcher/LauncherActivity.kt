@@ -31,7 +31,8 @@ import org.wiicompiled.quest.R
  * with a Home page that sets up and starts the game, a My profiles page that shows the licences
  * of Retro Rewind's save, a Patches page that finds mods for Retro Rewind on GameBanana or imports
  * them, a My Miis page that makes and edits the game's Miis, a Settings page that edits
- * Config.toml, and under Online a Rooms page that shows who plays on Retro WFC now.
+ * Config.toml, and under Online a Rooms page that shows who plays on Retro WFC now and a
+ * Leaderboard page with its top 50.
  *
  * The APK carries no game code. Playing needs two things the player owns: the game files (DATA,
  * extracted from their disc image here or on a PC) and the game itself (libmain.so, built from
@@ -44,7 +45,7 @@ import org.wiicompiled.quest.R
  */
 class LauncherActivity : Activity() {
 
-    private enum class Page { Home, Profiles, Patches, Miis, Settings, Rooms }
+    private enum class Page { Home, Profiles, Patches, Miis, Settings, Rooms, Leaderboard }
 
     /** What Home's main and secondary buttons do. */
     private enum class Action { Play, Resume, SelectDisc, ImportGame, BuildGame, DownloadModPack, Reset }
@@ -56,12 +57,14 @@ class LauncherActivity : Activity() {
     private lateinit var navSettings: View
     private lateinit var navRooms: View
     private lateinit var navRoomsCount: TextView
+    private lateinit var navLeaderboard: View
     private lateinit var homePage: View
     private lateinit var profilesView: View
     private lateinit var patchesView: View
     private lateinit var miisView: View
     private lateinit var settingsView: View
     private lateinit var roomsView: View
+    private lateinit var leaderboardView: View
     private lateinit var trails: WheelTrailsView
     private lateinit var playButton: View
     private lateinit var playIcon: ImageView
@@ -81,6 +84,7 @@ class LauncherActivity : Activity() {
     private lateinit var profilesPage: ProfilesPage
     private lateinit var sidebarProfile: SidebarProfileCard
     private lateinit var rooms: RoomsPage
+    private lateinit var leaderboard: LeaderboardPage
 
     /** The sidebar's count of players online (WheelWizard's UpdatePlayerCount). */
     private val playersOnline: () -> Unit = {
@@ -131,12 +135,14 @@ class LauncherActivity : Activity() {
         navSettings = findViewById(R.id.nav_settings)
         navRooms = findViewById(R.id.nav_rooms)
         navRoomsCount = findViewById(R.id.nav_rooms_count)
+        navLeaderboard = findViewById(R.id.nav_leaderboard)
         homePage = findViewById(R.id.page_home)
         profilesView = findViewById(R.id.page_profiles)
         patchesView = findViewById(R.id.page_patches)
         miisView = findViewById(R.id.page_miis)
         settingsView = findViewById(R.id.page_settings)
         roomsView = findViewById(R.id.page_rooms)
+        leaderboardView = findViewById(R.id.page_leaderboard)
         trails = findViewById(R.id.home_trails)
         playButton = findViewById(R.id.home_play)
         playIcon = findViewById(R.id.home_play_icon)
@@ -181,6 +187,11 @@ class LauncherActivity : Activity() {
         sidebarProfile = SidebarProfileCard(this, findViewById(R.id.sidebar_profile)) { showPage(Page.Profiles) }
         profilesPage = ProfilesPage(this, profilesView) { snapshot -> sidebarProfile.show(snapshot) }
         rooms = RoomsPage(this, roomsView)
+        // The leaderboard's View Room opens the player's room on the Rooms page.
+        leaderboard = LeaderboardPage(this, leaderboardView) { room ->
+            showPage(Page.Rooms)
+            rooms.showRoom(room)
+        }
         LiveRooms.addListener(playersOnline)
         playersOnline()
         savedInstanceState?.getString(KEY_TAB)?.let { name ->
@@ -193,6 +204,7 @@ class LauncherActivity : Activity() {
         navMiis.setOnClickListener { showPage(Page.Miis) }
         navSettings.setOnClickListener { showPage(Page.Settings) }
         navRooms.setOnClickListener { showPage(Page.Rooms) }
+        navLeaderboard.setOnClickListener { showPage(Page.Leaderboard) }
         playButton.setOnClickListener { perform(mainAction) }
         secondary.setOnClickListener { secondaryAction?.let(::perform) }
         cancel.setOnClickListener { GameSetup.cancel() }
@@ -251,6 +263,7 @@ class LauncherActivity : Activity() {
         // Who plays online is followed while the launcher is on screen, for the sidebar's count.
         LiveRooms.start()
         rooms.setVisible(page == Page.Rooms)
+        leaderboard.setVisible(page == Page.Leaderboard)
         // The game's process can take a moment to go away after its activity
         // closes, which would still read as running.
         val runningAtResume = isGameRunning()
@@ -264,6 +277,7 @@ class LauncherActivity : Activity() {
         patches.detach()
         profilesPage.setVisible(false)
         rooms.setVisible(false)
+        leaderboard.setVisible(false)
         LiveRooms.stop()
         super.onPause()
     }
@@ -321,6 +335,7 @@ class LauncherActivity : Activity() {
         navMiis.isSelected = target == Page.Miis
         navSettings.isSelected = target == Page.Settings
         navRooms.isSelected = target == Page.Rooms
+        navLeaderboard.isSelected = target == Page.Leaderboard
         homePage.visibility = if (target == Page.Home) View.VISIBLE else View.GONE
         profilesView.visibility = if (target == Page.Profiles) View.VISIBLE else View.GONE
         patchesView.visibility = if (target == Page.Patches) View.VISIBLE else View.GONE
@@ -329,6 +344,8 @@ class LauncherActivity : Activity() {
         settingsView.visibility = if (target == Page.Settings) View.VISIBLE else View.GONE
         roomsView.visibility = if (target == Page.Rooms) View.VISIBLE else View.GONE
         rooms.setVisible(target == Page.Rooms)
+        leaderboardView.visibility = if (target == Page.Leaderboard) View.VISIBLE else View.GONE
+        leaderboard.setVisible(target == Page.Leaderboard)
         if (target == Page.Home) {
             trailsAway = true
         }
@@ -342,8 +359,8 @@ class LauncherActivity : Activity() {
             Page.Patches -> patches.refresh()
             Page.Miis -> miis.refresh()
             Page.Settings -> settings.refresh()
-            // Rooms follow Retro WFC's answers by themselves.
-            Page.Rooms -> Unit
+            // Rooms follow Retro WFC's answers by themselves, and the leaderboard asks when shown.
+            Page.Rooms, Page.Leaderboard -> Unit
         }
     }
 

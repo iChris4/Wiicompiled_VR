@@ -285,7 +285,9 @@ parallel, and a choice about 40 ms. `MiiDataTest`, `MiiDatabaseTest`, `MiiIdsTes
 **Rooms**, under Online after Settings, is the PC's RoomsPage and RoomDetailsPage
 (`RoomsPage`), fed by `LiveRooms`, the PC's RRLiveRooms: while the launcher is on
 screen it asks Retro WFC every 40 s for `/api/roomstatus` and the top 50 of
-`/api/leaderboard/top/50` (kept 90 s, the last ones reused when it fails), splits
+`/api/leaderboard/top/50` (`Leaderboard`, the PC's RrLeaderboardSingletonService:
+kept 90 s for this page and the Leaderboard alike, the last ones reused when it
+fails), splits
 the rooms Retro WFC merged by mistake where their players' connection maps are not
 linked both ways (the PC's SplitMergedRooms, checked against it on a real answer),
 and marks top-50 players with their place. The same answers drive the sidebar's
@@ -295,14 +297,36 @@ older fields. The page lists rooms with their game mode (the PC's `rk` names), I
 time online and player count, or with a search the players whose name or friend
 code holds it; a room opens its details (ID, time online, mode, average VR, and its
 players with their Mii, VR, badges, place and open host), and a player there Copy
-Friend Code, View Mii and View Profile. View Mii is the PC's MiiCarouselWindow: the
+Friend Code, View Mii and View Profile (`PlayerActions`, shared with the
+Leaderboard). View Mii is the PC's MiiCarouselWindow: the
 whole Mii in the renderer's `all_body` view, turned by dragging and zoomed with the
 thumbstick, small while it moves and sharp once it rests. View Profile is the PC's
 PlayerProfileWindow, with the VR history of My profiles (`VrHistoryPanel`, one
 `view_vr_history` layout for both). The PC's Add Friend waits for the Friends page,
 which reads and writes the save's friend list. Rows are `TapRow`s, which take every
 tap so a tooltip or the badge strip inside cannot swallow one, while the pointer's
-hover still shows their tips. `LiveRoomsTest` and `RetroWfcTest` cover it.
+hover still shows their tips; only a button inside a row keeps the taps that begin
+on it. `LiveRoomsTest` and `RetroWfcTest` cover it.
+
+**Leaderboard**, after Rooms, is the PC's LeaderboardPage (`LeaderboardPage`): the
+top 50 from that shared cache, asked again each time the page is shown as the PC
+makes the page anew, ordered by rank (else the active rank, else the place in the
+answer, as ResolveRank), a blank name shown as Unknown Player. The first three stand
+on the PC's podium (`PodiumCard`, LeaderboardPodiumCard): second, first and third,
+each card in its medal's colours with the rank, the place, the Mii, the first badge,
+the name, the VR and a mark on suspicious players, and the PC's animations, which
+move only view properties: the cards rise in one after another, then float, their
+glow breathes, a glint sweeps across and three sparkles rise, and a card grows a
+little under the pointer; they stop while the page is hidden. Unlike the PC, the card
+clips its glow and glint to its rounded box, and the glint is stretched to the taller
+cards' height and swept from beyond one side to beyond the other so it crosses all of
+the wider cards; only the sparkles sit outside. The rest are
+PlayerListItem rows with their place in grey. A tap on a player opens the same
+actions as in a room; a row whose player is in a room now also has View Room, which
+opens that room on the Rooms page (the PC's JoinRoom, matching friend codes by their
+digits) and follows the rooms as they change. Loading, the error with Retry and the
+empty board with Refresh are the PC's too. `LeaderboardTest` and `RetroWfcTest`
+cover it.
 
 The launcher follows the runtime's rules exactly. `TomlConfig` edits one line
 the way `RuntimeConfigFile::WriteSetting` does, and every edit re-reads the file,

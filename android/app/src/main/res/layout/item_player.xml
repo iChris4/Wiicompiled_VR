@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A player in a room or in the search (WheelWizard's PlayerListItem): their Mii, name and friend
-     code, VR, badges, leaderboard place and whether they host the room. -->
+<!-- A player in a room, the search or the leaderboard (WheelWizard's PlayerListItem): their Mii,
+     name and friend code, VR, badges, View Room on the leaderboard, leaderboard place and whether
+     they host the room. -->
 <org.wiicompiled.quest.launcher.TapRow xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -97,6 +98,25 @@
                 android:orientation="horizontal" />
         </HorizontalScrollView>
     </FrameLayout>
+
+    <!-- The leaderboard's View Room, for a player in a room now: a button, which TapRow lets through. -->
+    <ImageView
+        android:id="@+id/player_join"
+        android:layout_width="30dp"
+        android:layout_height="24dp"
+        android:layout_marginEnd="8dp"
+        android:background="@drawable/bg_play_button"
+        android:clickable="true"
+        android:contentDescription="@string/leaderboard_view_room"
+        android:focusable="true"
+        android:paddingStart="8dp"
+        android:paddingTop="5dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="5dp"
+        android:src="@drawable/ic_road"
+        android:tint="@color/play_button_content"
+        android:tooltipText="@string/leaderboard_view_room"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/player_top"

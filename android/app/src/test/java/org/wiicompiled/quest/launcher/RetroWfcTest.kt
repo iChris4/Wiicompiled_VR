@@ -79,17 +79,29 @@ class RetroWfcTest {
 
     @Test
     fun theLeaderboardGivesRanksByProfileAndFriendCode() {
+        val mii = MiiData.serialize(MiiFactory.male("Top"))
         val json = """
-            [{"pid": "592986326", "name": "s", "friendCode": "1111-2222-3333", "vr": 161570, "rank": 1, "isSuspicious": false},
-             {"pid": "2", "friendCode": "", "rank": null, "activeRank": 7},
+            [{"pid": "592986326", "name": "s", "friendCode": "1111-2222-3333", "vr": 161570, "rank": 1, "isSuspicious": false,
+              "lastSeen": "2026-09-17T16:18:05.961583Z", "vrStats": {"last24Hours": 0, "lastWeek": -448, "lastMonth": 1481},
+              "miiImageBase64": null, "miiData": "${Base64.getEncoder().encodeToString(mii)}", "badges": [2009, 2016],
+              "vehiclePreference": "bike", "vehicleRank": 1},
+             {"pid": "2", "friendCode": "", "rank": null, "activeRank": 7, "isSuspicious": true, "miiData": null},
              {"name": "no pid", "rank": 3}]
         """.trimIndent()
         val entries = RetroWfc.parseLeaderboard(json)
         assertEquals(listOf("592986326", "2"), entries.map { it.pid })
         assertEquals(1, entries[0].rank)
         assertEquals("1111-2222-3333", entries[0].friendCode)
+        assertEquals("s", entries[0].name)
+        assertEquals(161570, entries[0].vr)
+        assertEquals(false, entries[0].isSuspicious)
+        assertArrayEquals(mii, entries[0].mii)
         assertNull(entries[1].rank)
         assertEquals(7, entries[1].activeRank)
+        assertEquals("", entries[1].name)
+        assertNull(entries[1].vr)
+        assertEquals(true, entries[1].isSuspicious)
+        assertNull(entries[1].mii)
     }
 
     @Test

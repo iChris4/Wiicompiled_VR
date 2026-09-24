@@ -1,8 +1,6 @@
 package org.wiicompiled.quest.launcher
 
 import android.app.Activity
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.LayoutInflater
@@ -10,24 +8,18 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ListPopupWindow
 import android.widget.ListView
 import android.widget.TextView
-import android.widget.Toast
 import org.wiicompiled.quest.R
 
 /**
  * The launcher's Rooms page, WheelWizard's RoomsPage and RoomDetailsPage: the rooms open on Retro
  * WFC ([LiveRooms]), or with a search the players whose name or friend code holds it. A room opens
- * its details in place of the list, and a player there their actions: copy their friend code, see
- * their Mii, or their profile. As on the PC, nothing here joins a room.
- *
- * The PC's Add Friend waits for the Friends page, which reads and writes the save's friend list.
+ * its details in place of the list, and a player there their actions ([PlayerActions]): copy their
+ * friend code, see their Mii, or their profile. As on the PC, nothing here joins a room.
  */
 class RoomsPage(private val activity: Activity, root: View) {
 
@@ -50,7 +42,7 @@ class RoomsPage(private val activity: Activity, root: View) {
 
     private val roomAdapter = RoomAdapter()
     private val searchAdapter = PlayerAdapter { player -> roomOf(player)?.let(::openRoom) }
-    private val detailsAdapter = PlayerAdapter(::showActions)
+    private val detailsAdapter = PlayerAdapter { player, row -> PlayerActions.show(activity, row, player.friendCode, player.mii) }
 
     private var visible = false
     private var query = ""
@@ -58,8 +50,6 @@ class RoomsPage(private val activity: Activity, root: View) {
     /** The room whose details are open, as last shown; null on the list. */
     private var detailsRoom: LiveRooms.Room? = null
     private val roomsChanged: () -> Unit = { render() }
-
-    private val miiSize = (2 * MII_DP * activity.resources.displayMetrics.density).toInt() and 1.inv()
 
     init {
         detailsPlayers.adapter = detailsAdapter
@@ -93,6 +83,12 @@ class RoomsPage(private val activity: Activity, root: View) {
             if (!activity.isDestroyed) render()
         }
         render()
+    }
+
+    /** Opens [room]'s details, as the leaderboard's View Room does (RoomDetailsPage). */
+    fun showRoom(room: LiveRooms.Room) {
+        if (search.text.isNotEmpty()) search.text.clear()
+        openRoom(room)
     }
 
     /** Back closes a room's details before leaving the page. */
@@ -168,43 +164,6 @@ class RoomsPage(private val activity: Activity, root: View) {
         detailsAdapter.notifyDataSetChanged()
     }
 
-    /** RoomDetailsPage's context menu, opened on the player's row. */
-    private fun showActions(player: LiveRooms.Player, row: View) {
-        val actions = listOf(
-            R.string.room_copy_friend_code to { copyFriendCode(player) },
-            R.string.room_view_mii to { viewMii(player) },
-            R.string.room_view_profile to { if (player.friendCode.isNotEmpty()) PlayerProfileDialog.show(activity, player.friendCode) },
-        )
-        ListPopupWindow(activity).apply {
-            anchorView = row
-            setAdapter(ArrayAdapter(activity, R.layout.item_dropdown_popup, actions.map { activity.getString(it.first) }))
-            setBackgroundDrawable(activity.getDrawable(R.drawable.bg_dropdown_popup))
-            width = dp(220)
-            horizontalOffset = dp(60)
-            isModal = true
-            setOnItemClickListener { _, _, position, _ ->
-                dismiss()
-                actions[position].second()
-            }
-            show()
-        }
-    }
-
-    private fun copyFriendCode(player: LiveRooms.Player) {
-        activity.getSystemService(ClipboardManager::class.java)
-            ?.setPrimaryClip(ClipData.newPlainText(activity.getString(R.string.profiles_code_label), player.friendCode))
-        Toast.makeText(activity, R.string.profiles_code_copied, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun viewMii(player: LiveRooms.Player) {
-        val mii = player.mii
-        if (mii == null) {
-            Toast.makeText(activity, R.string.room_no_mii, Toast.LENGTH_SHORT).show()
-            return
-        }
-        MiiViewDialog.show(activity, mii)
-    }
-
     // Rows
 
     /** RrRoom.TimeOnline: how long ago Retro WFC opened the room. */
@@ -252,42 +211,19 @@ class RoomsPage(private val activity: Activity, root: View) {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val row = convertView ?: LayoutInflater.from(activity).inflate(R.layout.item_player, parent, false)
             val player = players[position]
-            val picture = row.findViewById<ImageView>(R.id.player_mii)
-            val mii = player.mii
-            val drawn = mii != null && MiiRenderResource.installed(activity)
-            row.findViewById<View>(R.id.player_placeholder).visibility = if (drawn) View.GONE else View.VISIBLE
-            if (drawn) {
-                MiiImages.head(activity, picture, mii!!, miiSize)
-            } else {
-                picture.setTag(R.id.mii_image_key, null)
-                picture.setImageDrawable(null)
-            }
-            row.findViewById<TextView>(R.id.player_name).text = player.name
-            row.findViewById<TextView>(R.id.player_code).text = player.friendCode
-            row.findViewById<TextView>(R.id.player_vr).text = player.vrText
-
-            val badgeList = badges[player.friendCode].orEmpty()
-            row.findViewById<View>(R.id.player_badges_box).visibility = if (badgeList.isEmpty()) View.GONE else View.VISIBLE
-            row.findViewById<LinearLayout>(R.id.player_badges).apply {
-                removeAllViews()
-                badgeList.forEachIndexed { index, badge ->
-                    addView(BadgeView(activity, badge), LinearLayout.LayoutParams(dp(30), dp(30)).apply { if (index > 0) marginStart = dp(3) })
-                }
-            }
-            row.findViewById<TextView>(R.id.player_top).apply {
-                text = player.topLabel
-                visibility = if (player.leaderboardRank != null) View.VISIBLE else View.GONE
-            }
-            row.findViewById<View>(R.id.player_host).visibility = if (player.isOpenHost) View.VISIBLE else View.GONE
+            PlayerRow.bind(
+                activity,
+                row,
+                mii = player.mii,
+                name = player.name,
+                friendCode = player.friendCode,
+                vrText = player.vrText,
+                badges = badges[player.friendCode].orEmpty(),
+                topLabel = player.topLabel.takeIf { player.leaderboardRank != null },
+                isOpenHost = player.isOpenHost,
+            )
             row.setOnClickListener { picked(player, row) }
             return row
         }
-    }
-
-    private fun dp(value: Int): Int = PatchesWidgets.dp(activity, value)
-
-    private companion object {
-        /** The Mii's circle in item_player.xml, drawn at twice its pixels for smooth edges. */
-        const val MII_DP = 50
     }
 }
