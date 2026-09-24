@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Friends page's Add Friend (WheelWizard's TextInputWindow as FriendsPage sets it up): a
+     friend code, what is wrong with it or a warning, and the look-up on Retro WFC once submitted. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingTop="4dp"
+    android:paddingEnd="24dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/friends_code_message"
+        android:textColor="@color/neutral_300"
+        android:textSize="15sp" />
+
+    <EditText
+        android:id="@+id/friend_code_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:digits="0123456789- "
+        android:hint="@string/friends_code_hint"
+        android:imeOptions="actionDone"
+        android:importantForAutofill="no"
+        android:inputType="number"
+        android:maxLength="16"
+        android:singleLine="true"
+        android:textColor="@color/neutral_100"
+        android:textColorHint="@color/neutral_500"
+        android:textSize="18sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:minHeight="28dp"
+        android:orientation="horizontal">
+
+        <ProgressBar
+            android:id="@+id/friend_code_progress"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_marginEnd="8dp"
+            android:indeterminateTint="@color/neutral_500"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/friend_code_note"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp" />
+    </LinearLayout>
+</LinearLayout>

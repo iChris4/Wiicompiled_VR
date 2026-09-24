@@ -27,6 +27,8 @@
 
     <color name="warning_50">#FFFEE7</color>
     <color name="warning_100">#FFFDC1</color>
+    <color name="warning_200">#FFF686</color>
+    <color name="warning_400">#FFD80D</color>
     <color name="warning_500">#FFC800</color>
     <color name="warning_600">#D19200</color>
     <color name="warning_700">#A66802</color>

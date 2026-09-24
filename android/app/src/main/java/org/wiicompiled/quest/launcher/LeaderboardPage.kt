@@ -19,13 +19,15 @@ import org.wiicompiled.quest.R
 /**
  * The launcher's Leaderboard page, WheelWizard's LeaderboardPage: Retro WFC's top 50
  * ([Leaderboard]), the first three on a podium and the rest in a list. A player opens their actions
- * ([PlayerActions]); one in a room now also has View Room, which opens it on the Rooms page
- * ([viewRoom]). Like the PC, which makes the page anew each time it is opened, it asks again every
- * time it is shown, through the 90-second cache it shares with the rooms.
+ * ([PlayerActions], Add Friend through [friends]); one in a room now also has View Room, which
+ * opens it on the Rooms page ([viewRoom]). Like the PC, which makes the page anew each time it is
+ * opened, it asks again every time it is shown, through the 90-second cache it shares with the
+ * rooms.
  */
 class LeaderboardPage(
     private val activity: Activity,
     root: View,
+    private val friends: FriendActions,
     private val viewRoom: (LiveRooms.Room) -> Unit,
 ) {
     private val loading: View = root.findViewById(R.id.leaderboard_loading)
@@ -58,7 +60,7 @@ class LeaderboardPage(
         root.findViewById<View>(R.id.leaderboard_refresh).setOnClickListener { load() }
         podium.forEachIndexed { index, card ->
             card.root.setOnClickListener {
-                rows.getOrNull(index)?.let { row -> PlayerActions.show(activity, card.root, row.friendCode, row.mii, offsetDp = 20) }
+                rows.getOrNull(index)?.let { row -> showActions(row, card.root, offsetDp = 20) }
             }
         }
     }
@@ -145,6 +147,13 @@ class LeaderboardPage(
         else -> activity.getString(R.string.leaderboard_rank, rank)
     }
 
+    /** The player's context menu, Add Friend with the Mii and VR the leaderboard gives. */
+    private fun showActions(row: Leaderboard.Row, anchor: View, offsetDp: Int = 60) {
+        PlayerActions.show(activity, anchor, row.friendCode, row.mii, offsetDp, addFriend = {
+            friends.addPlayer(name(row), row.friendCode, row.mii, row.vr)
+        })
+    }
+
     /** JoinRoom_OnClick: the room the player is in now, on the Rooms page. */
     private fun joinRoom(row: Leaderboard.Row) {
         val room = Leaderboard.roomOf(LiveRooms.rooms, row.friendCode)
@@ -184,7 +193,7 @@ class LeaderboardPage(
                 visibility = if (Leaderboard.roomOf(LiveRooms.rooms, player.friendCode) != null) View.VISIBLE else View.GONE
                 setOnClickListener { joinRoom(player) }
             }
-            row.setOnClickListener { PlayerActions.show(activity, row, player.friendCode, player.mii) }
+            row.setOnClickListener { showActions(player, row) }
             return row
         }
     }

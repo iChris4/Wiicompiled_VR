@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sidebar bottom bar's info and Settings icons, lighter under the pointer, as on the PC. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/neutral_300" android:state_hovered="true" />
+    <item android:color="@color/neutral_300" android:state_pressed="true" />
+    <item android:color="@color/neutral_500" />
+</selector>

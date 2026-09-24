@@ -62,12 +62,13 @@ object MiiImages {
     }
 
     /**
-     * [mii] turned as [pose], [size] pixels square, for [done] on the main thread; null when it
-     * cannot be drawn, such as before the Mii parts are downloaded.
+     * [mii] turned as [pose], [size] pixels square, with FFL's [expression] (0 its own face, 2
+     * anger), for [done] on the main thread; null when it cannot be drawn, such as before the Mii
+     * parts are downloaded.
      */
-    fun picture(context: Context, mii: Mii, size: Int, pose: MiiRenderer.Pose, done: (Bitmap?) -> Unit) {
+    fun picture(context: Context, mii: Mii, size: Int, pose: MiiRenderer.Pose, expression: Int = 0, done: (Bitmap?) -> Unit) {
         val copy = mii.copy()
-        val key = "mii:$size:${pose.key}:${copy.lookKey()}"
+        val key = "mii:$size:${pose.key}:$expression:${copy.lookKey()}"
         cache.get(key)?.let {
             done(it)
             return
@@ -76,7 +77,7 @@ object MiiImages {
         val generation = cacheGeneration.get()
         renderers.execute {
             val bitmap = draw(app, key, generation) { resource ->
-                MiiRenderer.render(resource, copy, size, pose, MiiRenderResource.bodies(app))
+                MiiRenderer.render(resource, copy, size, pose, MiiRenderResource.bodies(app), expression = expression)
             }
             main.post { done(bitmap) }
         }

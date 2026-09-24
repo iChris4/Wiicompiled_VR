@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A friend (WheelWizard's FriendsListItem), laid out as the PC's 428 x 124 card: a grey strip
+     with the Mii turned sideways, fading at the bottom over Online, Offline or Pending; the name
+     and friend code, VR and BR; badges, View Room, wins and losses. An online friend's card has a
+     green outline and glow, a pending one's yellow; FriendsPage sets those. A TapFrame, so the
+     tips cannot swallow a tap, while View Room keeps its own. -->
+<org.wiicompiled.quest.launcher.TapFrame xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="124dp"
+    android:background="@drawable/bg_friend_card"
+    android:clipToOutline="true">
+
+    <View
+        android:layout_width="78dp"
+        android:layout_height="match_parent"
+        android:background="@color/neutral_700" />
+
+    <View
+        android:id="@+id/friend_glow"
+        android:layout_width="300dp"
+        android:layout_height="300dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="-88dp"
+        android:layout_marginEnd="-90dp"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/friend_placeholder"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginStart="17dp"
+        android:layout_marginTop="30dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_user"
+        android:tint="@color/neutral_500" />
+
+    <ImageView
+        android:id="@+id/friend_mii"
+        android:layout_width="138dp"
+        android:layout_height="138dp"
+        android:layout_marginStart="-34dp"
+        android:layout_marginTop="-19dp"
+        android:importantForAccessibility="no" />
+
+    <View
+        android:layout_width="248dp"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_friend_fade" />
+
+    <TextView
+        android:id="@+id/friend_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="10dp"
+        android:layout_marginBottom="5dp"
+        android:textSize="12sp" />
+
+    <LinearLayout
+        android:layout_width="160dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="93dp"
+        android:layout_marginTop="9dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/friend_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:singleLine="true"
+            android:textColor="@color/neutral_300"
+            android:textSize="20sp" />
+
+        <TextView
+            android:id="@+id/friend_code"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/neutral_400"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="93dp"
+        android:layout_marginBottom="9dp"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="66dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/friend_vr_label"
+                style="@style/Launcher.FieldLabel"
+                android:layout_marginBottom="0dp"
+                android:drawableEnd="@drawable/ic_info"
+                android:drawablePadding="5dp"
+                android:drawableTint="@color/neutral_300"
+                android:text="@string/room_vr"
+                android:tooltipText="@string/room_vr_full" />
+
+            <TextView
+                android:id="@+id/friend_vr"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/neutral_400"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/friend_br_label"
+                style="@style/Launcher.FieldLabel"
+                android:layout_marginBottom="0dp"
+                android:drawableEnd="@drawable/ic_info"
+                android:drawablePadding="5dp"
+                android:drawableTint="@color/neutral_300"
+                android:text="@string/friends_br"
+                android:tooltipText="@string/friends_br_full" />
+
+            <TextView
+                android:id="@+id/friend_br"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/neutral_400"
+                android:textSize="14sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <HorizontalScrollView
+        android:id="@+id/friend_badges_box"
+        android:layout_width="105dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="258dp"
+        android:layout_marginTop="15dp"
+        android:padding="3dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/friend_badges"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="263dp"
+        android:layout_marginBottom="9dp"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="66dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/Launcher.FieldLabel"
+                android:layout_marginBottom="0dp"
+                android:text="@string/friends_wins" />
+
+            <TextView
+                android:id="@+id/friend_wins"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/neutral_400"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/Launcher.FieldLabel"
+                android:layout_marginBottom="0dp"
+                android:text="@string/friends_losses" />
+
+            <TextView
+                android:id="@+id/friend_losses"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/neutral_400"
+                android:textSize="14sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/friend_view_room"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="15dp"
+        android:layout_marginEnd="15dp"
+        android:background="@drawable/bg_play_button"
+        android:clickable="true"
+        android:drawableStart="@drawable/ic_road"
+        android:drawablePadding="10dp"
+        android:drawableTint="@color/play_button_content"
+        android:focusable="true"
+        android:gravity="center"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:text="@string/leaderboard_view_room"
+        android:textColor="@color/play_button_content"
+        android:textSize="14sp" />
+</org.wiicompiled.quest.launcher.TapFrame>

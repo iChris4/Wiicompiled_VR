@@ -10,9 +10,8 @@ import java.security.MessageDigest
  * (after kazuki-4ys' FaceThief and https://wiki.tockdom.com/wiki/Rksys.dat): after the RKSD0006
  * magic come four RKPD blocks, one per licence, each holding its Mii's name and ID, the profile ID
  * its friend code derives from, its VR and BR, and race counts. Retro Rewind keeps the ratings it plays
- * with in Pulsar's RRRating.pul, which outranks the save's own when it knows the profile.
- *
- * Nothing here writes a save: the profiles page only shows what the game recorded.
+ * with in Pulsar's RRRating.pul, which outranks the save's own when it knows the profile. Each
+ * licence's friend list is [RksysFriends]', which also changes it.
  */
 object RksysProfiles {
 
@@ -55,6 +54,7 @@ object RksysProfiles {
         val wins: Long,
         /** The licence's Mii in the Mii database; a guest Mii's (0x80000001 and on) is in none. */
         val miiId: Long = 0,
+        val friends: List<RksysFriends.Friend> = emptyList(),
     )
 
     /** A rating from RRRating.pul, already as the game shows it (60.50 is 6050). */
@@ -81,6 +81,7 @@ object RksysProfiles {
                 races = u32(save, base + RACES_OFFSET),
                 wins = u32(save, base + WINS_OFFSET),
                 miiId = u32(save, base + MII_ID_OFFSET),
+                friends = RksysFriends.parse(save, slot),
             )
         }
     }

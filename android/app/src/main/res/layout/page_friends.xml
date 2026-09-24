@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WheelWizard's Friends page (Views/Pages/FriendsPage.axaml): the friends of the sidebar's
+     licence (item_friend.xml), sorted as chosen, with Add Friend, or the page's empty state. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                style="@style/Launcher.PageTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/launcher_nav_friends" />
+
+            <ImageView
+                android:id="@+id/friends_add_top"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_marginStart="10dp"
+                android:background="@drawable/bg_play_button"
+                android:clickable="true"
+                android:contentDescription="@string/friends_add"
+                android:focusable="true"
+                android:padding="8dp"
+                android:src="@drawable/ic_plus"
+                android:tint="@color/play_button_content"
+                android:tooltipText="@string/friends_add"
+                android:visibility="gone" />
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginStart="12dp"
+                android:contentDescription="@string/friends_disclaimer"
+                android:src="@drawable/ic_info"
+                android:tint="@color/neutral_500"
+                android:tooltipText="@string/friends_disclaimer" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/neutral_700" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:id="@+id/friends_content"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="52dp">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom"
+                    android:layout_marginBottom="6dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/Launcher.FieldLabel"
+                        android:layout_marginBottom="0dp"
+                        android:text="@string/friends_list_title" />
+
+                    <TextView
+                        android:id="@+id/friends_count"
+                        style="@style/Launcher.StateBox"
+                        android:layout_marginStart="8dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical|end"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/Launcher.FieldLabel"
+                        android:layout_marginBottom="0dp"
+                        android:text="@string/friends_sort_by" />
+
+                    <Spinner
+                        android:id="@+id/friends_sort"
+                        android:layout_width="185dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/neutral_700" />
+
+            <ListView
+                android:id="@+id/friends_list"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:divider="@android:color/transparent"
+                android:dividerHeight="10dp"
+                android:listSelector="@android:color/transparent"
+                android:paddingTop="10dp"
+                android:paddingBottom="12dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/friends_empty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="150dp"
+                android:layout_height="150dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_wheel"
+                android:tint="@color/neutral_900" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="@string/friends_empty_title"
+                android:textColor="@color/neutral_200"
+                android:textSize="20sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center"
+                android:maxWidth="440dp"
+                android:text="@string/friends_empty_message"
+                android:textColor="@color/neutral_400"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/friends_add_empty"
+                style="@style/Launcher.Button.Primary"
+                android:layout_marginTop="12dp"
+                android:drawableStart="@drawable/ic_plus"
+                android:drawablePadding="10dp"
+                android:drawableTint="@color/play_button_content"
+                android:minWidth="170dp"
+                android:paddingStart="20dp"
+                android:paddingEnd="24dp"
+                android:text="@string/friends_add_button"
+                android:tooltipText="@string/friends_add" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

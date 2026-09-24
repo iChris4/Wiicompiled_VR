@@ -19,9 +19,10 @@ import org.wiicompiled.quest.R
  * The launcher's Rooms page, WheelWizard's RoomsPage and RoomDetailsPage: the rooms open on Retro
  * WFC ([LiveRooms]), or with a search the players whose name or friend code holds it. A room opens
  * its details in place of the list, and a player there their actions ([PlayerActions]): copy their
- * friend code, see their Mii, or their profile. As on the PC, nothing here joins a room.
+ * friend code, see their Mii, add them as a friend ([friends]), or their profile. As on the PC,
+ * nothing here joins a room.
  */
-class RoomsPage(private val activity: Activity, root: View) {
+class RoomsPage(private val activity: Activity, root: View, private val friends: FriendActions) {
 
     private val main: View = root.findViewById(R.id.rooms_main)
     private val search: EditText = root.findViewById(R.id.rooms_search)
@@ -42,7 +43,11 @@ class RoomsPage(private val activity: Activity, root: View) {
 
     private val roomAdapter = RoomAdapter()
     private val searchAdapter = PlayerAdapter { player -> roomOf(player)?.let(::openRoom) }
-    private val detailsAdapter = PlayerAdapter { player, row -> PlayerActions.show(activity, row, player.friendCode, player.mii) }
+    private val detailsAdapter = PlayerAdapter { player, row ->
+        PlayerActions.show(activity, row, player.friendCode, player.mii, addFriend = {
+            friends.addPlayer(player.name, player.friendCode, player.mii, player.vr)
+        })
+    }
 
     private var visible = false
     private var query = ""

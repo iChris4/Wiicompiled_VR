@@ -297,13 +297,13 @@ older fields. The page lists rooms with their game mode (the PC's `rk` names), I
 time online and player count, or with a search the players whose name or friend
 code holds it; a room opens its details (ID, time online, mode, average VR, and its
 players with their Mii, VR, badges, place and open host), and a player there Copy
-Friend Code, View Mii and View Profile (`PlayerActions`, shared with the
-Leaderboard). View Mii is the PC's MiiCarouselWindow: the
+Friend Code, View Mii, Add Friend and View Profile (`PlayerActions`, shared with the
+Leaderboard and Friends). View Mii is the PC's MiiCarouselWindow: the
 whole Mii in the renderer's `all_body` view, turned by dragging and zoomed with the
 thumbstick, small while it moves and sharp once it rests. View Profile is the PC's
 PlayerProfileWindow, with the VR history of My profiles (`VrHistoryPanel`, one
-`view_vr_history` layout for both). The PC's Add Friend waits for the Friends page,
-which reads and writes the save's friend list. Rows are `TapRow`s, which take every
+`view_vr_history` layout for both). Add Friend is the Friends page's (below). Rows
+are `TapRow`s, which take every
 tap so a tooltip or the badge strip inside cannot swallow one, while the pointer's
 hover still shows their tips; only a button inside a row keeps the taps that begin
 on it. `LiveRoomsTest` and `RetroWfcTest` cover it.
@@ -327,6 +327,48 @@ opens that room on the Rooms page (the PC's JoinRoom, matching friend codes by t
 digits) and follows the rooms as they change. Loading, the error with Retry and the
 empty board with Refresh are the PC's too. `LeaderboardTest` and `RetroWfcTest`
 cover it.
+
+**Friends**, after Leaderboard, is the PC's FriendsPage (`FriendsPage`), and the
+only page besides My Miis that changes the game's files: the friend list of the
+licence the sidebar shows (the primary one, else the first) in Retro Rewind's save.
+`RksysFriends` reads and changes it as the PC's GameLicenseService does: 30 slots of
+0x1C0 bytes at 0x56D0 in each RKPD block, and 12 bytes each at 0x8B50 for the Wii's
+friend registration; a friend is pending while the slot's state is 1 and that
+registration's control byte 0x10 (or 0). Add Friend writes the PC's one-sided request
+(the friend code's upper half and the profile ID as its key, state 1, the Mii and its
+CRC-16/XMODEM, VR clamped to 65535, BR 5000, country and region 0xFF, the ten records
+0xFFFFFFFF, control 0x10) into the first empty slot, and Remove Friend empties the
+slot; both write the save's CRC-32 over its first 0x27FFC bytes again. `FriendList`
+reads the whole save, changes it in memory and replaces the file with a finished,
+synced copy, then reads the list again; the save is also read each time the
+launcher comes back, as the game may have changed it, and nothing is changed while
+the game runs (`FriendActions`). The cards are the PC's FriendsListItem at its sizes:
+the Mii turned sideways (FriendsSideProfile; FriendsSideProfilePending's angry face,
+FFL expression 2, for a pending friend) in a grey strip fading over Online, Offline
+or Pending, name and friend code, VR and BR (9999 shown as 9999+), badges, wins and
+losses, and View Room, enabled while the friend is in a room, which opens it on the
+Rooms page; an online friend's card has the green outline and glow, a pending one's
+the yellow. A NUL inside a Mii's name is left out when shown, as Avalonia draws it.
+The list sorts as the PC's (Is Online, VR, BR, Name, Wins, Races played, for the
+session), except that names go from A to Z rather than Z to A. Add Friend on the page
+asks for a friend code with the PC's checks (12 digits, a valid checksum, not your
+own, a warning for a friend already listed), looks it up on Retro WFC for the name
+and Mii, and confirms with the PC's AddFriendConfirmationWindow; Add Friend from a
+room or the leaderboard uses the Mii and VR shown there. Unlike the PC, Remove Friend
+asks first. The sidebar shows friends online out of all of them. `RksysFriendsTest`
+covers the save, on a made-up save; on the headset an add then a remove left the
+save byte for byte as it was.
+
+The sidebar ends as the PC's does (`SidebarFooter`): the Wheel Wizard team's status,
+the info menu, Settings and the version. The status is WheelWizard-Data's
+`status.json` (`WheelWizardStatus`, the PC's WhWzStatusManager), asked every 90 s
+while the launcher is on screen and shown as an icon whose tip is its message: the
+PC's preset icon and colour for each variant, or an icon of its own as SVG path data
+in its colour (`SvgPath`, every path command, arcs as cubic curves), nothing for
+None, and the PC's red error when the status cannot be read. The info menu names who
+made the Quest port and Wheel Wizard, opens Settings on About, and links to Wheel
+Wizard's Discord, this repository on GitHub and Wheel Wizard's Ko-fi.
+`SidebarStatusTest` covers the status and the path data.
 
 The launcher follows the runtime's rules exactly. `TomlConfig` edits one line
 the way `RuntimeConfigFile::WriteSetting` does, and every edit re-reads the file,

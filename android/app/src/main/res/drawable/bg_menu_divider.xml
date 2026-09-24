@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A menu's separator: a 1 dp line with room above and below. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="8dp"
+    android:insetTop="4dp"
+    android:insetRight="8dp"
+    android:insetBottom="4dp">
+    <shape android:shape="rectangle">
+        <solid android:color="@color/neutral_600" />
+    </shape>
+</inset>

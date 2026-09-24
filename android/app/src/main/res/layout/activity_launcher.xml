@@ -227,23 +227,89 @@
                 android:text="@string/launcher_nav_leaderboard" />
         </LinearLayout>
 
+        <org.wiicompiled.quest.launcher.TapRow
+            android:id="@+id/nav_friends"
+            style="@style/Launcher.NavItem">
+
+            <ImageView
+                style="@style/Launcher.NavIcon"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_friends" />
+
+            <TextView
+                style="@style/Launcher.NavLabel"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="@string/launcher_nav_friends" />
+
+            <!-- WheelWizard's BoxText: friends online out of all of them. -->
+            <TextView
+                android:id="@+id/nav_friends_count"
+                style="@style/Launcher.StateBox"
+                android:text="0/0" />
+        </org.wiicompiled.quest.launcher.TapRow>
+
         <Space
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <TextView
-            android:id="@+id/launcher_version"
-            android:layout_width="wrap_content"
+        <!-- WheelWizard's sidebar bottom bar: the team's status, the info menu, Settings and the
+             version (SidebarFooter). -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:background="@drawable/bg_pill"
-            android:paddingStart="12dp"
-            android:paddingTop="4dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="4dp"
-            android:textColor="@color/neutral_300"
-            android:textSize="13sp" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/sidebar_status"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="6dp"
+                android:importantForAccessibility="no"
+                android:padding="1dp"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/sidebar_info"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="6dp"
+                android:clickable="true"
+                android:contentDescription="@string/sidebar_info"
+                android:focusable="true"
+                android:padding="1dp"
+                android:src="@drawable/ic_info"
+                android:tint="@color/sidebar_icon" />
+
+            <ImageView
+                android:id="@+id/sidebar_settings"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="6dp"
+                android:clickable="true"
+                android:contentDescription="@string/launcher_nav_settings"
+                android:focusable="true"
+                android:padding="3dp"
+                android:src="@drawable/ic_gear"
+                android:tint="@color/sidebar_icon"
+                android:tooltipText="@string/launcher_nav_settings" />
+
+            <TextView
+                android:id="@+id/launcher_version"
+                android:layout_width="0dp"
+                android:layout_height="26dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_pill"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center_vertical|end"
+                android:paddingStart="6dp"
+                android:paddingEnd="8dp"
+                android:singleLine="true"
+                android:textColor="@color/neutral_300"
+                android:textSize="12sp" />
+        </LinearLayout>
     </LinearLayout>
 
     <FrameLayout
@@ -285,6 +351,11 @@
         <include
             android:id="@+id/page_leaderboard"
             layout="@layout/page_leaderboard"
+            android:visibility="gone" />
+
+        <include
+            android:id="@+id/page_friends"
+            layout="@layout/page_friends"
             android:visibility="gone" />
     </FrameLayout>
 </LinearLayout>

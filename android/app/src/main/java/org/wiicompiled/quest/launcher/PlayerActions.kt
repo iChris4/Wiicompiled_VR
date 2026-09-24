@@ -10,18 +10,28 @@ import android.widget.Toast
 import org.wiicompiled.quest.R
 
 /**
- * The context menu WheelWizard gives a player in a room and on the leaderboard, opened here by a
- * tap on them: copy their friend code, see their Mii, or their profile. The PC's Add Friend waits
- * for the Friends page, which reads and writes the save's friend list.
+ * The context menu WheelWizard gives a player in a room, on the leaderboard and in the friend
+ * list, opened here by a tap on them: copy their friend code, see their Mii, add them as a friend
+ * ([addFriend], rooms and leaderboard), their profile, and remove them ([removeFriend], friends).
  */
 object PlayerActions {
 
     /** Opens the menu under [anchor], [offsetDp] from its start. */
-    fun show(activity: Activity, anchor: View, friendCode: String, mii: Mii?, offsetDp: Int = 60) {
-        val actions = listOf(
+    fun show(
+        activity: Activity,
+        anchor: View,
+        friendCode: String,
+        mii: Mii?,
+        offsetDp: Int = 60,
+        addFriend: (() -> Unit)? = null,
+        removeFriend: (() -> Unit)? = null,
+    ) {
+        val actions = listOfNotNull(
             R.string.room_copy_friend_code to { copyFriendCode(activity, friendCode) },
             R.string.room_view_mii to { viewMii(activity, mii) },
+            addFriend?.let { R.string.friends_add to it },
             R.string.room_view_profile to { if (friendCode.isNotEmpty()) PlayerProfileDialog.show(activity, friendCode) },
+            removeFriend?.let { R.string.friends_remove to it },
         )
         ListPopupWindow(activity).apply {
             anchorView = anchor

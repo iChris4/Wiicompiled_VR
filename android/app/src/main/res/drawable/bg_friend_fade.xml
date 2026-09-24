@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FriendsListItem's fade over the Mii's strip: the card's colour rising over the last 22% of it,
+     to the PC's opacity mask of #DF. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:centerColor="#00363944"
+        android:centerY="0.78"
+        android:endColor="#DF363944"
+        android:startColor="#00363944" />
+</shape>

@@ -63,7 +63,8 @@ object MiiRenderer {
         pose: Pose = Pose.FRONT,
         bodies: MiiBodies? = null,
         fullBody: Boolean = false,
-    ): IntArray = render(resource, FflCharInfo.of(mii), size, pose = pose, bodies = bodies, fullBody = fullBody)
+        expression: Int = 0,
+    ): IntArray = render(resource, FflCharInfo.of(mii), size, expression, pose, bodies, fullBody)
 
     @Throws(IOException::class)
     internal fun render(

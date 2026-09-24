@@ -112,7 +112,7 @@ object ProfileStore {
         val pose = MiiRenderer.Pose.SIDE
         val local = snapshot.miis[license.miiId]
         if (local != null && drawable) {
-            MiiImages.picture(context, local, size, pose, done)
+            MiiImages.picture(context, local, size, pose, done = done)
             return
         }
         val friendCode = license.friendCode
