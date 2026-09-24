@@ -443,28 +443,33 @@ class MiisPage(
 
     // --- The Mii parts ---
 
+    /** The download offer: the parts and bodies, or only the bodies once the parts are here. */
     private fun showParts() {
-        if (MiiRenderResource.installed(activity)) {
+        if (MiiRenderResource.complete(activity)) {
             parts.visibility = View.GONE
             return
         }
         parts.visibility = View.VISIBLE
         partsDownload.isEnabled = !MiiRenderResource.installing
         if (!MiiRenderResource.installing) {
-            partsText.text = activity.getString(R.string.miis_parts_message, Formatter.formatShortFileSize(activity, MiiRenderResource.DOWNLOAD_BYTES))
+            val message = if (MiiRenderResource.installed(activity)) R.string.miis_bodies_message else R.string.miis_parts_message
+            partsText.text = activity.getString(message, Formatter.formatShortFileSize(activity, MiiRenderResource.downloadBytes(activity)))
         }
     }
 
     private fun downloadParts() {
         partsDownload.isEnabled = false
-        partsText.text = activity.getString(R.string.miis_parts_connecting)
+        val total = MiiRenderResource.downloadBytes(activity)
+        partsText.text = activity.getString(
+            if (MiiRenderResource.installed(activity)) R.string.miis_bodies_connecting else R.string.miis_parts_connecting,
+        )
         MiiRenderResource.install(
             activity,
             progress = { bytes ->
                 partsText.text = activity.getString(
                     R.string.miis_parts_downloading,
                     Formatter.formatShortFileSize(activity, bytes),
-                    Formatter.formatShortFileSize(activity, MiiRenderResource.DOWNLOAD_BYTES),
+                    Formatter.formatShortFileSize(activity, total),
                 )
             },
         ) { error ->
@@ -497,8 +502,8 @@ class MiisPage(
     private companion object {
         const val TAG = "WiiCompiledLauncher"
         const val MII_MIME = "application/octet-stream"
-        /** The list's pictures, at the 140 dp they are shown at: larger than the tile, which crops them. */
-        const val TILE_PICTURE = 176
+        /** The list's pictures, at the 109 dp they are shown at: larger than the tile, which crops them. */
+        const val TILE_PICTURE = 136
 
         /** One database change at a time, in order. */
         val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "MiiDatabase").apply { isDaemon = true } }

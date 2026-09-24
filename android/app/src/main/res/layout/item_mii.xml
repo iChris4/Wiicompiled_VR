@@ -36,13 +36,14 @@
             android:tint="@color/neutral_500"
             android:visibility="gone" />
 
-        <!-- Larger than the tile and raised, as WheelWizard crops its list pictures. -->
+        <!-- Wider than the tile and raised, the shoulders on its bottom edge: WheelWizard's
+             ImageOnlyMargin (-4,-9,-4,0) on its 90-pixel tile. -->
         <ImageView
             android:id="@+id/mii_picture"
-            android:layout_width="140dp"
-            android:layout_height="140dp"
+            android:layout_width="109dp"
+            android:layout_height="109dp"
             android:layout_gravity="center_horizontal|top"
-            android:layout_marginTop="-19dp"
+            android:layout_marginTop="-9dp"
             android:importantForAccessibility="no" />
 
         <ImageView

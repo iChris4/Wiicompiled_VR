@@ -106,6 +106,21 @@ class MiiDatabaseTest {
     }
 
     @Test
+    fun findsMiisByIdAsThePcDoes() {
+        val file = newDatabase()
+        MiiDatabase.add(file, mii("First", 0x80000001L))
+        MiiDatabase.add(file, mii("Second", 0x80000002L))
+        val db = file.readBytes()
+        // A later slot with the same ID loses to the first, as GetByAvatarId finds it.
+        MiiData.serialize(mii("Later", 0x80000001L)).copyInto(db, 4 + 2 * MiiData.SIZE)
+        file.writeBytes(db)
+        val byId = MiiDatabase.byId(file)
+        assertEquals(setOf(0x80000001L, 0x80000002L), byId.keys)
+        assertEquals("First", byId[0x80000001L]!!.name)
+        assertEquals("Second", byId[0x80000002L]!!.name)
+    }
+
+    @Test
     fun listsOnlyTheSlotsItCanRead() {
         val file = newDatabase()
         MiiDatabase.add(file, mii("Good", 0x80000001L))

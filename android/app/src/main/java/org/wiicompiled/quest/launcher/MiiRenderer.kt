@@ -14,38 +14,135 @@ import kotlin.math.sqrt
 import kotlin.math.tan
 
 /**
- * Draws a Mii's head from [FflResource] on the CPU: the PC launcher's NativeMiiRenderer ported
- * to Kotlin, with the same parts, face and mask textures, colours, camera, lighting and
- * rasteriser, so a Mii looks the same in both launchers.
+ * Draws a Mii from [FflResource] on the CPU: the PC launcher's NativeMiiRenderer ported to
+ * Kotlin, with the same parts, face and mask textures, colours, camera, lighting and rasteriser,
+ * so a Mii looks the same in both launchers.
  *
- * Only the PC's body is left out. Its 3DS body models are not ours to ship, so every picture here
- * is the PC's face_only framing: the head, as the Wii's own Mii icons show it. One deliberate fix:
- * the PC colours a beard with the hair colour; here it has its facial hair colour, as on the Wii.
+ * Pictures are the PC's face framing: the head, and below it the upper body in the Mii's
+ * favourite colour, from the 3DS bodies ([MiiBodies]) once they are downloaded; without them,
+ * the head alone (the PC's face_only). One deliberate fix: the PC colours a beard with the hair
+ * colour; here it has its facial hair colour, as on the Wii.
  */
 object MiiRenderer {
-    /** The head at [size] x [size], as non-premultiplied ARGB colours, transparent around it. */
+    /**
+     * How the Mii is turned and seen, in degrees, as the PC's MiiImageSpecifications turn it:
+     * the Mii about its X, Y and Z axes, and the camera orbiting its head.
+     */
+    class Pose(
+        val characterX: Float,
+        val characterY: Float,
+        val characterZ: Float,
+        val cameraX: Float,
+        val cameraY: Float,
+        val cameraZ: Float,
+    ) {
+        /** Tells pictures of the same Mii in different poses apart. */
+        val key: String get() = "$characterX,$characterY,$characterZ,$cameraX,$cameraY,$cameraZ"
+
+        companion object {
+            /** Straight ahead, as My Miis and the editor show a Mii. */
+            val FRONT = Pose(0f, 0f, 0f, 0f, 0f, 0f)
+
+            /** CurrentUserSideProfile and FriendsSideProfile: the profile page's and sidebar's three-quarter view. */
+            val SIDE = Pose(350f, 15f, 355f, 12f, 0f, 0f)
+        }
+    }
+
+    /**
+     * The Mii at [size] x [size], as non-premultiplied ARGB colours, transparent around it: the
+     * head, with the upper body below it when [bodies] are given.
+     */
     @Throws(IOException::class)
-    fun render(resource: FflResource, mii: Mii, size: Int): IntArray = render(resource, FflCharInfo.of(mii), size)
+    fun render(resource: FflResource, mii: Mii, size: Int, pose: Pose = Pose.FRONT, bodies: MiiBodies? = null): IntArray =
+        render(resource, FflCharInfo.of(mii), size, pose = pose, bodies = bodies)
 
     @Throws(IOException::class)
-    internal fun render(resource: FflResource, info: FflCharInfo, size: Int, expression: Int = 0): IntArray {
+    internal fun render(
+        resource: FflResource,
+        info: FflCharInfo,
+        size: Int,
+        expression: Int = 0,
+        pose: Pose = Pose.FRONT,
+        bodies: MiiBodies? = null,
+    ): IntArray {
         require(size in 16..4096 && size % 2 == 0) { "Unsupported picture size $size" }
         val resolution = if (size <= 384) 256 else 512
         val draws = buildDraws(resource, info, resolution, expression)
         if (draws.isEmpty()) throw IOException("The renderer produced no drawable meshes for this Mii.")
+        val body = bodies?.let { body(it, info) }
 
         val target = Target(size, size, withDepth = true)
         target.fill(255, 255, 255, 0)
-        // The PC's face view: 15 degrees of field of view on the head, from straight ahead.
+        // The PC's face view: 15 degrees of field of view on the head, the camera orbiting it
+        // (CalculateCameraOrbitPosition) and the head turned about its own origin. With a body
+        // the head sits on its shoulders, and the camera rises with it; the body turns about its feet.
         val y = 4.805f / 0.14f
         val z = 57.553f / 0.14f
-        val view = Mat4.lookAt(floatArrayOf(-0f, y, z), floatArrayOf(0f, y, 0f), floatArrayOf(0f, 1f, 0f))
+        val camera = radians(pose.cameraX, pose.cameraY, pose.cameraZ)
+        val position = floatArrayOf(
+            z * -sin(camera[1]) * cos(camera[0]),
+            z * sin(camera[0]),
+            z * cos(camera[1]) * cos(camera[0]),
+        )
+        position[1] += y
+        val lookAt = floatArrayOf(0f, y, 0f)
+        if (body != null) {
+            for (c in 0 until 3) {
+                position[c] += body.headTranslation[c]
+                lookAt[c] += body.headTranslation[c]
+            }
+        }
+        val up = floatArrayOf(sin(camera[2]), cos(camera[2]), 0f)
+        val view = Mat4.lookAt(position, lookAt, up)
         val projection = Mat4.perspective(15f * (Math.PI.toFloat() / 180f), 1f, 10f, 1200f)
-        val model = Mat4.IDENTITY
-        val meshes = draws.mapNotNull { prepare(it, size, size, model, view, projection) }
+        val rotation = Mat4.rotation(radians(pose.characterX, pose.characterY, pose.characterZ))
+        val meshes = ArrayList<Prepared>()
+        // The body first, so the head is drawn over the collar.
+        if (body != null) {
+            val bodyModel = rotation * body.scale
+            body.draws.mapNotNullTo(meshes) { prepare(it, size, size, bodyModel, view, projection) }
+        }
+        val headModel = if (body != null) rotation * Mat4.translation(body.headTranslation) else rotation
+        draws.mapNotNullTo(meshes) { prepare(it, size, size, headModel, view, projection) }
         drawAll(target, meshes, light = true, Blend.Over)
         return target.argb()
     }
+
+    /** [info]'s body (TryCreateBodyRenderData), or null when [bodies] has none for its gender. */
+    private fun body(bodies: MiiBodies, info: FflCharInfo): Body? {
+        val meshes = if (Math.floorMod(info.gender, 2) == 1) bodies.female else bodies.male
+        if (meshes.isEmpty()) return null
+        // CalculateBodyScale: build widens the body, height stretches it.
+        val build = info.build.toFloat().coerceIn(0f, 127f)
+        val height = info.height.toFloat().coerceIn(0f, 127f)
+        val scaleX = (build * (height * 0.003671875f + 0.4f)) / 128.0f + height * 0.001796875f + 0.4f
+        val scaleY = height * 0.006015625f + 0.5f
+        val headTranslation = floatArrayOf(0f, MiiBodies.HEAD_Y * scaleY * MiiBodies.MODEL_SCALE, 0f)
+        val shirt = Colors.favorite(info.favoriteColor)
+        val draws = meshes.map { mesh ->
+            val count = mesh.positions.size / 3
+            val type = if (mesh.pants) TYPE_PANTS else TYPE_BODY
+            Draw(
+                positions = mesh.positions,
+                texcoords = mesh.texcoords,
+                normals = mesh.normals,
+                tangents = FloatArray(count * 3),
+                // The PC's vertex parameters for the body: full specular and rim.
+                parameters = FloatArray(count * 4) { if (it % 4 == 2) 0f else 1f },
+                indices = mesh.indices,
+                cull = CULL_BACK,
+                modulate = Modulate(0, type, r = if (mesh.pants) PANTS else shirt),
+                material = MATERIALS[type],
+            )
+        }
+        return Body(draws, Mat4.scale(floatArrayOf(scaleX, scaleY, scaleX)), headTranslation)
+    }
+
+    /** ConvertDegreesToRadians: each angle brought into -180..180 by an IEEE remainder first. */
+    private fun radians(x: Float, y: Float, z: Float): FloatArray =
+        floatArrayOf(x, y, z).also { angles ->
+            for (i in angles.indices) angles[i] = Math.IEEEremainder(angles[i].toDouble(), 360.0).toFloat() * (Math.PI.toFloat() / 180f)
+        }
 
     /**
      * Draws [meshes] in order. A large picture is split into bands of rows drawn in parallel,
@@ -899,6 +996,9 @@ object MiiRenderer {
     /** Per vertex: screen x, y, depth, 1/w, u, v, view position, normal, tangent and the four parameters. */
     private class Prepared(val draw: Draw, val vertices: FloatArray)
 
+    /** A Mii's body (BodyRenderData): its meshes, their scale, and where the head sits on them. */
+    private class Body(val draws: List<Draw>, val scale: Mat4, val headTranslation: FloatArray)
+
     private enum class Origin { Center, Left, Right }
 
     private class MaskPart(val x: Float, val y: Float, val scaleX: Float, val scaleY: Float, val rotation: Float, val origin: Origin)
@@ -977,6 +1077,8 @@ object MiiRenderer {
     private const val TYPE_MASK = 6
     private const val TYPE_NOSELINE = 7
     private const val TYPE_GLASS = 8
+    private const val TYPE_BODY = 9
+    private const val TYPE_PANTS = 10
 
     // MiiLightingProfiles.Default on the PC.
     private const val PROFILE_AMBIENT = 0.71f
@@ -990,6 +1092,8 @@ object MiiRenderer {
     private val WHITE = floatArrayOf(1f, 1f, 1f, 1f)
     private val BLACK = floatArrayOf(0f, 0f, 0f, 1f)
     private val MOLE = floatArrayOf(0.071f, 0.059f, 0.059f, 1f)
+    /** The PC's trousers: the grey of an ordinary Mii's. */
+    private val PANTS = floatArrayOf(0.2509804f, 0.2745099f, 0.30588239f, 1f)
     private val LIGHT = FloatArray(3).also { FflResource.normalizeInto(-0.4531539381f, 0.4226179123f, 0.7848858833f, it, 0, 0f, 1f) }
     private val NO_NOSE_EXPRESSIONS = setOf(49, 50, 51, 52, 61, 62)
     private val DIRECT_EYES = setOf(60, 62, 65, 69, 70, 71, 72, 73, 74, 75, 78, 79)
@@ -1019,6 +1123,9 @@ object MiiRenderer {
         material(floatArrayOf(1.0f, 1.0f, 1.0f), 0.7f, 0.0f, 40.0f, true, 0.3f),
         material(floatArrayOf(1.0f, 1.0f, 1.0f), 0.7f, 0.0f, 40.0f, true, 0.3f),
         material(floatArrayOf(1.0f, 1.0f, 1.0f), 0.7f, 0.0f, 40.0f, true, 0.3f),
+        // The body and the trousers.
+        material(floatArrayOf(0.95622f, 0.95622f, 0.95622f), 0.496733f, 0.2409f, 3.0f, false, 0.4f),
+        material(floatArrayOf(0.95622f, 0.95622f, 0.95622f), 1.084967f, 0.2409f, 3.0f, false, 0.4f),
     )
 
     /** The PC multiplies its light colours into each material per pixel; the products are the same. */
@@ -1067,6 +1174,21 @@ internal class Mat4(val m: FloatArray) {
 
     companion object {
         val IDENTITY = Mat4(floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f))
+
+        /** Matrix4x4.CreateScale. */
+        fun scale(scale: FloatArray) = Mat4(floatArrayOf(scale[0], 0f, 0f, 0f, 0f, scale[1], 0f, 0f, 0f, 0f, scale[2], 0f, 0f, 0f, 0f, 1f))
+
+        /** Matrix4x4.CreateTranslation. */
+        fun translation(offset: FloatArray) = Mat4(floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, offset[0], offset[1], offset[2], 1f))
+
+        /** CreateRotationMatrix on the PC: CreateRotationX, then Y, then Z, each by [radians]'s angle. */
+        fun rotation(radians: FloatArray): Mat4 {
+            val (x, y, z) = radians.map { cos(it) to sin(it) }
+            val rotateX = Mat4(floatArrayOf(1f, 0f, 0f, 0f, 0f, x.first, x.second, 0f, 0f, -x.second, x.first, 0f, 0f, 0f, 0f, 1f))
+            val rotateY = Mat4(floatArrayOf(y.first, 0f, -y.second, 0f, 0f, 1f, 0f, 0f, y.second, 0f, y.first, 0f, 0f, 0f, 0f, 1f))
+            val rotateZ = Mat4(floatArrayOf(z.first, z.second, 0f, 0f, -z.second, z.first, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f))
+            return rotateX * rotateY * rotateZ
+        }
 
         /** Matrix4x4.CreateLookAt (right-handed). */
         fun lookAt(position: FloatArray, target: FloatArray, up: FloatArray): Mat4 {
@@ -1192,6 +1314,7 @@ internal object Colors {
 internal class FflCharInfo(studio: IntArray) {
     val beardColor = studio[0] or COMMON_COLOR
     val beardType = studio[1]
+    val build = studio[2]
     val eyeScaleY = studio[3]
     val eyeColor = studio[4] or COMMON_COLOR
     val eyeRotate = studio[5]
@@ -1211,6 +1334,7 @@ internal class FflCharInfo(studio: IntArray) {
     val faceType = studio[19]
     val faceLine = studio[20]
     val favoriteColor = studio[21]
+    val gender = studio[22]
     val glassColor = studio[23] or COMMON_COLOR
     val glassScale = studio[24]
     val glassType = studio[25]
@@ -1218,6 +1342,7 @@ internal class FflCharInfo(studio: IntArray) {
     val hairColor = studio[27] or COMMON_COLOR
     val hairDir = studio[28]
     val hairType = studio[29]
+    val height = studio[30]
     val moleScale = studio[31]
     val moleType = studio[32]
     val molePositionX = studio[33]

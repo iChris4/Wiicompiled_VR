@@ -29,20 +29,27 @@ class SidebarProfileCard(private val activity: Activity, private val card: View,
         if (activity.isDestroyed) return
         val license = snapshot?.let { ProfileStore.sidebarLicense(activity, it) }
         card.visibility = if (license == null) View.GONE else View.VISIBLE
-        if (license == null) return
+        if (snapshot == null || license == null) return
         name.text = ProfileStore.displayName(activity, license)
         code.text = license.friendCode
         code.visibility = if (license.friendCode.isEmpty()) View.GONE else View.VISIBLE
-        val friendCode = license.friendCode
-        if (mii.tag != friendCode) {
-            mii.tag = friendCode
+        val key = "${license.slot}:${license.miiId}:${license.friendCode}"
+        if (mii.tag != key) {
+            mii.tag = key
             mii.setImageDrawable(null)
             placeholder.visibility = View.VISIBLE
         }
-        ProfileStore.miiImage(activity, friendCode) { bitmap ->
-            if (mii.tag != friendCode) return@miiImage
+        // FriendsSideProfile on the PC, drawn at twice its pixels for smooth edges.
+        val size = (2 * PICTURE_DP * activity.resources.displayMetrics.density).toInt() and 1.inv()
+        ProfileStore.miiPicture(activity, snapshot, license, size) { bitmap ->
+            if (mii.tag != key) return@miiPicture
             mii.setImageBitmap(bitmap)
             placeholder.visibility = if (bitmap == null) View.VISIBLE else View.GONE
         }
+    }
+
+    private companion object {
+        /** The Mii picture's size in activity_launcher.xml. */
+        const val PICTURE_DP = 80
     }
 }

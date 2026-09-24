@@ -3,6 +3,7 @@ package org.wiicompiled.quest.launcher
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.zip.Deflater
+import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -124,6 +125,66 @@ class MiiRendererTest {
         // The face view shows about 108 units at the head, so the 20-unit square is about 12 pixels wide.
         val covered = pixels.count { it ushr 24 == 0xFF }
         assertTrue("covered $covered", covered in 100..200)
+    }
+
+    @Test
+    fun posesTurnTheHead() {
+        val mii = MiiFactory.male("Square").apply { faceShape = 5 }
+        val front = MiiRenderer.render(resource(), mii, 64)
+        val side = MiiRenderer.render(resource(), mii, 64, MiiRenderer.Pose.SIDE)
+        fun covered(pixels: IntArray) = pixels.count { it ushr 24 == 0xFF }
+        // Turned away by 15 degrees and seen from above, the square covers other pixels, and less.
+        assertTrue(!side.contentEquals(front))
+        assertTrue("side ${covered(side)} front ${covered(front)}", covered(side) < covered(front))
+        // The front pose is the one My Miis draws without a pose.
+        assertTrue(MiiRenderer.render(resource(), mii, 64, MiiRenderer.Pose.FRONT).contentEquals(front))
+    }
+
+    /** Made-up bodies: a boy's shirt on the left and trousers on the right, both below the head; no girl's body. */
+    private fun bodies() = MiiBodies(
+        male = MiiBodies.parse(rioModel(quad(-15f, 0f, 40f, 76f), quad(0f, 15f, 40f, 76f))),
+        female = emptyList(),
+    )
+
+    private fun opaqueIn(pixels: IntArray, rows: IntRange) = rows.sumOf { y -> (0 until 64).count { x -> pixels[y * 64 + x] ushr 24 == 0xFF } }
+
+    @Test
+    fun drawsTheUpperBodyBelowTheHeadInItsColours() {
+        val mii = MiiFactory.male("Square").apply {
+            faceShape = 5
+            favoriteColor = 5
+        }
+        val alone = MiiRenderer.render(resource(), mii, 64)
+        val dressed = MiiRenderer.render(resource(), mii, 64, bodies = bodies())
+        // The camera rises with the head onto the shoulders, so the head is where it was...
+        assertEquals(opaqueIn(alone, 0 until 48), opaqueIn(dressed, 0 until 48))
+        assertEquals(0xFF, dressed[32 * 64 + 32] ushr 24)
+        // ...and below it, where there was nothing, is the body.
+        assertEquals(0, alone[60 * 64 + 28] ushr 24)
+        fun channels(pixel: Int) = Triple((pixel shr 16) and 0xFF, (pixel shr 8) and 0xFF, pixel and 0xFF)
+        // The shirt in the favourite colour, blue...
+        val (shirtRed, _, shirtBlue) = channels(dressed[60 * 64 + 28])
+        assertEquals(0xFF, dressed[60 * 64 + 28] ushr 24)
+        assertTrue("shirt $shirtRed vs $shirtBlue", shirtBlue > shirtRed + 60)
+        // ...and the trousers grey.
+        val (pantsRed, _, pantsBlue) = channels(dressed[60 * 64 + 36])
+        assertEquals(0xFF, dressed[60 * 64 + 36] ushr 24)
+        assertTrue("trousers $pantsRed vs $pantsBlue", abs(pantsBlue - pantsRed) < 30)
+    }
+
+    @Test
+    fun theBodyFollowsBuildAndGender() {
+        val thin = MiiFactory.male("Thin").apply {
+            faceShape = 5
+            weight = 0
+        }
+        val heavy = thin.copy(weight = 127)
+        val rows = 50 until 64
+        assertTrue(opaqueIn(MiiRenderer.render(resource(), heavy, 64, bodies = bodies()), rows) >
+            opaqueIn(MiiRenderer.render(resource(), thin, 64, bodies = bodies()), rows))
+        // These bodies have none for a girl, who is drawn as without bodies at all.
+        val girl = MiiFactory.female("Girl").apply { faceShape = 5 }
+        assertTrue(MiiRenderer.render(resource(), girl, 64, bodies = bodies()).contentEquals(MiiRenderer.render(resource(), girl, 64)))
     }
 
     @Test

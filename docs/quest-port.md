@@ -229,11 +229,16 @@ and race counts, the VR and BR replaced by Pulsar's `RRRating.pul` in the NAND w
 knows the profile, as the PC's `RRratingReader` does. Retro WFC's public API gives the
 rest: a licence is Online (card glow) while its friend code is in a room
 (`/api/roomstatus`, asked again every 30 s while the page is shown), its VR history
-comes from `/api/leaderboard/player/<fc>/history?days=N`, and its Mii picture is the
-64-pixel PNG of `/api/leaderboard/player/<fc>`, kept on disk for the sidebar. It
-stands in for the PC's rendered Mii because a licence's Mii is rarely in the
-headset's Mii database, which only exists once My Miis has created it; a licence
-never taken online shows a silhouette. Badges come from WheelWizard's
+comes from `/api/leaderboard/player/<fc>/history?days=N`, and
+`/api/leaderboard/player/<fc>` gives the Mii it last played with, as the 74-byte
+`miiData` and a 64-pixel PNG, kept on disk. The Mii is drawn as the PC draws it,
+turned three-quarters (`CurrentUserSideProfile`) by My Miis' renderer (below): the
+Mii of the headset's Mii database with the licence's avatar ID (RKPD `+0x28`), as the
+PC looks it up, so a Mii made in My Miis shows once a licence takes it; else Retro
+WFC's `miiData` while its ID is still the licence's. It is 320 dp on the page, and
+80 dp in the sidebar, where, as on the PC, it stands on the card's bottom edge and
+rises out of it. Until the Mii parts are downloaded Retro WFC's PNG stands in, and
+a licence with neither shows a silhouette. Badges come from WheelWizard's
 `badges.json`. It only reads, without the PC's Rename and change Mii, and the PC's
 region picker is gone since the Quest runs PAL only. The card and the
 carousel sit side by side on the wide panel. `RksysProfilesTest` and `RetroWfcTest`
@@ -257,21 +262,26 @@ here a long press adds or removes one. Export saves one `.mii` through the save
 dialog, several into a chosen folder. Changes are refused while the game runs.
 
 The pictures come from a Kotlin port of the PC's software renderer (`MiiRenderer`,
-`FflResource`), without the PC's body, whose 3DS models are not ours to ship, so
-the head is drawn alone, as the Wii's own Mii icons show it. It draws from FFL's
-Mii parts (`FFLResHigh.dat`), which are Nintendo's and never in the APK: like the
-PC, the page downloads them once from the Internet Archive's copy of Miitomo's
-`AFLResHigh_2_3.dat` (a 4.4 MB zip) and checks them against their SHA-256
-(`MiiRenderResource`). Compared with the PC's C# renderer on 257 Miis covering
-every part and colour, 283 of 299 pictures were identical and the rest differed by
-one colour level in at most four pixels, except for one deliberate fix: the PC
-colours a beard with the hair colour, here with the facial hair colour, as the Wii
-does. The editor's choices are drawn from the same parts, the flat parts from their
-textures in the Mii's colours and hairstyles, head shapes and beards as the Mii's
-head, where the PC shows icons of its own. On a Quest 3 the 424-pixel face in the
+`FflResource`, `MiiBodies`), framed as the PC's `face` pictures: the head, and below
+it the upper body in the Mii's favourite colour, sized by its height and build. It
+draws from FFL's Mii parts (`FFLResHigh.dat`) and the 3DS body models the PC carries
+in its assembly (`mii_static_body_3ds_{male,female}_LE.rmdl`), all Nintendo's and
+never in the APK: the page downloads the parts once from the Internet Archive's copy
+of Miitomo's `AFLResHigh_2_3.dat` (a 4.4 MB zip), as the PC does, and the bodies
+(29 KB) from WheelWizard's repository at the commit that added them, and checks each
+against its SHA-256 (`MiiRenderResource`). A headset with the parts but not the
+bodies draws heads alone, and the page offers the bodies. Compared with the PC's C#
+renderer on 257 Miis covering every part and colour, 283 of 299 head pictures were
+identical and the rest differed by one colour level in at most four pixels; with
+bodies, 62 of 66 front pictures were identical and the rest one pixel apart, and the
+three-quarter ones differed in at most 32 edge pixels of 160,000. One deliberate
+fix: the PC colours a beard with the hair colour, here with the facial hair colour,
+as the Wii does. The editor's choices are drawn from the same parts, the flat parts
+from their textures in the Mii's colours and hairstyles, head shapes and beards as
+the Mii's head without its body, where the PC shows icons of its own. On a Quest 3 the 424-pixel face in the
 editor takes about 150 ms, drawn in four bands of rows in parallel, and a choice
-about 40 ms. `MiiDataTest`, `MiiDatabaseTest`, `MiiIdsTest` and `MiiRendererTest`
-(on a made-up parts file) cover it.
+about 40 ms. `MiiDataTest`, `MiiDatabaseTest`, `MiiIdsTest`, `MiiBodiesTest` and
+`MiiRendererTest` (on made-up parts and body files) cover it.
 
 The launcher follows the runtime's rules exactly. `TomlConfig` edits one line
 the way `RuntimeConfigFile::WriteSetting` does, and every edit re-reads the file,

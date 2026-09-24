@@ -68,6 +68,22 @@ object RetroWfc {
 
     // Parsing
 
+    /** What Retro WFC last saw of a profile's Mii: its 74 bytes, and its own picture of it. */
+    class PlayerMii(val data: ByteArray?, val image: ByteArray?)
+
+    /**
+     * The 74 bytes of the Mii a profile last played with (the Wii's RFLCharData, as the game sent
+     * it), or null without one.
+     */
+    fun parseMiiData(json: String): ByteArray? = parsing {
+        val encoded = JSONObject(json).text("miiData") ?: return@parsing null
+        try {
+            Base64.getMimeDecoder().decode(encoded).takeIf { it.size >= MiiData.SIZE }?.copyOf(MiiData.SIZE)
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    }
+
     /** The PNG of the player's Mii a profile carries (64 by 64 pixels), or null without one. */
     fun parseMiiImage(json: String): ByteArray? = parsing {
         val encoded = JSONObject(json).text("miiImageBase64") ?: return@parsing null
@@ -139,8 +155,9 @@ object RetroWfc {
 
     // Network; everything below blocks, so callers run it off the main thread.
 
-    /** The Mii picture of [friendCode]'s profile, or null when Retro WFC has never seen it. */
-    fun miiImage(friendCode: String): ByteArray? = get(profileUrl(friendCode), missingIsNull = true)?.let(::parseMiiImage)
+    /** The Mii of [friendCode]'s profile, or null when Retro WFC has never seen it. */
+    fun playerMii(friendCode: String): PlayerMii? =
+        get(profileUrl(friendCode), missingIsNull = true)?.let { json -> PlayerMii(parseMiiData(json), parseMiiImage(json)) }
 
     fun history(friendCode: String, days: Int): History {
         val json = get(historyUrl(friendCode, days), missingIsNull = true)

@@ -71,6 +71,19 @@ class RetroWfcTest {
     }
 
     @Test
+    fun aProfileCarriesItsMii() {
+        // The Mii Retro WFC keeps is the game's 74-byte one: here a Mii made in My Miis.
+        val mii = MiiFactory.female("Quest").apply { miiId = 0x89BF58D1L; systemId = 0xC8C6363CL }
+        val data = MiiData.serialize(mii)
+        val json = """{"pid": "601298307", "miiData": "${Base64.getEncoder().encodeToString(data)}"}"""
+        assertArrayEquals(data, RetroWfc.parseMiiData(json))
+        assertEquals(mii, MiiData.parse(RetroWfc.parseMiiData(json)!!))
+        assertNull(RetroWfc.parseMiiData("""{"pid": "1", "miiData": null}"""))
+        assertNull(RetroWfc.parseMiiData("""{"pid": "1", "miiData": "AAEC"}"""))
+        assertNull(RetroWfc.parseMiiData("""{"pid": "1"}"""))
+    }
+
+    @Test
     fun requestsAreTheOnesWheelWizardMakes() {
         assertEquals("https://rwfc.net/api/leaderboard/player/0349-6103-6675", RetroWfc.profileUrl("0349-6103-6675"))
         assertEquals("https://rwfc.net/api/leaderboard/player/0349-6103-6675/history?days=30", RetroWfc.historyUrl("0349-6103-6675", 30))

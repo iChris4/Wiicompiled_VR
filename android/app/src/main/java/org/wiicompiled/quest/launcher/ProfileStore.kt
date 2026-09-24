@@ -14,18 +14,24 @@ import org.wiicompiled.quest.GameStorage
 import org.wiicompiled.quest.R
 
 /**
- * What the profiles page and the sidebar's profile card show: the licences of Retro Rewind's save,
- * which one is primary, and what Retro WFC knows of them (their Mii pictures, who is in a room
- * now, their VR history), plus WheelWizard's badges. Files are read and the network asked off the
- * main thread, and every answer arrives on it. Mii pictures are also kept on disk, so the sidebar
- * shows them at once, even offline.
+ * What the profiles page and the sidebar's profile card show: the licences of Retro Rewind's save
+ * and their Miis, which one is primary, and what Retro WFC knows of them (the Miis they last played
+ * with, who is in a room now, their VR history), plus WheelWizard's badges. Files are read and the
+ * network asked off the main thread, and every answer arrives on it. What Retro WFC saw of a Mii is
+ * also kept on disk, so the sidebar shows it at once, even offline.
  */
 object ProfileStore {
 
-    /** The four licence slots of the save, an empty one null. */
-    data class Snapshot(val licenses: List<RksysProfiles.License?>) {
+    /**
+     * The four licence slots of the save, an empty one null, and the licences' Miis the headset's
+     * Mii database holds, by ID.
+     */
+    data class Snapshot(val licenses: List<RksysProfiles.License?>, val miis: Map<Long, Mii> = emptyMap()) {
         val any: Boolean get() = licenses.any { it != null }
     }
+
+    /** What Retro WFC last saw of a profile's Mii: the Mii, to draw it, and its own 64-pixel picture of it. */
+    private class Remote(val mii: Mii?, val picture: Bitmap?, val data: ByteArray?, val image: ByteArray?)
 
     private const val TAG = "WiiCompiledLauncher"
     // LauncherActivity's preferences file, where the launcher keeps its other choices.
@@ -41,9 +47,9 @@ object ProfileStore {
     private val main by lazy { Handler(Looper.getMainLooper()) }
 
     // Main thread only.
-    private val images = HashMap<String, Bitmap>()
-    private val imagesAsked = HashSet<String>()
-    private val waiting = HashMap<String, MutableList<(Bitmap?) -> Unit>>()
+    private val remotes = HashMap<String, Remote>()
+    private val remotesAsked = HashSet<String>()
+    private val waiting = HashMap<String, MutableList<(Remote?) -> Unit>>()
     private var online: Set<String> = emptySet()
     private var onlineAt = 0L
     private var badges: Map<String, List<RetroWfc.Badge>>? = null
@@ -64,7 +70,15 @@ object ProfileStore {
         } catch (e: IOException) {
             emptyMap()
         }
-        return RksysProfiles.parse(save, ratings)?.let(::Snapshot)
+        val licenses = RksysProfiles.parse(save, ratings) ?: return null
+        // GameLicenseService.ParseMiiData: a licence's Mii is looked up in the Mii database by ID.
+        val ids = licenses.mapNotNull { it?.miiId }.toSet()
+        val miis = try {
+            MiiDatabase.file(GameStorage.nandDirectory(context)).takeIf { it.isFile }?.let(MiiDatabase::byId).orEmpty()
+        } catch (e: IOException) {
+            emptyMap()
+        }
+        return Snapshot(licenses, miis.filterKeys { it in ids })
     }
 
     /** GameLicenseService's FOCUSED_USER: the licence the sidebar shows and the page opens on. */
@@ -84,59 +98,117 @@ object ProfileStore {
         snapshot.licenses.getOrNull(primarySlot(context)) ?: snapshot.licenses.firstOrNull { it != null }
 
     /**
-     * The Mii picture Retro WFC keeps for [friendCode]. [done] gets the one already known at once
-     * (from memory or disk), then Retro WFC's own the first time this session it differs, or null
-     * when there is none at all. A licence never taken online has no friend code, and no picture.
+     * [license]'s Mii, [size] pixels square and turned as the PC's profile page and sidebar show it.
+     * Like the PC, the Mii is the one of the headset's Mii database (the game's own, which My Miis
+     * edits) with the licence's ID. A licence whose Mii is not there shows the Mii Retro WFC last
+     * saw it play with, while that is still the licence's Mii. Both are drawn from the Mii parts,
+     * with their upper bodies, once My Miis downloaded them; until then Retro WFC's 64-pixel
+     * picture stands in. [done] can be called twice: with what is known at once, then with what
+     * Retro WFC answers.
      */
-    fun miiImage(context: Context, friendCode: String, done: (Bitmap?) -> Unit) {
+    fun miiPicture(
+        context: Context,
+        snapshot: Snapshot,
+        license: RksysProfiles.License,
+        size: Int,
+        done: (Bitmap?) -> Unit,
+    ) {
+        val drawable = MiiRenderResource.installed(context)
+        val pose = MiiRenderer.Pose.SIDE
+        val local = snapshot.miis[license.miiId]
+        if (local != null && drawable) {
+            MiiImages.picture(context, local, size, pose, done)
+            return
+        }
+        val friendCode = license.friendCode
+        remote(context, friendCode) { remote ->
+            // What Retro WFC saw is of another Mii once the licence took a new one.
+            val stale = remote?.mii != null && remote.mii.miiId != license.miiId
+            when {
+                remote == null || stale -> done(null)
+                remote.mii != null && drawable -> MiiImages.picture(context, remote.mii, size, pose) { bitmap ->
+                    // A newer answer may have arrived while this one was drawn.
+                    if (remotes[friendCode] === remote) done(bitmap ?: remote.picture)
+                }
+                else -> done(remote.picture)
+            }
+        }
+    }
+
+    /**
+     * What Retro WFC last saw of [friendCode]'s Mii. [done] gets what is already known at once (from
+     * memory or disk), then Retro WFC's answer the first time this session it differs, or null when
+     * there is nothing at all. A licence never taken online has no friend code, and nothing here.
+     */
+    private fun remote(context: Context, friendCode: String, done: (Remote?) -> Unit) {
         if (friendCode.isEmpty()) {
             done(null)
             return
         }
-        val known = images[friendCode]
+        val known = remotes[friendCode]
         if (known != null) done(known)
         // A fetch already on its way answers everyone who asked meanwhile.
         waiting[friendCode]?.let {
             it += done
             return
         }
-        if (!imagesAsked.add(friendCode)) {
+        if (!remotesAsked.add(friendCode)) {
             if (known == null) done(null)
             return
         }
         waiting[friendCode] = mutableListOf(done)
-        val file = File(File(context.applicationContext.cacheDir, IMAGE_DIRECTORY), "$friendCode.png")
+        val directory = File(context.applicationContext.cacheDir, IMAGE_DIRECTORY)
+        val imageFile = File(directory, "$friendCode.png")
+        val dataFile = File(directory, "$friendCode.mii")
         worker.execute {
-            val cached = if (file.isFile) runCatching { file.readBytes() }.getOrNull() else null
-            if (known == null) cached?.let(::decode)?.let { bitmap -> main.post { remember(friendCode, bitmap, finished = false) } }
+            val cached = remoteOf(read(dataFile), read(imageFile))
+            if (known == null && cached != null) main.post { remember(friendCode, cached, finished = false) }
             val fresh = try {
-                RetroWfc.miiImage(friendCode)
+                RetroWfc.playerMii(friendCode)
             } catch (e: IOException) {
-                Log.i(TAG, "No Mii picture for $friendCode from Retro WFC: ${e.message}")
+                Log.i(TAG, "No Mii for $friendCode from Retro WFC: ${e.message}")
                 null
             }
-            val bitmap = fresh?.takeIf { !it.contentEquals(cached ?: byteArrayOf()) }?.let(::decode)
-            if (fresh != null && bitmap != null) {
+            val changed = fresh != null && (
+                !(fresh.data ?: NONE).contentEquals(cached?.data ?: NONE) || !(fresh.image ?: NONE).contentEquals(cached?.image ?: NONE)
+                )
+            val remote = if (fresh != null && changed) remoteOf(fresh.data, fresh.image) else null
+            if (fresh != null && changed) {
                 runCatching {
-                    file.parentFile?.mkdirs()
-                    file.writeBytes(fresh)
+                    directory.mkdirs()
+                    store(dataFile, fresh.data)
+                    store(imageFile, fresh.image)
                 }
             }
-            main.post { remember(friendCode, bitmap, finished = true) }
+            main.post { remember(friendCode, remote, finished = true) }
         }
     }
 
-    /** Hands a picture to everyone waiting for [friendCode]; the last answer also tells those with none. */
-    private fun remember(friendCode: String, bitmap: Bitmap?, finished: Boolean) {
-        if (bitmap != null) images[friendCode] = bitmap
+    private fun remoteOf(data: ByteArray?, image: ByteArray?): Remote? {
+        val mii = data?.let { runCatching { MiiData.parse(it) }.getOrNull() }
+        val picture = image?.let(::decode)
+        return if (mii == null && picture == null) null else Remote(mii, picture, data, image)
+    }
+
+    private fun read(file: File): ByteArray? = if (file.isFile) runCatching { file.readBytes() }.getOrNull() else null
+
+    private fun store(file: File, bytes: ByteArray?) {
+        if (bytes == null) file.delete() else file.writeBytes(bytes)
+    }
+
+    /** Hands what Retro WFC saw to everyone waiting for [friendCode]; the last answer also tells those with none. */
+    private fun remember(friendCode: String, remote: Remote?, finished: Boolean) {
+        if (remote != null) remotes[friendCode] = remote
         val callbacks = (if (finished) waiting.remove(friendCode) else waiting[friendCode]?.toList()).orEmpty()
         when {
-            bitmap != null -> callbacks.forEach { it(bitmap) }
-            finished && images[friendCode] == null -> callbacks.forEach { it(null) }
+            remote != null -> callbacks.forEach { it(remote) }
+            finished && remotes[friendCode] == null -> callbacks.forEach { it(null) }
         }
     }
 
     private fun decode(bytes: ByteArray): Bitmap? = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+
+    private val NONE = ByteArray(0)
 
     /** The friend codes in a room now, asked again when the last answer is old; the last known ones when that fails. */
     fun online(done: (Set<String>) -> Unit) {

@@ -16,21 +16,31 @@ import java.util.zip.ZipInputStream
 import org.wiicompiled.quest.BuildConfig
 
 /**
- * FFL's Mii parts (FFLResHigh.dat), which every Mii picture is drawn from: the PC launcher's
- * MiiRenderingResourceInstaller. The file is Nintendo's, so the app never carries it; like the PC,
- * the player downloads it once from the Internet Archive's copy of Miitomo's files, and it is
- * checked against the SHA-256 of the copy both launchers install.
+ * What Mii pictures are drawn from: FFL's Mii parts (FFLResHigh.dat), the PC launcher's
+ * MiiRenderingResourceInstaller, and the 3DS Mii bodies the PC carries ([MiiBodies]). Both are
+ * Nintendo's, so the app never carries them; the player downloads them once, the parts from the
+ * Internet Archive's copy of Miitomo's files as on the PC, the bodies from Wheel Wizard's own
+ * repository, and each is checked against the SHA-256 of the copy both launchers use.
  */
 object MiiRenderResource {
     /** Endpoints.MiiRenderingArchive on the PC. */
     private const val ARCHIVE_URL = "https://web.archive.org/web/20180502054513id_/" +
         "http://download-cdn.miitomo.com/native/20180125111639/android/v2/asset_model_character_mii_AFLResHigh_2_3_dat.zip"
     private const val ENTRY = "asset/model/character/mii/AFLResHigh_2_3.dat"
-    const val DOWNLOAD_BYTES = 4_393_464L
+    private const val ARCHIVE_BYTES = 4_393_464L
     private const val FILE_BYTES = 4_579_008L
+
+    /** The PC's embedded body models, at the Wheel Wizard commit that added them. */
+    private const val BODY_URL = "https://raw.githubusercontent.com/TeamWheelWizard/WheelWizard/" +
+        "cc4c2e9df2ef5f7717e9b1fbe18a94acc4076b5f/WheelWizard/Features/MiiRendering/Resources/"
+    private val MALE_BODY = BodyFile("mii_static_body_3ds_male_LE.rmdl", 14_320L, "f17b764f4c42729572548f1cf760ab6e2eb6420cde5898b904be7eaea68cf837")
+    private val FEMALE_BODY = BodyFile("mii_static_body_3ds_female_LE.rmdl", 14_736L, "371639d2b73280bc2e23e6aac44b49403a026a0f019ad287ac2c7c996451742f")
+
     private const val ATTEMPTS = 3
     private const val TIMEOUT_MS = 30_000
     private const val TAG = "WiiCompiledLauncher"
+
+    private class BodyFile(val name: String, val bytes: Long, val sha256: String)
 
     private val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "MiiResource").apply { isDaemon = true } }
     private val main by lazy { Handler(Looper.getMainLooper()) }
@@ -38,13 +48,30 @@ object MiiRenderResource {
     @Volatile
     private var loaded: FflResource? = null
 
+    /** The bodies once read, or null while they have not been; [NO_BODIES] when they could not be. */
+    @Volatile
+    private var loadedBodies: MiiBodies? = null
+    private val NO_BODIES = MiiBodies(emptyList(), emptyList())
+
     /** Whether a download is running; main thread only. */
     var installing = false
         private set
 
     fun file(context: Context): File = File(context.filesDir, "MiiRendering/FFLResHigh.dat")
 
+    private fun bodyFile(context: Context, body: BodyFile) = File(context.filesDir, "MiiRendering/${body.name}")
+
+    /** Whether Miis can be drawn: the parts are here. */
     fun installed(context: Context): Boolean = file(context).length() == FILE_BYTES
+
+    /** Whether Miis are drawn with their bodies, as on the PC: the parts and the bodies are here. */
+    fun complete(context: Context): Boolean =
+        installed(context) && listOf(MALE_BODY, FEMALE_BODY).all { bodyFile(context, it).length() == it.bytes }
+
+    /** How much [install] downloads: what is not here yet. */
+    fun downloadBytes(context: Context): Long =
+        (if (installed(context)) 0L else ARCHIVE_BYTES) +
+            listOf(MALE_BODY, FEMALE_BODY).filter { bodyFile(context, it).length() != it.bytes }.sumOf { it.bytes }
 
     /** The parts, read once; null when they are not installed or cannot be read. Not on the main thread. */
     fun load(context: Context): FflResource? {
@@ -61,9 +88,26 @@ object MiiRenderResource {
         }
     }
 
+    /** The bodies, read once; null when they are not installed or cannot be read. Not on the main thread. */
+    fun bodies(context: Context): MiiBodies? {
+        loadedBodies?.let { return it.takeIf { it !== NO_BODIES } }
+        synchronized(this) {
+            loadedBodies?.let { return it.takeIf { it !== NO_BODIES } }
+            if (!complete(context)) return null
+            val bodies = try {
+                MiiBodies.load(bodyFile(context, MALE_BODY), bodyFile(context, FEMALE_BODY))
+            } catch (e: IOException) {
+                Log.w(TAG, "Cannot read the Mii bodies", e)
+                NO_BODIES
+            }
+            loadedBodies = bodies
+            return bodies.takeIf { it !== NO_BODIES }
+        }
+    }
+
     /**
-     * Downloads and installs the parts. [progress] gets the bytes downloaded so far, and [done]
-     * null or the reason it failed, both on the main thread.
+     * Downloads and installs what is missing. [progress] gets the bytes downloaded so far, and
+     * [done] null or the reason it failed, both on the main thread.
      */
     fun install(context: Context, progress: (Long) -> Unit, done: (String?) -> Unit) {
         if (installing) return
@@ -77,6 +121,8 @@ object MiiRenderResource {
                 Log.w(TAG, "Cannot install the Mii parts", e)
                 e.message ?: e.toString()
             }
+            // Read the bodies again, now that they may be here.
+            loadedBodies = null
             main.post {
                 installing = false
                 done(error)
@@ -85,42 +131,79 @@ object MiiRenderResource {
     }
 
     private fun download(context: Context, progress: (Long) -> Unit) {
-        val target = file(context)
-        target.parentFile?.mkdirs()
+        var before = 0L
+        if (!installed(context)) {
+            retrying("Mii parts") { downloadParts(context) { bytes -> progress(before + bytes) } }
+            before += ARCHIVE_BYTES
+        }
+        for (body in listOf(MALE_BODY, FEMALE_BODY)) {
+            if (bodyFile(context, body).length() == body.bytes) continue
+            retrying("Mii body ${body.name}") { downloadBody(context, body) { bytes -> progress(before + bytes) } }
+            before += body.bytes
+        }
+    }
+
+    private fun retrying(what: String, attempt: () -> Unit) {
         var failure: IOException? = null
-        for (attempt in 1..ATTEMPTS) {
+        for (number in 1..ATTEMPTS) {
             try {
-                val archive = fetch(progress)
-                val partial = File(target.parentFile, target.name + ".partial")
-                try {
-                    val digest = extract(archive, partial)
-                    if (digest != FflResource.SHA256) throw IOException("The downloaded Mii parts are not the expected file (SHA-256 $digest).")
-                    FflResource.load(partial)
-                    if (!partial.renameTo(target)) throw IOException("Cannot store ${target.path}")
-                } finally {
-                    partial.delete()
-                }
-                Log.i(TAG, "Installed the Mii parts to ${target.path}")
+                attempt()
                 return
             } catch (e: IOException) {
-                Log.w(TAG, "Mii parts download attempt $attempt/$ATTEMPTS failed: ${e.message}")
+                Log.w(TAG, "$what download attempt $number/$ATTEMPTS failed: ${e.message}")
                 failure = e
             }
         }
-        throw failure ?: IOException("The Mii parts could not be downloaded.")
+        throw failure ?: IOException("The $what could not be downloaded.")
     }
 
-    private fun fetch(progress: (Long) -> Unit): ByteArray {
-        val connection = (URL(ARCHIVE_URL).openConnection() as HttpURLConnection).apply {
+    private fun downloadParts(context: Context, progress: (Long) -> Unit) {
+        val target = file(context)
+        target.parentFile?.mkdirs()
+        val archive = fetch(ARCHIVE_URL, "The Internet Archive", ARCHIVE_BYTES, progress)
+        if (archive.size < 4 || archive[0] != 'P'.code.toByte() || archive[1] != 'K'.code.toByte()) {
+            throw IOException("The download is not a ZIP archive.")
+        }
+        val partial = File(target.parentFile, target.name + ".partial")
+        try {
+            val digest = extract(archive, partial)
+            if (digest != FflResource.SHA256) throw IOException("The downloaded Mii parts are not the expected file (SHA-256 $digest).")
+            FflResource.load(partial)
+            if (!partial.renameTo(target)) throw IOException("Cannot store ${target.path}")
+        } finally {
+            partial.delete()
+        }
+        Log.i(TAG, "Installed the Mii parts to ${target.path}")
+    }
+
+    private fun downloadBody(context: Context, body: BodyFile, progress: (Long) -> Unit) {
+        val target = bodyFile(context, body)
+        target.parentFile?.mkdirs()
+        val bytes = fetch(BODY_URL + body.name, "GitHub", body.bytes, progress)
+        val digest = sha256(bytes)
+        if (digest != body.sha256) throw IOException("The downloaded Mii body is not the expected file (SHA-256 $digest).")
+        MiiBodies.parse(bytes)
+        val partial = File(target.parentFile, target.name + ".partial")
+        try {
+            partial.writeBytes(bytes)
+            if (!partial.renameTo(target)) throw IOException("Cannot store ${target.path}")
+        } finally {
+            partial.delete()
+        }
+        Log.i(TAG, "Installed the Mii body ${target.path}")
+    }
+
+    private fun fetch(url: String, server: String, size: Long, progress: (Long) -> Unit): ByteArray {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = TIMEOUT_MS
             readTimeout = TIMEOUT_MS
             setRequestProperty("User-Agent", "WiiCompiledVR-Quest/${BuildConfig.VERSION_NAME}")
         }
         try {
             val code = connection.responseCode
-            if (code != HttpURLConnection.HTTP_OK) throw IOException("The Internet Archive answered $code.")
+            if (code != HttpURLConnection.HTTP_OK) throw IOException("$server answered $code.")
             val expected = connection.contentLengthLong
-            val bytes = ByteArrayOutputStream(if (expected > 0) expected.toInt() else DOWNLOAD_BYTES.toInt())
+            val bytes = ByteArrayOutputStream(if (expected > 0) expected.toInt() else size.toInt())
             connection.inputStream.use { input ->
                 val buffer = ByteArray(64 * 1024)
                 var total = 0L
@@ -138,15 +221,14 @@ object MiiRenderResource {
                 progress(total)
                 if (expected > 0 && total != expected) throw IOException("The download stopped after $total of $expected bytes.")
             }
-            val archive = bytes.toByteArray()
-            if (archive.size < 4 || archive[0] != 'P'.code.toByte() || archive[1] != 'K'.code.toByte()) {
-                throw IOException("The download is not a ZIP archive.")
-            }
-            return archive
+            return bytes.toByteArray()
         } finally {
             connection.disconnect()
         }
     }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /** Writes the archive's resource entry to [to] and returns its SHA-256. */
     private fun extract(archive: ByteArray, to: File): String {

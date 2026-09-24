@@ -181,9 +181,11 @@
     <string name="miis_import">Import</string>
     <string name="miis_empty_title">No Miis yet!</string>
     <string name="miis_empty_message">The Mii database in the game\'s NAND cannot be opened: %1$s</string>
-    <string name="miis_parts_message">Mii pictures are drawn from FFL\'s Mii parts (%1$s), the file Wheel Wizard downloads for the same reason: a copy of Miitomo\'s kept by the Internet Archive. They are downloaded once and stay on this headset.</string>
+    <string name="miis_parts_message">Mii pictures are drawn from FFL\'s Mii parts and the 3DS Mii bodies (%1$s), the files Wheel Wizard uses for the same reason: the parts from a copy of Miitomo\'s kept by the Internet Archive, the bodies from Wheel Wizard\'s own repository. They are downloaded once and stay on this headset.</string>
+    <string name="miis_bodies_message">Wheel Wizard draws each Mii with its upper body, from the 3DS Mii bodies in its own repository (%1$s). Download them once to see Miis the same way here.</string>
     <string name="miis_parts_download">Download</string>
     <string name="miis_parts_connecting">Connecting to the Internet Archive…</string>
+    <string name="miis_bodies_connecting">Connecting to GitHub…</string>
     <string name="miis_parts_downloading">Downloading the Mii parts: %1$s of %2$s</string>
     <string name="miis_parts_failed">The Mii parts could not be downloaded: %1$s</string>
     <string name="miis_new_title">New Mii</string>
@@ -342,7 +344,7 @@
     <string name="about_credit_nod">nod by encounter, which reads your disc image, built into this app as libnod_jni.</string>
     <string name="about_credit_mod_browser">The Patches page\'s mod browser finds mods on GameBanana, as Wheel Wizard\'s does. Their .7z and .rar archives are unpacked by sevenz-rust2 (Apache 2.0) and rars by bitplane (MIT or Apache 2.0), built into libnod_jni.</string>
     <string name="about_credit_profiles">My profiles reads your licences from Retro Rewind\'s save, and shows each one\'s Mii picture, VR history and online status from Retro WFC (rwfc.net), as Wheel Wizard does. Badges come from Wheel Wizard\'s data.</string>
-    <string name="about_credit_miis">My Miis edits the game\'s Mii database, and its Mii editor works as Wheel Wizard\'s. Miis are drawn by a port of Wheel Wizard\'s Mii renderer (GPL v3), from FFL\'s Mii parts, which you download from the Internet Archive\'s copy of Miitomo\'s files.</string>
+    <string name="about_credit_miis">My Miis edits the game\'s Mii database, and its Mii editor works as Wheel Wizard\'s. Miis are drawn by a port of Wheel Wizard\'s Mii renderer (GPL v3), from FFL\'s Mii parts, which you download from the Internet Archive\'s copy of Miitomo\'s files, and the 3DS Mii bodies, which you download from Wheel Wizard\'s repository.</string>
     <string name="about_credit_toolchain">On-headset builds use Termux\'s Android clang and lld, Google\'s Android NDK headers and libraries, and .NET for the translator.</string>
     <string name="about_credit_dolphin">The Dolphin emulator, the reference for how the Wii behaves.</string>
     <string name="about_credit_logo">The WiiCompiled logo by inkwreck.</string>

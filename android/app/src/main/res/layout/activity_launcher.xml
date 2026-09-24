@@ -9,6 +9,8 @@
     <LinearLayout
         android:layout_width="210dp"
         android:layout_height="match_parent"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         android:orientation="vertical"
         android:paddingStart="10dp"
         android:paddingTop="12dp"
@@ -39,8 +41,10 @@
                 android:textSize="16sp" />
         </LinearLayout>
 
-        <!-- WheelWizard's sidebar profile block: the primary licence, opening My profiles. -->
-        <LinearLayout
+        <!-- WheelWizard's sidebar profile block: the primary licence, opening My profiles. As on the
+             PC, its Mii stands on the block's bottom edge and rises out of it: an 80-pixel picture
+             beside CurrentUserProfile's 58-pixel column, the text 10 pixels past it. -->
+        <FrameLayout
             android:id="@+id/sidebar_profile"
             android:layout_width="match_parent"
             android:layout_height="60dp"
@@ -48,38 +52,24 @@
             android:background="@drawable/bg_sidebar_profile"
             android:clickable="true"
             android:focusable="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="6dp"
-            android:paddingEnd="8dp"
             android:visibility="gone">
 
-            <FrameLayout
-                android:layout_width="48dp"
-                android:layout_height="48dp">
-
-                <ImageView
-                    android:id="@+id/sidebar_profile_placeholder"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:layout_gravity="center"
-                    android:importantForAccessibility="no"
-                    android:src="@drawable/ic_user_circle"
-                    android:tint="@color/neutral_600" />
-
-                <ImageView
-                    android:id="@+id/sidebar_profile_mii"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:importantForAccessibility="no"
-                    android:scaleType="fitCenter" />
-            </FrameLayout>
+            <ImageView
+                android:id="@+id/sidebar_profile_placeholder"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="18dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_user_circle"
+                android:tint="@color/neutral_600" />
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="73dp"
+                android:layout_marginEnd="8dp"
                 android:orientation="vertical">
 
                 <TextView
@@ -100,7 +90,17 @@
                     android:textColor="@color/neutral_400"
                     android:textSize="12sp" />
             </LinearLayout>
-        </LinearLayout>
+
+            <ImageView
+                android:id="@+id/sidebar_profile_mii"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:layout_gravity="bottom|start"
+                android:layout_marginStart="-7dp"
+                android:layout_marginBottom="1dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter" />
+        </FrameLayout>
 
         <TextView
             style="@style/Launcher.SectionLabel"

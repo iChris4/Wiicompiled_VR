@@ -83,6 +83,21 @@ object MiiDatabase {
     @Throws(IOException::class)
     fun miis(file: File): List<Mii> = slots(file).mapNotNull { block -> block?.let { runCatching { MiiData.parse(it) }.getOrNull() } }
 
+    /**
+     * The database's Miis by ID, as the PC's GetByAvatarId finds them: the first slot holding an ID
+     * is that ID's Mii, and one the PC could not read either is left out.
+     */
+    @Throws(IOException::class)
+    fun byId(file: File): Map<Long, Mii> {
+        val found = LinkedHashMap<Long, Mii?>()
+        for (block in slots(file)) {
+            if (block == null) continue
+            val id = readId(block, 0)
+            if (id !in found) found[id] = runCatching { MiiData.parse(block) }.getOrNull()
+        }
+        return found.mapNotNull { (id, mii) -> mii?.let { id to it } }.toMap()
+    }
+
     /** Adds a Mii in the first free slot. */
     @Throws(IOException::class)
     fun add(file: File, mii: Mii) = edit(file) { db ->

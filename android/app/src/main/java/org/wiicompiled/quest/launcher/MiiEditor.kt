@@ -602,13 +602,13 @@ class MiiEditor(private val activity: Activity, private val root: View, private 
         spacer()
     }
 
-    /** Pictures a choice as the Mii's head wearing it, enlarged past the cell's edges as the list's tiles are. */
+    /** Pictures a choice as the Mii's head wearing it, without the body, enlarged past the cell's edges so the head fills it. */
     private fun head(view: ImageView, variant: Mii) {
         view.scaleX = HEAD_ZOOM
         view.scaleY = HEAD_ZOOM
         view.translationY = -dp(4).toFloat()
         (view.parent as? View)?.clipToOutline = true
-        MiiImages.head(activity, view, variant, (choicePixels() * HEAD_ZOOM).toInt() and 1.inv())
+        MiiImages.head(activity, view, variant, (choicePixels() * HEAD_ZOOM).toInt() and 1.inv(), withBody = false)
     }
 
     /** Pictures a flat part's choices from its texture; [none] is the choice that is no part at all. */

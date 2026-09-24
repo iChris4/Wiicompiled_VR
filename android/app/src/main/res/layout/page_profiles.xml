@@ -95,8 +95,8 @@
 
                     <ImageView
                         android:id="@+id/profiles_mii"
-                        android:layout_width="176dp"
-                        android:layout_height="176dp"
+                        android:layout_width="320dp"
+                        android:layout_height="320dp"
                         android:layout_gravity="center"
                         android:importantForAccessibility="no"
                         android:scaleType="fitCenter" />

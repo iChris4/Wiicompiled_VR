@@ -34,9 +34,10 @@ import org.wiicompiled.quest.R
  * licence is Online, with a glow, while its friend code is in a Retro WFC room, and one licence is
  * primary: the one the sidebar's card shows.
  *
- * It only reads. The headset has no Mii database, so a licence's Mii is the picture Retro WFC keeps
- * of it (a licence never taken online has none), and nothing renames a licence or changes its Mii.
- * The PC's region picker is left out too, since the Quest only runs PAL.
+ * A licence's Mii is drawn as the PC draws it, from the headset's Mii database, or else from the Mii
+ * Retro WFC last saw the licence play with (ProfileStore.miiPicture). It only reads: nothing renames
+ * a licence or changes its Mii. The PC's region picker is left out too, since the Quest only runs
+ * PAL.
  */
 class ProfilesPage(
     private val activity: Activity,
@@ -218,15 +219,18 @@ class ProfilesPage(
         loadHistory(license)
     }
 
+    /** The licence's Mii, drawn at the size it is shown at (UserProfilePage's CurrentUserSideProfile). */
     private fun showMii(license: RksysProfiles.License) {
-        val friendCode = license.friendCode
-        if (mii.tag != friendCode) {
-            mii.tag = friendCode
+        val loaded = snapshot ?: return
+        val key = "${license.slot}:${license.miiId}:${license.friendCode}"
+        if (mii.tag != key) {
+            mii.tag = key
             mii.setImageDrawable(null)
             placeholder.visibility = View.VISIBLE
         }
-        ProfileStore.miiImage(activity, friendCode) { bitmap ->
-            if (mii.tag != friendCode) return@miiImage
+        val size = (PICTURE_DP * activity.resources.displayMetrics.density).toInt() and 1.inv()
+        ProfileStore.miiPicture(activity, loaded, license, size) { bitmap ->
+            if (mii.tag != key) return@miiPicture
             mii.setImageBitmap(bitmap)
             placeholder.visibility = if (bitmap == null) View.VISIBLE else View.GONE
         }
@@ -407,6 +411,8 @@ class ProfilesPage(
     private fun dp(value: Int): Int = PatchesWidgets.dp(activity, value)
 
     private companion object {
+        /** The Mii picture's frame in page_profiles.xml. */
+        const val PICTURE_DP = 320
         const val CAROUSEL_PAGES = 2
         const val DEFAULT_DAYS = 30
         /** What VrHistoryGraph asks for "Lifetime". */

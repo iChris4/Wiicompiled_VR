@@ -41,21 +41,27 @@ class RksysProfilesTest {
         val bytes = save(
             0 to { buffer: ByteBuffer, base: Int ->
                 buffer.name(base, "Mario")
+                // The Mii: the headset's own, made in My Miis.
+                buffer.putInt(base + 0x28, 0x89BF58D1.toInt())
                 buffer.putInt(base + 0x5C, 0x23D71583)
                 buffer.putShort(base + 0xB0, 5793.toShort())
                 buffer.putShort(base + 0xB2, 5052.toShort())
                 buffer.putInt(base + 0xB4, 1062)
                 buffer.putInt(base + 0xDC, 416)
             },
-            2 to { buffer: ByteBuffer, base: Int -> buffer.name(base, "no name") },
+            2 to { buffer: ByteBuffer, base: Int ->
+                buffer.name(base, "no name")
+                // A guest Mii.
+                buffer.putInt(base + 0x28, 0x80000001.toInt())
+            },
         )
         val licenses = RksysProfiles.parse(bytes)!!
         assertEquals(4, licenses.size)
         assertNull(licenses[1])
         assertNull(licenses[3])
-        assertEquals(RksysProfiles.License(0, "Mario", 0x23D71583L, "0349-6103-6675", 5793, 5052, 1062, 416), licenses[0])
+        assertEquals(RksysProfiles.License(0, "Mario", 0x23D71583L, "0349-6103-6675", 5793, 5052, 1062, 416, 0x89BF58D1L), licenses[0])
         // A licence never taken online has no profile ID, so no friend code.
-        assertEquals(RksysProfiles.License(2, "no name", 0, "", 0, 0, 0, 0), licenses[2])
+        assertEquals(RksysProfiles.License(2, "no name", 0, "", 0, 0, 0, 0, 0x80000001L), licenses[2])
     }
 
     @Test
