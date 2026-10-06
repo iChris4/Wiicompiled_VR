@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds WiiCompiled Vision, the Apple Vision Pro app, from an existing translation.
 #
-#   visionos/Build-VisionOS.sh [--team TEAMID] [--retro-rewind-dir DIR | --without-retro-rewind]
+#   visionos/Build-VisionOS.sh [--team TEAMID] [--bundle-id ID]
+#                              [--retro-rewind-dir DIR | --without-retro-rewind]
 #                              [--simulator] [--build-dir DIR] [--dawn-package FILE]
 #                              [--jobs N] [--install [--device UDID]] [--open]
 #
@@ -25,12 +26,16 @@
 # Signing: a free Apple ID's personal team can sign for a headset paired with
 # this Mac (Xcode > Settings > Accounts). Pass its id with --team, or leave it
 # out and pick the team once in the generated project; CMake remembers the value.
+# The bundle identifier is made from the team, org.wiicompiled.vision.<team id>
+# (org.wiicompiled.vision without --team, which only the project's own team can
+# sign). --bundle-id chooses another; CMake remembers it too.
 set -euo pipefail
 
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 retro_rewind="AUTO"
 retro_rewind_dir="${MKW_VISIONOS_RETRO_REWIND_DIR:-}"
 team="${MKW_VISIONOS_TEAM:-}"
+bundle_id="${MKW_VISIONOS_BUNDLE_ID:-}"
 simulator=0
 build_dir="${repo_root}/build-visionos"
 dawn_package=""
@@ -44,6 +49,7 @@ while [[ $# -gt 0 ]]; do
         --retro-rewind-dir) retro_rewind_dir="${2:?}"; retro_rewind="ON"; shift 2 ;;
         --without-retro-rewind) retro_rewind="OFF"; shift ;;
         --team) team="${2:?}"; shift 2 ;;
+        --bundle-id) bundle_id="${2:?}"; shift 2 ;;
         --simulator) simulator=1; shift ;;
         --build-dir) build_dir="${2:?}"; shift 2 ;;
         --dawn-package) dawn_package="${2:?}"; shift 2 ;;
@@ -51,7 +57,7 @@ while [[ $# -gt 0 ]]; do
         --install) install=1; shift ;;
         --device) device="${2:?}"; shift 2 ;;
         --open) open_project=1; shift ;;
-        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -103,6 +109,7 @@ cmake_args=(
     -DAURORA_SDL3_PROVIDER=vendor
 )
 if [[ -n "${team}" ]]; then cmake_args+=("-DMKW_VISIONOS_TEAM=${team}"); fi
+if [[ -n "${bundle_id}" ]]; then cmake_args+=("-DMKW_VISIONOS_BUNDLE_ID=${bundle_id}"); fi
 cmake "${cmake_args[@]}"
 
 if [[ ${open_project} -eq 1 ]]; then

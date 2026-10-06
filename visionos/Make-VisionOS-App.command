@@ -2,13 +2,19 @@
 # WiiCompiled for Apple Vision Pro, from your own Mario Kart Wii disc, in one go.
 #
 #   visionos/Make-VisionOS-App.command [--game IMAGE] [--retro-rewind download|DIR]
-#                                      [--team TEAMID] [--device UDID] [--jobs N]
-#                                      [--no-install] [--no-disc-copy] [--reinstall]
-#                                      [--retranslate] [--offline]
+#                                      [--team TEAMID] [--bundle-id ID] [--device UDID]
+#                                      [--jobs N] [--no-install] [--no-disc-copy]
+#                                      [--reinstall] [--retranslate] [--offline]
 #
 # Double-clicked in Finder (no arguments) it asks for the disc image and whether to
 # include Retro Rewind, then runs every step below in a Terminal window. The
 # tutorial is docs/visionos-getting-started.md.
+#
+# The app's bundle identifier is made from the signing team's id,
+# org.wiicompiled.vision.<team id>: org.wiicompiled.vision itself is registered to the
+# project's team, and only that team can sign with it. --bundle-id chooses another, such
+# as com.yourname.wiicompiled; the build remembers it, so later runs (double-clicked ones
+# included) keep it without the option.
 #
 # Steps, each skipped when its result is already there:
 #   1. Check this Mac: Apple Silicon, Xcode with the visionOS platform, Homebrew's
@@ -33,6 +39,7 @@ cd "${repo_root}"
 game=""
 retro_rewind=""            # "" (none), "download", or a RetroRewind6 folder
 team="${MKW_VISIONOS_TEAM:-}"
+bundle_id="${MKW_VISIONOS_BUNDLE_ID:-}"
 device="${MKW_VISIONOS_DEVICE:-}"
 jobs="$(sysctl -n hw.ncpu)"
 install=1
@@ -48,6 +55,7 @@ while [[ $# -gt 0 ]]; do
         --game) game="${2:?}"; shift 2 ;;
         --retro-rewind) retro_rewind="${2:?}"; shift 2 ;;
         --team) team="${2:?}"; shift 2 ;;
+        --bundle-id) bundle_id="${2:?}"; shift 2 ;;
         --device) device="${2:?}"; shift 2 ;;
         --jobs) jobs="${2:?}"; shift 2 ;;
         --no-install) install=0; shift ;;
@@ -55,7 +63,7 @@ while [[ $# -gt 0 ]]; do
         --reinstall) reinstall=1; shift ;;
         --retranslate) retranslate=1; shift ;;
         --offline) offline=1; shift ;;
-        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -97,6 +105,58 @@ ask_disc() {
         [[ "${path}" == "~/"* ]] && path="${HOME}/${path#"~/"}"
         if [[ -f "${path}" ]]; then printf '%s' "${path}"; return 0; fi
         printf '    %sNot a file: %s%s\n' "${red}" "${path}" "${reset}" >&2
+    done
+}
+# The teams of the Apple IDs signed in to Xcode, one "TEAMID<tab>name (type)" per line.
+# Current Xcode keeps them under IDEProvisioningTeamByIdentifier and older ones under
+# IDEProvisioningTeams; an older key can linger beside the newer one, out of date. A key that
+# is not there fails defaults, which under pipefail would end the script without a word.
+xcode_teams() {
+    { defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier 2>/dev/null || true
+      defaults read com.apple.dt.Xcode IDEProvisioningTeams 2>/dev/null || true; } \
+        | awk '
+            function value(line) { sub(/^[^=]*= */, "", line); sub(/;[[:space:]]*$/, "", line); gsub(/"/, "", line); return line }
+            /teamID = /   { id = value($0) }
+            /teamName = / { name = value($0) }
+            /teamType = / { type = value($0) }
+            /^[[:space:]]*}/ {
+                # A personal team is already named "... (Personal Team)".
+                if (type != "" && index(name, "(" type ")") == 0) name = name " (" type ")"
+                if (length(id) == 10 && !(id in seen)) { seen[id] = 1; print id "\t" name }
+                id = ""; name = ""; type = "" }'
+}
+ask_team() {
+    # Asks for the signing team in the Terminal when this Mac does not name exactly one ("$1":
+    # the teams found, one per line): a number from the list, or a pasted Team ID. Prints the
+    # id; returns 1 when the user just presses Return.
+    local teams count raw id prompt i=0
+    teams="$(printf '%s\n' "$1" | sed '/^$/d')"
+    count="$(printf '%s\n' "${teams}" | sed '/^$/d' | wc -l | tr -d ' ')"
+    if [[ "${count}" -gt 0 ]]; then
+        printf '\n    %sSeveral teams can sign the app:%s\n' "${bold}" "${reset}" >&2
+        while IFS= read -r id; do
+            i=$((i + 1))
+            printf '      %d) %s  %s\n' "${i}" "${id}" "$(xcode_teams | awk -F '\t' -v id="${id}" '$1 == id { print $2; exit }')" >&2
+        done <<< "${teams}"
+        prompt="Type the number of the team to sign with, or paste its Team ID"
+    else
+        printf '\n    %sNo Apple developer team found on this Mac.%s\n' "${bold}" "${reset}" >&2
+        printf '    Sign in to Xcode (Xcode > Settings > Accounts, +, your Apple ID; a free account is\n' >&2
+        printf '    fine) and run this script again. Signed in already? Paste your Team ID: the\n' >&2
+        printf '    Organizational Unit of your Apple Development certificate in Keychain Access, or\n' >&2
+        printf '    Membership details on developer.apple.com for a paid account.\n' >&2
+        prompt="Team ID"
+    fi
+    while true; do
+        printf '    %s (or just Return to stop): ' "${prompt}" >&2
+        IFS= read -r raw || return 1
+        raw="$(printf '%s' "${raw}" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+        [[ -n "${raw}" ]] || return 1
+        if [[ "${raw}" =~ ^[0-9]{1,3}$ ]] && (( 10#${raw} >= 1 && 10#${raw} <= count )); then
+            printf '%s\n' "${teams}" | sed -n "$((10#${raw}))p"; return 0
+        fi
+        if [[ "${raw}" =~ ^[A-Z0-9]{10}$ ]]; then printf '%s' "${raw}"; return 0; fi
+        printf '    %sNot a number from the list or a 10-character Team ID: %s%s\n' "${red}" "${raw}" "${reset}" >&2
     done
 }
 # Copies a folder into the app's container on the headset with a progress bar. devicectl
@@ -285,11 +345,13 @@ if [[ -z "${team}" ]]; then
     if [[ -z "${teams}" ]]; then
         # No certificate yet: Xcode's account cache still knows the team, and the build
         # (-allowProvisioningUpdates) creates the certificate.
-        teams="$(defaults read com.apple.dt.Xcode IDEProvisioningTeams 2>/dev/null | sed -n 's/.*teamID = \([A-Z0-9]\{10\}\);.*/\1/p' | sort -u)"
+        teams="$(xcode_teams | cut -f 1 | sort -u)"
     fi
     count="$(printf '%s\n' "${teams}" | sed '/^$/d' | wc -l | tr -d ' ')"
     if [[ "${count}" == "1" ]]; then
         team="$(printf '%s\n' "${teams}" | sed '/^$/d')"
+    elif [[ -t 0 ]] && team="$(ask_team "${teams}")"; then
+        :
     elif [[ "${count}" == "0" ]]; then
         fail "No Apple developer team found on this Mac." \
             "Open Xcode > Settings > Accounts, press +, sign in with your Apple ID (a free account is fine)," \
@@ -423,19 +485,25 @@ fi
 step "Step 5/7  Building and signing the app"
 [[ -f generated/build_shards/shards.cmake ]] || fail "No translation found; run without --reinstall first."
 build_args=(--team "${team}" --jobs "${jobs}")
+if [[ -n "${bundle_id}" ]]; then build_args+=(--bundle-id "${bundle_id}"); fi
 if [[ -n "${retro_dir}" ]]; then build_args+=(--retro-rewind-dir "${retro_dir}"); else build_args+=(--without-retro-rewind); fi
 if [[ ${install} -eq 1 ]]; then build_args+=(--install --device "${device}"); fi
 note "The first build compiles Dawn and the runtime as well: 30 to 60 minutes. Later builds take a minute or two."
 "${repo_root}/visionos/Build-VisionOS.sh" "${build_args[@]}" || fail "The build or the installation failed; see the messages above." \
     "Signing problems: open Xcode > Settings > Accounts and check the Apple ID is signed in." \
+    "If the bundle identifier is not available, run again with --bundle-id com.yourname.wiicompiled." \
     "Installation problems: unlock the headset, keep it awake, and check it is still paired in Xcode > Window > Devices and Simulators."
+app="build-visionos/Release-xros/WiiCompiledVision.app"
 if [[ ${install} -eq 1 ]]; then done_msg "App built and installed"; else done_msg "App built"; fi
-[[ ${install} -eq 1 ]] || { printf '\nDone (not installed). App: build-visionos/Release-xros/WiiCompiledVision.app\n'; exit 0; }
+[[ ${install} -eq 1 ]] || { printf '\nDone (not installed). App: %s\n' "${app}"; exit 0; }
 
 # ---------------------------------------------------------------------------
 # 6. The disc onto the headset
 # ---------------------------------------------------------------------------
-bundle="org.wiicompiled.vision"
+# The identifier the app was built with: CMake keeps an earlier run's --bundle-id, so a run
+# without the option reads it back from the app rather than assuming the default.
+bundle="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Info.plist" 2>/dev/null)" \
+    || fail "No bundle identifier in ${app}/Info.plist." "Run the script again; the build should have made the app there."
 if [[ ${copy_disc} -eq 1 && ${reinstall} -eq 0 ]]; then
     step "Step 6/7  Copying the disc into the app on the headset"
     listing() {

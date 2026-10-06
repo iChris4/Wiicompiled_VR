@@ -75,7 +75,12 @@ visionos/Make-VisionOS-App.command --game ~/Downloads/RMCP01.rvz --retro-rewind 
 
 Leave out `--retro-rewind download` for the plain game. Without `--game`, the
 script asks for the disc at step 2: drag the image file from Finder onto the
-Terminal window and press Return. The script prints seven steps:
+Terminal window and press Return. If Xcode has several teams, it asks which
+one signs the app; type its number. The app's bundle identifier is made from
+that team's id (`org.wiicompiled.vision.` and the id), since the project's own,
+`org.wiicompiled.vision`, belongs to its developer's team. `--bundle-id`
+chooses another, which the build remembers; changing it later installs a
+second, separate app. The script prints seven steps:
 
 1. **Checking this Mac**: Xcode, the visionOS SDK, the tools, your team, the
    headset. Anything missing stops here with the fix to apply.
@@ -126,7 +131,7 @@ drops the connection (the script retries).
 | Make, change or share a Mii | The launcher's **Miis** tab (it imports and exports `.mii` files); then in the game, **License Settings > Change Mii** |
 | See your friend code, VR and VR history | The launcher's **Profiles** tab, once you have played Retro Rewind |
 | Move your profile to or from another device | **Profiles > Export…** and **Import…**: one zip with the saves, the Miis and the console identity. Play online with it on one device at a time |
-| Use another headset or team | `--device UDID`, `--team TEAMID` |
+| Use another headset or team | `--device UDID`, `--team TEAMID` (another team signs a separate app, with its own data) |
 
 ## When it stops
 
@@ -135,8 +140,8 @@ The script names what is wrong and what to do. The usual ones:
 - **"Xcode is not installed" / "visionOS platform is required"**: step 1.
   If Xcode is installed but not selected, `sudo xcode-select -s /Applications/Xcode.app`.
 - **"No Apple developer team found"**: sign in to Xcode (step 1.3). If you
-  have several teams, pass `--team` with the one to use; Xcode > Settings >
-  Accounts shows them.
+  are signed in, the script also takes your Team ID pasted in, or `--team`.
+  With several teams it asks which one to use.
 - **"No paired Apple Vision Pro"**: step 3. `xcrun devicectl list devices`
   must list it as `available (paired)`.
 - **"disc is not the supported clean PAL RMCP01 image"**: only the European
@@ -145,6 +150,10 @@ The script names what is wrong and what to do. The usual ones:
   check the Apple ID is still signed in (its session can expire). A free
   account that already has three sideloaded apps on the headset must remove
   one.
+- **Xcode says the app identifier is not available** (it cannot be registered
+  to your team): another team owns that bundle identifier, as with a
+  `build-visionos/` made before the identifier came from your team. Run again
+  with `--bundle-id` and one of your own, such as `com.yourname.wiicompiled`.
 - **"Failed to install the app on the device"**: unlock the headset and keep
   it awake; run again with `--reinstall`.
 - **The launcher says "No extracted disc yet"**: the disc copy did not

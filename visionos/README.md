@@ -27,5 +27,5 @@ own disc, follow [`../docs/visionos-getting-started.md`](../docs/visionos-gettin
 ```bash
 visionos/Make-VisionOS-App.command --game /path/to/RMCP01.rvz --retro-rewind download
 # or, with a translation already in generated/:
-visionos/Build-VisionOS.sh --team <TEAMID> [--retro-rewind-dir /path/to/RetroRewind6] --install
+visionos/Build-VisionOS.sh --team <TEAMID> [--bundle-id <ID>] [--retro-rewind-dir /path/to/RetroRewind6] --install
 ```

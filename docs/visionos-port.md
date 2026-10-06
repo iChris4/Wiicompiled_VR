@@ -424,7 +424,7 @@ with the Mac) for signing.
 3. **Build the app**:
 
    ```bash
-   visionos/Build-VisionOS.sh --team <TEAMID> [--retro-rewind-dir <RetroRewind6>] [--simulator] [--install]
+   visionos/Build-VisionOS.sh --team <TEAMID> [--bundle-id <ID>] [--retro-rewind-dir <RetroRewind6>] [--simulator] [--install]
    ```
 
    This configures `visionos/CMakeLists.txt` with the Xcode generator (the
@@ -436,6 +436,18 @@ with the Mac) for signing.
    `--retro-rewind-dir` names the pack folder the mod was translated from, so
    the app knows which pack version to install on the headset
    (`--without-retro-rewind` leaves the mod out).
+
+   The bundle identifier is `org.wiicompiled.vision.<team id>` (lowercase),
+   or `org.wiicompiled.vision` without a team: that one is registered to the
+   project's team, and an App ID belongs to one team only, so every other team
+   needs its own. `--bundle-id` sets `MKW_VISIONOS_BUNDLE_ID` to choose
+   another; CMake keeps it in the cache, and a cache from before the team-made
+   default keeps the identifier it holds. `Make-VisionOS-App.command` reads the
+   built app's `CFBundleIdentifier` back for the disc copy and the launch. When
+   it does not find exactly one team (from the valid Apple Development
+   certificates, then Xcode's `IDEProvisioningTeamByIdentifier` and older
+   `IDEProvisioningTeams`), it asks in the Terminal for a number from the list
+   or a pasted Team ID.
 
    By hand:
 

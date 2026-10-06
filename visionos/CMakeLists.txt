@@ -41,7 +41,19 @@ set(MKW_VISIONOS_RETRO_REWIND AUTO CACHE STRING "Carry Retro Rewind next to the 
 set_property(CACHE MKW_VISIONOS_RETRO_REWIND PROPERTY STRINGS AUTO ON OFF)
 set(MKW_VISIONOS_RETRO_REWIND_ROOT "" CACHE PATH "The RetroRewind6 folder the mod was translated from; its version.txt tells the launcher which pack to install")
 set(MKW_VISIONOS_TEAM "" CACHE STRING "Apple developer team id for automatic signing (empty: sign in Xcode)")
-set(MKW_VISIONOS_BUNDLE_ID "org.wiicompiled.vision" CACHE STRING "Bundle identifier of the app")
+set(MKW_VISIONOS_BUNDLE_ID "" CACHE STRING "Bundle identifier of the app (empty: org.wiicompiled.vision.<team id>)")
+# org.wiicompiled.vision is registered to the project's own team, and an App ID belongs to one
+# team only, so the identifier defaults to one made from the signing team's id, which that team
+# can register. A cache from before this default keeps the identifier it holds, and changing it
+# later installs a second, separate app.
+set(MKW_VISIONOS_APP_BUNDLE_ID "${MKW_VISIONOS_BUNDLE_ID}")
+if(NOT MKW_VISIONOS_APP_BUNDLE_ID)
+    if(MKW_VISIONOS_TEAM)
+        string(TOLOWER "org.wiicompiled.vision.${MKW_VISIONOS_TEAM}" MKW_VISIONOS_APP_BUNDLE_ID)
+    else()
+        set(MKW_VISIONOS_APP_BUNDLE_ID "org.wiicompiled.vision")
+    endif()
+endif()
 set(MKW_VISIONOS_APP_NAME "WiiCompiled Vision" CACHE STRING "Name shown on the Home View")
 
 # Xcode signs every Mach-O it produces on the iOS family, including the dependency
@@ -152,7 +164,7 @@ set_target_properties(WiiCompiledVision PROPERTIES
     OUTPUT_NAME "WiiCompiledVision"
     MACOSX_BUNDLE_INFO_PLIST "${MKW_VISIONOS_APP_DIR}/Info.plist"
     XCODE_ATTRIBUTE_GENERATE_INFOPLIST_FILE NO
-    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${MKW_VISIONOS_BUNDLE_ID}"
+    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${MKW_VISIONOS_APP_BUNDLE_ID}"
     XCODE_ATTRIBUTE_PRODUCT_NAME "WiiCompiledVision"
     XCODE_ATTRIBUTE_MKW_APP_DISPLAY_NAME "${MKW_VISIONOS_APP_NAME}"
     XCODE_ATTRIBUTE_MARKETING_VERSION "1.0"
