@@ -21,15 +21,16 @@ This guide covers building **WiiCompiled** (base game) and **Retro Rewind** from
 Install the required tools using [Homebrew](https://brew.sh):
 ```bash
 brew install cmake ninja
-brew install --cask dotnet-sdk@8
+brew install --cask dotnet-sdk
 ```
 
-Verify that Clang, CMake, Ninja, and the .NET 8 runtime are available:
+Verify that Clang, CMake, Ninja, and a .NET runtime, 8 or later, are available (the
+translator targets .NET 8 and rolls forward to a newer runtime when 8 is absent):
 ```bash
 clang --version
 cmake --version
 ninja --version
-dotnet --list-runtimes   # Must list Microsoft.NETCore.App 8.x
+dotnet --list-runtimes   # Must list Microsoft.NETCore.App 8.x or later
 ```
 
 ---

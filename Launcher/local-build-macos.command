@@ -92,10 +92,10 @@ if [[ -n "$translator_bin" ]]; then
 else
     command -v "$dotnet_bin" >/dev/null || fail "required tool not found: $dotnet_bin"
     translator_dll="$workspace/translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cli.dll"
-    if [[ ! -f "$translator_dll" ]]; then
-        step build-translator 'Building the translator'
-        "$dotnet_bin" build "$workspace/translator/src/Translator.Cli/Translator.Cli.csproj" -c Release
-    fi
+    # Built on every run, as local-build.sh does: the build is incremental, and a translator
+    # left over from before a pull would translate with the old code and runtime settings.
+    step build-translator 'Building the translator'
+    "$dotnet_bin" build "$workspace/translator/src/Translator.Cli/Translator.Cli.csproj" -c Release
     translator() { "$dotnet_bin" "$translator_dll" "$@"; }
 fi
 

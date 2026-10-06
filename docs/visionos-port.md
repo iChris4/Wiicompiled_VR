@@ -398,8 +398,9 @@ build from the user's disc.
 The steps by hand, for development:
 
 Prerequisites: an Apple Silicon Mac, Xcode 16 or later with the visionOS
-platform installed, CMake 3.28+, Ninja, Python 3, git, and the .NET 8 SDK for the
-translator. An Apple ID (a free personal team suffices for a headset paired
+platform installed, CMake 3.28+, Ninja, Python 3, git, and a .NET SDK, 8 or later,
+for the translator (built for .NET 8, it rolls forward to a newer runtime when 8
+is absent). An Apple ID (a free personal team suffices for a headset paired
 with the Mac) for signing.
 
 1. **Translate the game** exactly as for the desktop:
@@ -478,6 +479,11 @@ Done on an Apple Silicon Mac with Xcode 27 (visionOS 27 SDK):
   `openxr_input.cpp`, `visionos_host.mm`, `host_platform.cpp`,
   `guest_flat_memory_macos.cpp`, `main.cpp`, `settings_overlay.cpp`.
 - The Swift sources type-check with `swiftc -typecheck` against the SDK.
+- The translator, built for .NET 8 with `RollForward` set to `Major`, builds
+  with the .NET 10 SDK and runs where the .NET 10 runtime is the only one
+  installed, as with Homebrew's current `dotnet-sdk` cask alone. There, the
+  base game's `translate-recursive` output (source bundle, metadata,
+  mod-awareness file) is byte-identical to the one made on .NET 8.
 - With a base-game translation (29,637 functions, 72 shards),
   `visionos/Build-VisionOS.sh --team <id>` produces a 119 MB
   `WiiCompiledVision.app` that passes `codesign --verify --deep --strict`, with
