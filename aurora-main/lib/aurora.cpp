@@ -2456,8 +2456,10 @@ void record_frame_telemetry() {
     // seconds. The headset compositor's own log (logcat tag VrApi) repeats frames, so it cannot show this.
     static const bool fpsLog = [] {
       const bool on = android_debug::property_int("debug.wiicompiled.fpslog", 0) == 1;
-      // The same switch turns on the per-pass GPU timestamps reported below the frame-rate line.
+      // The same switch turns on the per-pass GPU timestamps reported below the frame-rate line, and the
+      // count of why draws did not merge.
       gfx::gpu_timing_set_enabled(on);
+      gfx::g_countMergeBreaks.store(on, std::memory_order_relaxed);
       return on;
     }();
     if (fpsLog) {
@@ -2467,9 +2469,21 @@ void record_frame_telemetry() {
       // GPU timings: an overlay that stops draws merging shows up here long before it shows up as a frame rate.
       static uint64_t windowDraws = 0;
       static uint64_t windowMerged = 0;
+      static std::array<uint64_t, 8> windowBreaks{};
       ++windowFrames;
       windowDraws += gfx::g_stats.drawCallCount;
       windowMerged += gfx::g_stats.mergedDrawCallCount;
+      {
+        const auto& breaks = gfx::g_sealedMergeBreaks;
+        windowBreaks[0] += breaks.stateDirty;
+        windowBreaks[1] += breaks.particleMotion;
+        windowBreaks[2] += breaks.orthographicStereo;
+        windowBreaks[3] += breaks.noPreviousDraw;
+        windowBreaks[4] += breaks.linesOrPoints;
+        windowBreaks[5] += breaks.vertexMotion;
+        windowBreaks[6] += breaks.instanced;
+        windowBreaks[7] += breaks.nativeWheel;
+      }
       const auto now = std::chrono::steady_clock::now();
       const std::chrono::duration<double> elapsed = now - windowStart;
       if (elapsed.count() >= 5.0) {
@@ -2491,6 +2505,15 @@ void record_frame_telemetry() {
                  permitWait, prepare, encode,
                  static_cast<double>(windowDraws) / std::max(windowFrames, 1u),
                  static_cast<double>(windowMerged) / std::max(windowFrames, 1u));
+        // Why the frame's draws did not join the draw before them (gfx::MergeBreakCounts): what a
+        // batching change could still win, and what it would have to preserve.
+        const auto perFrame = [&](size_t i) { return static_cast<double>(windowBreaks[i]) / std::max(windowFrames, 1u); };
+        Log.info("Draws a frame not merged into the one before: {:.0f} by a GX state change, {:.0f} particle "
+                 "quads, {:.0f} 2D draws while stereo records, {:.0f} first of a pass, {:.0f} lines or points, "
+                 "{:.0f} after a vertex-motion draw, {:.0f} after an instanced draw, {:.0f} by the wheel's arrays",
+                 perFrame(0), perFrame(1), perFrame(2), perFrame(3), perFrame(4), perFrame(5), perFrame(6),
+                 perFrame(7));
+        windowBreaks = {};
         windowDraws = 0;
         windowMerged = 0;
         if (const std::string gpuTiming = gfx::gpu_timing_report(); !gpuTiming.empty()) {

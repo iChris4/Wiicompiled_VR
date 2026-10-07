@@ -2390,6 +2390,41 @@ static bool particle_quad_motion(GXPrimitive prim, GXVtxFmt fmt, uint16_t count)
          g_gxState.projType == GX_PERSPECTIVE && stereo_frame_interpolation_active();
 }
 
+// Why this draw did not join the one before it, for the fpslog (gfx::MergeBreakCounts): the merge test
+// of handle_draw taken apart, run only after it failed and only while the counting is on, so a frame
+// without diagnostics pays one relaxed load per draw. A draw failing several tests counts under each.
+static void count_merge_breaks(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
+                               const NativeWheelArray* nativeWheel) noexcept {
+  auto& counts = gfx::g_mergeBreaks;
+  if (g_gxState.stateDirty) {
+    ++counts.stateDirty;
+  }
+  if (particle_quad_motion(prim, fmt, vtxCount)) {
+    ++counts.particleMotion;
+  }
+  if (aurora::stereo_frame_provider_active() && g_gxState.projType == GX_ORTHOGRAPHIC) {
+    ++counts.orthographicStereo;
+  }
+  const auto* lastDraw = gfx::get_last_draw_command<DrawData>();
+  if (lastDraw == nullptr) {
+    ++counts.noPreviousDraw;
+    return;
+  }
+  if (prim == GX_LINES || prim == GX_LINESTRIP || prim == GX_POINTS) {
+    ++counts.linesOrPoints;
+  }
+  if (lastDraw->uniformReplayLayout.vertexMotion.enabled) {
+    ++counts.vertexMotion;
+  }
+  if (lastDraw->instanceCount != 1) {
+    ++counts.instanced;
+  }
+  if (!nativeWheelArrays.empty() &&
+      !(nativeWheelLastDrawCommand == lastDraw && nativeWheelLastDecision == nativeWheel)) {
+    ++counts.nativeWheel;
+  }
+}
+
 static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian) {
   ZoneScoped;
   GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
@@ -2464,6 +2499,9 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
           return true;
         }
     }
+
+  if (gfx::g_countMergeBreaks.load(std::memory_order_relaxed))
+    UNLIKELY { count_merge_breaks(prim, fmt, vtxCount, nativeWheel); }
 
   const bool interpolationIdentityActive = frame_interpolation_identity_needed();
   const PnMtxUsage matrixUsage = interpolationIdentityActive ? pn_mtx_usage(vertices, vtxCount, vtxSize) : PnMtxUsage{};

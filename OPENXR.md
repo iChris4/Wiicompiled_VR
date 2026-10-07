@@ -627,7 +627,10 @@ neighbour's array binding, so only draws that reached the same decision may merg
 per array instead, and so refusing to merge every primitive that binds the vehicle's array, cost 6 ms
 of GPU time a frame on a Quest 3 (a race frame has 228 such primitives, recorded once and replayed in
 the mono pass and both eyes) and took a 56 FPS race down to 42. `debug.wiicompiled.fpslog 1` reports
-the draw calls a frame and the primitives merged away, which is where that shows up first.
+the draw calls a frame and the primitives merged away, which is where that shows up first, and a line
+counting why the other draws did not join the one before them (a GX state change, a particle quad, a
+2D draw while stereo records, the first draw of a pass, lines or points, a vertex-motion or instanced
+predecessor, or the wheel's arrays).
 
 The copy is matched against the race camera's view (`RaceCamera::GetViewMtx` with no dolly offset),
 because the scene camera is only set once the draws run. The log reports, once a second, how far

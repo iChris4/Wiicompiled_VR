@@ -79,6 +79,9 @@ wgpu::Buffer g_indexBuffer;
 wgpu::Buffer g_storageBuffer;
 uint32_t g_drawCallCount = 0;
 uint32_t g_mergedDrawCallCount = 0;
+MergeBreakCounts g_mergeBreaks{};
+MergeBreakCounts g_sealedMergeBreaks{};
+std::atomic<bool> g_countMergeBreaks{false};
 } // namespace aurora::gfx
 
 namespace aurora::webgpu {
@@ -329,6 +332,7 @@ void reset_vertex_push_record() noexcept {
   s_lastGxDraw.reset();
   s_trackDrawCommands = false;
   g_mergedDrawCallCount = 0;
+  g_mergeBreaks = {};
 }
 const std::vector<uint8_t>& last_pushed_vertices() noexcept { return s_lastPushedVertices; }
 const std::vector<uint16_t>& last_pushed_indices() noexcept { return s_lastPushedIndices; }

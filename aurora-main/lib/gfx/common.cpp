@@ -158,6 +158,9 @@ wgpu::BindGroup g_uniformBindGroup;
 AuroraStats g_stats{};
 uint32_t g_drawCallCount = 0;
 uint32_t g_mergedDrawCallCount = 0;
+MergeBreakCounts g_mergeBreaks{};
+MergeBreakCounts g_sealedMergeBreaks{};
+std::atomic<bool> g_countMergeBreaks{false};
 
 using CommandList = std::vector<Command>;
 struct RenderPass {
@@ -1252,6 +1255,7 @@ static bool begin_frame_impl(bool clearEfb) {
 
   g_drawCallCount = 0;
   g_mergedDrawCallCount = 0;
+  g_mergeBreaks = {};
   if (clearEfb) {
     gx::begin_frame_interpolation();
   }
@@ -1744,6 +1748,7 @@ static bool end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame,
   s_mappingState.store(BufferMapState::Unmapped, std::memory_order_release);
   g_stats.drawCallCount = g_drawCallCount;
   g_stats.mergedDrawCallCount = g_mergedDrawCallCount;
+  g_sealedMergeBreaks = g_mergeBreaks;
   g_stats.lastVertSize = writeBuffer(g_verts, g_vertexBuffer, VertexBufferSize, "Vertex");
   g_stats.lastUniformSize = writeBuffer(g_uniforms, g_uniformBuffer, UniformBufferSize, "Uniform");
   g_stats.lastIndexSize = writeBuffer(g_indices, g_indexBuffer, IndexBufferSize, "Index");

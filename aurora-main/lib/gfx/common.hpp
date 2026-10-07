@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <array>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -235,6 +236,23 @@ inline constexpr uint64_t TextureUploadSize = 25165824;  // 24mb
 extern AuroraStats g_stats;
 extern uint32_t g_drawCallCount;
 extern uint32_t g_mergedDrawCallCount;
+// Why a draw started a new draw command instead of joining the previous one (gx/command_processor.cpp
+// handle_draw), counted only while g_countMergeBreaks is set (the Quest fpslog); a draw failing several
+// of the merge tests counts under each. g_sealedMergeBreaks is the sealed frame's copy, taken with
+// g_stats.
+struct MergeBreakCounts {
+  uint32_t stateDirty = 0;
+  uint32_t particleMotion = 0;
+  uint32_t orthographicStereo = 0;
+  uint32_t noPreviousDraw = 0;
+  uint32_t linesOrPoints = 0;
+  uint32_t vertexMotion = 0;
+  uint32_t instanced = 0;
+  uint32_t nativeWheel = 0;
+};
+extern MergeBreakCounts g_mergeBreaks;
+extern MergeBreakCounts g_sealedMergeBreaks;
+extern std::atomic<bool> g_countMergeBreaks;
 extern wgpu::Buffer g_vertexBuffer;
 extern wgpu::Buffer g_uniformBuffer;
 extern wgpu::Buffer g_indexBuffer;

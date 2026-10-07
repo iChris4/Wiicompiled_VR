@@ -2895,6 +2895,45 @@ TEST_F(GXFifoTest, MergedDrawOffsetsCachedTopologyWithoutJoiningPrimitives) {
   EXPECT_EQ(aurora::gfx::testing::last_pushed_indices(), (std::vector<u16>{3, 4, 5}));
 }
 
+// The fpslog's merge-break counts name why a draw started a new draw command, and count nothing
+// while the diagnostics are off.
+TEST_F(GXFifoTest, MergeBreakCountsNameWhyDrawsDoNotJoin) {
+  struct Reset {
+    ~Reset() { aurora::gfx::g_countMergeBreaks.store(false); }
+  } reset;
+  g_gxState.lastVtxFmt = GX_VTXFMT0;
+  g_gxState.lastVtxSize = 1;
+  g_gxState.stateDirty = true;
+  aurora::gfx::testing::use_draw_command_tracking(true);
+  aurora::gfx::g_countMergeBreaks.store(true);
+
+  // The first draw of a frame: dirty state and no draw to join. The second joins it.
+  std::vector<u8> fifo;
+  append_test_draw(fifo, GX_TRIANGLES, 3);
+  append_test_draw(fifo, GX_TRIANGLES, 3);
+  decode_fifo(fifo);
+  EXPECT_EQ(aurora::gfx::g_mergedDrawCallCount, 1u);
+  EXPECT_EQ(aurora::gfx::g_mergeBreaks.stateDirty, 1u);
+  EXPECT_EQ(aurora::gfx::g_mergeBreaks.noPreviousDraw, 1u);
+  EXPECT_EQ(aurora::gfx::g_mergeBreaks.particleMotion, 0u);
+  EXPECT_EQ(aurora::gfx::g_mergeBreaks.linesOrPoints, 0u);
+
+  // A state change before a draw, with a draw to join: only the state counts.
+  g_gxState.stateDirty = true;
+  std::vector<u8> dirty;
+  append_test_draw(dirty, GX_TRIANGLES, 3);
+  decode_fifo(dirty);
+  EXPECT_EQ(aurora::gfx::g_mergedDrawCallCount, 1u);
+  EXPECT_EQ(aurora::gfx::g_mergeBreaks.stateDirty, 2u);
+  EXPECT_EQ(aurora::gfx::g_mergeBreaks.noPreviousDraw, 1u);
+
+  // Off: the same break goes uncounted.
+  aurora::gfx::g_countMergeBreaks.store(false);
+  g_gxState.stateDirty = true;
+  decode_fifo(dirty);
+  EXPECT_EQ(aurora::gfx::g_mergeBreaks.stateDirty, 2u);
+}
+
 TEST_F(GXFifoTest, VrDirectParticleQuadsRetainSeparateCentersInFifoAndRawDraws) {
   struct Reset {
     ~Reset() {
