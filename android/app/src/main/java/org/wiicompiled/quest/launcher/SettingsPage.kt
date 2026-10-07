@@ -323,6 +323,11 @@ class SettingsPage(
                 read = { it.bool("video", "deindex_vertices") ?: true },
                 write = { c, value -> c.setBool("video", "deindex_vertices", value) },
             )
+            toggle(
+                R.string.graphics_direct_presentation, R.string.graphics_direct_presentation_helper,
+                read = { it.bool("vr", "direct_presentation") ?: true },
+                write = { c, value -> c.setBool("vr", "direct_presentation", value) },
+            )
         }
     }
 

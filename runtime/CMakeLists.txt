@@ -350,6 +350,7 @@ endif()
 # failure mode is worth far more than the milliseconds.
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 set_source_files_properties(src/vr/openxr_vulkan_win32.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+set_source_files_properties(src/vr/openxr_vulkan_direct.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 if(MKW_PLATFORM_MACOS)
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory.cpp")
     # HostContext's Apple Silicon backend is implemented in a small assembly

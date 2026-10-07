@@ -41,17 +41,59 @@ against the backend-neutral vocabulary in `runtime/include/vr/openxr_backend.h`
 | Platform | Backend | Binding |
 | --- | --- | --- |
 | Windows | `OpenXRD3D12Backend` (`openxr_d3d12.cpp`) | Dawn's own D3D12 device and queue are bound to the session; eyes are copied on that queue. |
-| Android | `OpenXRVulkanBackend` (`openxr_vulkan.cpp`) | The backend creates its **own** `VkInstance`/`VkDevice` through the OpenXR runtime; Dawn and that device meet on `AHardwareBuffer`s. |
+| Android | `OpenXRQuestVulkanBackend` (`openxr_vulkan_direct.cpp`): direct presentation through `OpenXRVulkanDirectBackend` by default, the two-device bridge `OpenXRVulkanBackend` (`openxr_vulkan.cpp`) when `[vr] direct_presentation` is off or Dawn lacks the hooks | Direct: Dawn's own `VkDevice` and queue, created through the OpenXR runtime, are bound to the session and the eyes are drawn straight into the swapchain images. Bridge: the backend creates its **own** `VkInstance`/`VkDevice` through the runtime; Dawn and that device meet on `AHardwareBuffer`s. |
 
 The D3D12 types keep their old names through aliases, so `openxr_d3d12_replay_tests`
 and the desktop code did not change.
 
-### Why a second Vulkan device
+### Direct presentation
 
-The pinned Dawn package (`v20260603.191052`) exposes only `VkInstance` from its
-Vulkan backend, no `VkDevice`, `VkQueue` or queue family, and it will not enable
-the device extensions the OpenXR runtime demands. Binding Dawn's device to the
-session is therefore impossible without a patched Dawn. Instead:
+Since 2026-10-07 the Quest binds Dawn's own Vulkan device to the session, as
+the Windows Vulkan binding does (`OPENXR.md`, "Windows Vulkan"), and the Metroid
+Prime port did after it. `OpenXRVulkanDirectBackend::QueryGraphicsRequirements`
+installs the hooks of the patched Dawn's Vulkan ABI
+(`aurora-main/patches/dawn/aurora_vulkan_interop.inc`, `AuroraDawnVulkan*`,
+which the Quest's Dawn has carried since the foveation work) before Aurora
+creates its device, so Dawn's `VkInstance` and `VkDevice` come from
+`xrCreateVulkanInstanceKHR` and `xrCreateVulkanDeviceKHR` (Vulkan 1.2 and the
+timeline-semaphore feature are asked for, as on Windows). `BindAurora` then
+hands Dawn's instance, physical device, device and graphics queue to
+`xrCreateSession`, creates the eye swapchains in the sRGB sibling of Aurora's
+UNORM format, and installs Aurora's direct stereo sink
+(`aurora-main/lib/webgpu/vulkan_direct_interop.cpp`): each acquired swapchain
+`VkImage` is wrapped once as a Dawn texture (`AuroraDawnVulkanWrap`) and the
+eye is drawn into it with the same full-screen triangle as the bridge below,
+decoding to the sRGB attachment, inside the frame worker's command buffer right
+after the eye passes; after the submit, `AuroraDawnVulkanRelease` returns the
+images to the colour-attachment layout on the same queue and the XR thread
+releases them. Nothing crosses devices, so there are no fences: ordering is the
+queue's. The OpenXR rule that the runtime may use the queue only in
+`xrBeginFrame`, `xrEndFrame`, `xrAcquireSwapchainImage` and
+`xrReleaseSwapchainImage` is honoured by taking Dawn's device lock around
+exactly those calls (and swapchain creation and destruction), never across
+`xrWaitFrame` or `xrWaitSwapchainImage`.
+
+Measured on the same automated Luigi Circuit race (player idle, `render_scale`
+0.8, GPU at 492 MHz, 60 FPS; the binding is chosen at start, so three rounds
+of alternating launches, each captured for a minute): the compositor's
+`App=` GPU time went from 8.2 ms with the bridge to 5.1 ms, `GPU%` from 0.57
+to 0.38, `CPU&GPU=` latency from 9.0 to 5.3 ms and `CPU%` from 0.52 to 0.45,
+while Aurora's own eye timings stayed within their launch-to-launch spread:
+the saving is the bridge's `vkCmdCopyImage` on the second device and its
+fences, which Prime had measured at about 2.6 ms for both eyes. Screenshots of
+the two bindings are identical.
+`[vr] direct_presentation` (the settings page's "Direct to headset") turns it
+off, and a Dawn without the hooks (`Build-Quest.ps1 -StockDawn`) or a runtime
+without `XR_KHR_vulkan_enable2` falls back on its own, both logged as
+`direct presentation unavailable (...)`; the bridge below then takes over.
+
+### The shared-buffer bridge, the fallback
+
+Before that, and still when direct presentation is off: the stock pinned Dawn
+package (`v20260603.191052`) exposes only `VkInstance` from its Vulkan backend,
+no `VkDevice`, `VkQueue` or queue family, and it will not enable the device
+extensions the OpenXR runtime demands. Binding Dawn's device to the session is
+impossible without the patched Dawn. Instead:
 
 1. `xrCreateVulkanInstanceKHR` / `xrCreateVulkanDeviceKHR` (`XR_KHR_vulkan_enable2`,
    with an `XR_KHR_vulkan_enable` fallback that queries the extension lists)
@@ -92,18 +134,15 @@ marker, a lost device above all, ends the session. Three hundred skipped copies
 in a row end it too.
 
 The cost is one extra pass per eye per frame on Dawn's side and the
-`vkCmdCopyImage` on the runtime's; the benefit is that the bridge needs
-nothing from Dawn beyond its public API, and the OpenXR device outlives
-Aurora's, which is exactly the failure DolphinXR hit on Vulkan when a game's
-device was destroyed under the compositor. Dawn's side was a transfer copy
-too until 2026-10-07: the Metroid Prime port, on this renderer, measured a
+`vkCmdCopyImage` on the runtime's (the 3.1 ms above); the benefit is that the
+bridge needs nothing from Dawn beyond its public API, and the OpenXR device
+outlives Aurora's, which is exactly the failure DolphinXR hit on Vulkan when a
+game's device was destroyed under the compositor. Dawn's side was a transfer
+copy too until 2026-10-07: the Metroid Prime port, on this renderer, measured a
 transfer copy of both eyes into the runtime's images at about 2.6 ms a frame
 against 0.4 ms for a draw, and here the draw took 0.2 to 0.6 ms of App GPU
-time off a Luigi Circuit race at `render_scale` 0.8 (measured below). The
-runtime-side copy still stands; direct presentation into the swapchain
-(Prime's `openxr_vulkan_direct.cpp`, after this repo's Windows Vulkan binding)
-would remove it. (The Quest's Dawn carries Aurora's patches for foveated
-rendering and the Vulkan hooks that binding needs; see below.)
+time off a Luigi Circuit race at `render_scale` 0.8 (measured below). The same
+blitter (`aurora-main/lib/webgpu/eye_blitter.hpp`) serves both bindings.
 
 `gpu.cpp` steers Aurora to an RGBA8 surface format under `xrInterop` on Android
 (there is no BGRA `AHardwareBuffer` format) and requests the two Dawn features

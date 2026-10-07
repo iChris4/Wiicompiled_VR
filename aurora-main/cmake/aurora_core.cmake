@@ -44,6 +44,13 @@ if (AURORA_ENABLE_GX)
     # compiles to C ABI stubs on every other platform so the runtime's OpenXR
     # integration links everywhere.
     target_sources(aurora_core PRIVATE lib/webgpu/vulkan_interop.cpp)
+    # Direct presentation on the Quest: the eyes drawn into the OpenXR swapchain images on Dawn's
+    # own device, through the Vulkan entry points of a Dawn built with Aurora's patches; the value
+    # is the package's ABI version (include/aurora/dawn_vulkan_abi.h). Stubs elsewhere.
+    target_sources(aurora_core PRIVATE lib/webgpu/vulkan_direct_interop.cpp)
+    if (AURORA_DAWN_VULKAN_ABI)
+        target_compile_definitions(aurora_core PRIVATE AURORA_DAWN_VULKAN=${AURORA_DAWN_VULKAN_ABI})
+    endif ()
     target_link_libraries(aurora_core PRIVATE dawn::webgpu_dawn)
     # Fragment density maps for foveated eye rendering, from a Dawn built with Aurora's patches; the
     # value is the package's ABI version (include/aurora/dawn_fdm_abi.h).

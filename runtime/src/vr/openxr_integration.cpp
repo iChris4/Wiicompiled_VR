@@ -41,6 +41,7 @@
 #elif defined(__ANDROID__)
 #include "vr/openxr_android.h"
 #include "vr/openxr_vulkan.h"
+#include "vr/openxr_vulkan_direct.h"
 #include <time.h>
 #include <unistd.h>
 #define XR_USE_TIMESPEC
@@ -84,7 +85,9 @@ void ConfigurePolicy(bool enabled) noexcept {
 using GraphicsBackend = OpenXRWindowsBackend;
 
 #else
-using GraphicsBackend = OpenXRVulkanBackend;
+// Direct presentation when [vr] direct_presentation and Aurora's Dawn allow it, else the
+// AHardwareBuffer bridge (openxr_vulkan_direct.h).
+using GraphicsBackend = OpenXRQuestVulkanBackend;
 inline constexpr const char* kGraphicsBackendName = "Vulkan";
 #endif
 

@@ -1227,7 +1227,9 @@ revision on a machine with Visual Studio 2022, Python 3.12+ and CMake, and write
 (revision, ABI, DLL hash). `Launcher/Prepare-Dependencies.ps1 -DawnVulkanPackage <dir>` installs it as
 `dawn_prebuilt` in a fresh dependency destination after checking that provenance; re-harvest
 `native_prebuilt` afterwards because the archives are pinned to the Dawn DLL hash. The runtime
-build also fetches Vulkan headers (`vulkan_headers` dependency).
+build also fetches Vulkan headers (`vulkan_headers` dependency). The Quest's statically linked Dawn
+(`android/Build-QuestDawn.ps1`) carries the same patches, and its direct presentation
+(`docs/quest-port.md`) calls the same ABI directly.
 
 **Startup.** `QueryGraphicsRequirements` loads `xrGetVulkanGraphicsRequirements2KHR`,
 `xrCreateVulkanInstanceKHR`, `xrCreateVulkanDeviceKHR` and `xrGetVulkanGraphicsDevice2KHR`, then
@@ -1260,7 +1262,7 @@ custom DLL's ABI through three borrowed-image copy/readback cycles; run it with 
 | --- | --- |
 | Windows D3D12 | Implemented: same-adapter, same-device asynchronous OpenXR submission. |
 | Windows Vulkan | Implemented, opt-in (`video.graphics_api = "vulkan"`): the runtime creates Dawn's Vulkan instance and device through `XR_KHR_vulkan_enable2`, eyes are copied on the same queue, and Dawn's device guard is held around the four queue-touching OpenXR calls. Needs the custom Dawn from `Launcher/Build-DawnVulkan.ps1`. Raced on SteamVR/PSVR2 at the headset's full rate; other runtimes unexercised. See [Windows Vulkan](#windows-vulkan). |
-| Android Vulkan (Meta Quest) | Implemented and running on a Quest 3: the OpenXR side owns its own Vulkan device (`XR_KHR_vulkan_enable2`, `XR_KHR_vulkan_enable` fallback) and shares eyes with Dawn through `AHardwareBuffer`s ordered by sync-fd fences. Controllers arrive through OpenXR actions as a virtual SDL gamepad. See `docs/quest-port.md`. |
+| Android Vulkan (Meta Quest) | Implemented and running on a Quest 3. Since 2026-10-07 it binds Dawn's own Vulkan device to the session through the same custom-Dawn ABI as the Windows binding (`openxr_vulkan_direct.cpp`, `[vr] direct_presentation`) and draws the eyes straight into the swapchain images, which took the compositor's App GPU time from 8.2 to 5.1 ms on a Luigi Circuit race; with the setting off, or a Dawn without the hooks, the OpenXR side owns its own Vulkan device (`XR_KHR_vulkan_enable2`, `XR_KHR_vulkan_enable` fallback) and shares eyes with Dawn through `AHardwareBuffer`s ordered by sync-fd fences. Controllers arrive through OpenXR actions as a virtual SDL gamepad. See `docs/quest-port.md`. |
 | Linux Vulkan | Not wired. The pinned Dawn package does not expose a native Vulkan device, and the AHardwareBuffer bridge is Android-only; a dma-buf/opaque-fd variant of the same design would cover desktop Linux. |
 | Other platforms | Not wired yet. |
 

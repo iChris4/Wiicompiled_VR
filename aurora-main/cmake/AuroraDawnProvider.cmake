@@ -269,6 +269,9 @@ elseif (_aurora_dawn_provider STREQUAL "package")
   # aurora-dawn.json. Only such a package has the fragment density map ABI
   # (include/aurora/dawn_fdm_abi.h); aurora_core compiles its callers against it.
   set(AURORA_DAWN_FDM_ABI 0 PARENT_SCOPE)
+  # The same package exports the Vulkan entry points of include/aurora/dawn_vulkan_abi.h, which
+  # the Quest's direct presentation calls (lib/webgpu/vulkan_direct_interop.cpp).
+  set(AURORA_DAWN_VULKAN_ABI 0 PARENT_SCOPE)
   if (EXISTS "${_dawn_pkg_dir}/aurora-dawn.json")
     file(READ "${_dawn_pkg_dir}/aurora-dawn.json" _aurora_dawn_manifest)
     string(JSON _aurora_dawn_fdm_abi ERROR_VARIABLE _aurora_dawn_manifest_error
@@ -276,6 +279,12 @@ elseif (_aurora_dawn_provider STREQUAL "package")
     if (NOT _aurora_dawn_manifest_error AND _aurora_dawn_fdm_abi GREATER 0)
       set(AURORA_DAWN_FDM_ABI ${_aurora_dawn_fdm_abi} PARENT_SCOPE)
       message(STATUS "aurora: Dawn package carries the fragment density map ABI ${_aurora_dawn_fdm_abi}")
+    endif ()
+    string(JSON _aurora_dawn_vulkan_abi ERROR_VARIABLE _aurora_dawn_manifest_error
+      GET "${_aurora_dawn_manifest}" AuroraVulkanAbi)
+    if (NOT _aurora_dawn_manifest_error AND _aurora_dawn_vulkan_abi GREATER 0)
+      set(AURORA_DAWN_VULKAN_ABI ${_aurora_dawn_vulkan_abi} PARENT_SCOPE)
+      message(STATUS "aurora: Dawn package carries the Vulkan interop ABI ${_aurora_dawn_vulkan_abi}")
     endif ()
   endif ()
 
