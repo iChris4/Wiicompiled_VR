@@ -14,6 +14,9 @@ struct EyeImage {
   const wgpu::TextureView* view = nullptr;
   wgpu::Extent3D size{};
   wgpu::TextureFormat format = wgpu::TextureFormat::Undefined;
+  // The layer of `texture` this eye is, under multiview (gfx/stereo_multiview.hpp); `view` is that
+  // layer's, so a draw needs nothing more, a copy its origin.
+  uint32_t layer = 0;
 };
 
 struct SinkFrame {

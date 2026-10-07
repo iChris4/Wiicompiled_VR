@@ -6,6 +6,7 @@
 #include "../webgpu/gpu.hpp"
 #include "../internal.hpp"
 #include "../gfx/common.hpp"
+#include "../gfx/stereo_multiview.hpp"
 #include "../gfx/tex_palette_conv.hpp"
 #include "../gfx/texture.hpp"
 #include "../gfx/texture_convert.hpp"
@@ -1650,7 +1651,7 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
       .targetCount = colorTargets.size(),
       .targets = colorTargets.data(),
   };
-  const wgpu::RenderPipelineDescriptor descriptor{
+  wgpu::RenderPipelineDescriptor descriptor{
       .label = label,
       .layout = sPipelineLayout,
       .vertex =
@@ -1668,6 +1669,18 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
           },
       .fragment = &fragmentState,
   };
+  if (config.shaderConfig.multiview && !gfx::stereo_multiview::supported()) {
+    // A stored multiview recipe on a device without the feature (pipeline_cache prewarm): never bound.
+    return {};
+  }
+#if defined(WGPU_DAWN_RENDER_PIPELINE_MULTIVIEW_INIT)
+  // Both views of a multiview eye pass (gfx/stereo_multiview.hpp).
+  wgpu::DawnRenderPipelineMultiview multiview{};
+  multiview.viewMask = gfx::stereo_multiview::kViewMask;
+  if (config.shaderConfig.multiview) {
+    descriptor.nextInChain = &multiview;
+  }
+#endif
   return g_device.CreateRenderPipeline(&descriptor);
 }
 

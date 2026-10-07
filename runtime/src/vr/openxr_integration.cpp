@@ -509,6 +509,13 @@ public:
         aurora_set_stereo_stop_at_display_copy(true);
         aurora_set_stereo_skip_copy_clears(false);
         aurora_set_stereo_single_pass_eyes(true);
+        aurora_set_stereo_multiview(RuntimeConfigFile::VrMultiview());
+        RT_LOG(RT_TAG_RUNTIME) << "OpenXR: Vulkan multiview "
+                               << (aurora_stereo_multiview_available()
+                                       ? (RuntimeConfigFile::VrMultiview() ? "on: both eyes in one render pass"
+                                                                           : "available but off ([vr] multiview)")
+                                       : "unavailable on this Dawn or device")
+                               << std::endl;
         WithdrawPublishedFrame();
         aurora_set_stereo_frame_provider(&OpenXRIntegration::ProvideStereoFrame, this);
         provider_registered_ = true;

@@ -1,6 +1,6 @@
 # Builds the pinned Dawn for the Quest (Android arm64) with Aurora's patches (aurora-main/patches/dawn).
-# The stock prebuilt package has no fragment density maps, which the headset's foveated rendering
-# attaches to the eye render passes. The result is an install tree in the stock package's layout;
+# The stock prebuilt package has neither fragment density maps, which the headset's foveated rendering
+# attaches to the eye render passes, nor Vulkan multiview, which draws both eyes in one pass. The result is an install tree in the stock package's layout;
 # Build-Quest.ps1 hands it to the native build through -PmkwQuestDawnDir.
 #
 #   powershell -ExecutionPolicy Bypass -File android/Build-QuestDawn.ps1 [-WorkDirectory <dir>] [-Force]
@@ -156,7 +156,7 @@ $manifestJson = [ordered]@{
     SourceSha256 = $archiveHash
     PatchSha256 = $patchHash
     AuroraVulkanAbi = 1
-    AuroraFdmAbi = 1
+    AuroraFdmAbi = 2
     Ndk = $ndkVersion
     Flags = ($flags -join ' ')
     CacheKey = $cacheKey

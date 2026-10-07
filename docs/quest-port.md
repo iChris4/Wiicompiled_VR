@@ -1023,7 +1023,7 @@ the app:
 | `debug.wiicompiled.validation 1` | Keeps WebGPU validation and robustness on in release builds |
 | `debug.wiicompiled.fdm 0` | Launches without fragment density maps at all, whatever `foveation` says, which also drops their flag from every pipeline; `1` asks for them even with `foveation = "off"` |
 | `debug.wiicompiled.inject <n>:<button>` | Presses `a`, `b`, `x`, `y`, `start`, `up`, `down`, `left` or `right` for 12 XR frames each time `<n>` changes. As a Wii Remote, `x`/`y`/`start` are 1/2/+, the directions push the Nunchuk stick, and `home`, `c` and `z` also exist. `panel` presses the settings panel's button (left Y, or both thumbsticks as a gamepad), opening or closing it (see `OPENXR.md`). `flick` plays the bare hands' flick, one 150 ms shake of the remote (a trick off a ramp, a wheelie on a bike), with the controllers or none. `throw_forward` and `throw_backward` play a throw of the held item: the stick pushed that way while the item button is pressed and released (see "Throwing the held item" in `OPENXR.md`) |
-| `debug.wiicompiled.fpslog 1` | Logs the game's rendered frame rate every 5 s, with per-frame averages of the producer's waits for the frame worker's DONE and SEALED phases and of the worker's seal, permit wait, prepare and encode stretches, and of the draw calls the recorded frame holds and the primitives that merged into them (an overlay that stops draws merging shows up there first). A following line counts, per frame, why the other draws did not join the draw before them: a GX state change, a particle quad, a 2D draw while stereo records, the first draw of a pass, lines or points, a previous vertex-motion or instanced draw, or the wheel's animated arrays (a race start at Luigi Circuit: about 320 by state, 20 2D, 3 first). A third line reports the GX thread's command ring (records, waits, busy share). With the geometry cache on, a fourth counts, per frame, the display lists drawn from it (how many through native vertex input, how many after a re-digest), those resolved into it, those left in place and why (unsupported, untracked, no room, rewritten by the game), and the entries and MiB resident. A second line gives the GPU time per frame from timestamp queries on every pass (`mono` native render, `eyeL`/`eyeR` replays, `screen`, `panel`, `efbcopy`, `palette`, `peek`, plus `passes-span` from the first pass begin to the last pass end and `between-passes` for copies and idle gaps). The compositor's `VrApi` log line gives headset FPS, `GPU%`, `CPU%`, clock levels and app GPU time (`App=`) |
+| `debug.wiicompiled.fpslog 1` | Logs the game's rendered frame rate every 5 s, with per-frame averages of the producer's waits for the frame worker's DONE and SEALED phases and of the worker's seal, permit wait, prepare and encode stretches, and of the draw calls the recorded frame holds and the primitives that merged into them (an overlay that stops draws merging shows up there first). A following line counts, per frame, why the other draws did not join the draw before them: a GX state change, a particle quad, a 2D draw while stereo records, the first draw of a pass, lines or points, a previous vertex-motion or instanced draw, or the wheel's animated arrays (a race start at Luigi Circuit: about 320 by state, 20 2D, 3 first). A third line reports the GX thread's command ring (records, waits, busy share). With the geometry cache on, a fourth counts, per frame, the display lists drawn from it (how many through native vertex input, how many after a re-digest), those resolved into it, those left in place and why (unsupported, untracked, no room, rewritten by the game), and the entries and MiB resident. A second line gives the GPU time per frame from timestamp queries on every pass (`mono` native render, `eyeL`/`eyeR` replays, or `eyes` for the one multiview pass, `screen`, `panel`, `efbcopy`, `palette`, `peek`, plus `passes-span` from the first pass begin to the last pass end and `between-passes` for copies and idle gaps). The compositor's `VrApi` log line gives headset FPS, `GPU%`, `CPU%`, clock levels and app GPU time (`App=`) |
 
 A `Config.toml` written with `adb push` (or `sed -i` in `adb shell`) belongs
 to the shell user afterwards, and the app then fails every save with EACCES
@@ -1211,6 +1211,7 @@ session, the GPU at 492 MHz throughout, the game at 60 FPS throughout, and
 | Indexed vertex attributes resolved on the CPU into flat, aligned records as the FIFO is decoded, so the vertex shader reads one record instead of an index and a dependent array fetch (`gx/command_processor.cpp` `deindex_plan`; Prime `229bc15f`) | 6.72 -> 6.16 ms at 338 draws (-8%) | 9.14 -> 8.73 ms |
 | Display lists that only draw kept resolved on the GPU across frames, a hit staging only its indices (`gx/geometry_cache.cpp`, `gfx/geometry_buffer.cpp`; Prime `1885428c`) | 6.06 -> 6.03 ms at 332 draws | 8.70 -> 8.54 ms |
 | The cached lists drawn through the GPU's vertex-input stage instead of decoded in the vertex shader (`gx/native_vertex.hpp`, `gx/shader.cpp`; Prime `3aa490a4`) | 6.13 -> 4.61 ms at 333 draws (-25%) | 8.88 -> 7.16 ms |
+| Both eyes drawn in one Vulkan multiview render pass over two-layer eye targets, each draw recorded and bound once with its pair of eye uniforms indexed by the view (`gfx/stereo_multiview.hpp`, `patches/dawn`; after Prime `cddf7d16`), measured with direct presentation on | 4.29 -> 3.88 ms at 343 draws (-10%) | 4.68 -> 4.41 ms; the frame worker's encode 3.33 -> 2.50 ms |
 
 The first three together take the race from about 10.1 to 8.8 ms of App GPU
 time at the same clock, with the image unchanged (compositor screenshots with
@@ -1244,6 +1245,29 @@ Everything is read where the GX thread executes the call, as the hazard rule
 wants, and the entries go at the race exit. Luigi Circuit holds 2.7 MiB of
 records; a full buffer leaves the lists beyond it on the plain path and logs
 once.
+
+Last, Vulkan multiview (`[vr] multiview`, on by default on the Quest, the
+settings page's "Both eyes in one pass"): the eye targets become the two
+layers of one colour and one depth texture, the planned eye replay runs once
+with view mask 0b11, and every GX draw, clear, cockpit and window-mask draw is
+recorded and bound once for both views. The GX shaders' multiview variant (a
+`ShaderConfig` bit taken from the padding, so the stored recipes keep their
+bytes) declares `@builtin(view_index)` and binds the draw's two eye uniforms,
+which the per-eye replay already stages back to back, as one range indexed by
+the view: the per-eye mathematics is untouched and the images are identical.
+The cockpit and the window mask hand both eyes' vertices in as two vertex
+buffer slots, the held item both eyes' frames in one uniform. The feature
+needs the Dawn built with Aurora's patches, which gained Tint's
+`chromium_experimental_multiview` extension, the `DawnMultiview` feature and
+view masks on dynamic rendering (`aurora-main/patches/dawn/apply.py`, after
+Prime's), plus layered density maps (`dawn_fdm_abi.h` version 2) so foveation
+covers both layers; a stock Dawn keeps the per-eye passes. Measured as above,
+switched live in 11 s windows for 6 rounds: both eyes 4.29 -> 3.88 ms at 343
+draws, App GPU 4.68 -> 4.41 ms, and the frame worker's encode fell from 3.33
+to 2.50 ms a frame, the eyes being encoded once. With `fpslog` on, the GPU
+line then reports `eyes=` for the single pass in place of `eyeL`/`eyeR`. Over
+the day, the Luigi Circuit race went from about 10.1 to 4.4 ms of App GPU
+time at the same clock.
 
 Verified on device since: the menus on the virtual screen, controller input
 (the user has driven races), and an immersive Grand Prix start with all 12

@@ -8,6 +8,7 @@
 #include "../../internal.hpp"
 #include "../../window.hpp"
 #include "../../gfx/clear.hpp"
+#include "../../gfx/stereo_multiview.hpp"
 #include "../../webgpu/gpu.hpp"
 #include "../vi/vi_internal.hpp"
 
@@ -556,6 +557,16 @@ void GXCopyTex(void* dest, GXBool clear) {
             .clearDepth = false,
             .stereoStencil = true,
         }) : 0,
+        .multiviewPipeline = aurora::stereo_frame_provider_active() && aurora::gfx::stereo_multiview::supported()
+            ? aurora::gfx::pipeline_ref(aurora::gfx::clear::PipelineConfig{
+                  .msaaSamples = aurora::gfx::get_sample_count(),
+                  .clearColor = false,
+                  .clearAlpha = true,
+                  .clearDepth = false,
+                  .stereoStencil = true,
+                  .multiview = true,
+              })
+            : 0,
         .color = wgpu::Color{0.f, 0.f, 0.f, g_gxState.dstAlpha / 255.f},
     });
   }

@@ -6,6 +6,7 @@
 #include "gfx/foveation.hpp"
 #include "gfx/geometry_buffer.hpp"
 #include "gx/geometry_cache.hpp"
+#include "gfx/stereo_multiview.hpp"
 #include "gfx/stereo_replay.hpp"
 #include "gx/fifo.hpp"
 #include "gx/shader_info.hpp"
@@ -631,6 +632,20 @@ struct StereoEyeTarget {
   const webgpu::TextureWithSampler& output() const noexcept { return resolvedColor.texture ? resolvedColor : color; }
 };
 std::array<StereoEyeTarget, AURORA_STEREO_EYE_COUNT> g_stereoEyeTargets;
+// Both eyes as the two layers of one texture (gfx/stereo_multiview.hpp): g_stereoEyeTargets then hold
+// its per-layer views, and the multiview pass renders through these views of both layers.
+struct MultiviewEyeTargets {
+  bool active = false;
+  wgpu::Texture color;
+  wgpu::Texture depth;
+  wgpu::TextureView colorView;
+  wgpu::TextureView depthView;
+  // Foveation: a second view of both layers, bound to a two-layer density map, one layer per eye.
+  wgpu::TextureView foveatedView;
+  uint64_t densityMap = 0;
+  std::array<int32_t, 11> densityKey{};
+};
+MultiviewEyeTargets g_multiviewEyeTargets;
 stereo::MirrorState g_stereoMirrorState;
 
 // The map's binding holds the foveated view, and with it the eye texture, until it is released.
@@ -652,7 +667,88 @@ wgpu::BindGroup stereo_eye_copy_bind_group(uint32_t eyeIndex) {
   return target.copyBindGroup;
 }
 
+void release_multiview_eye_targets() noexcept {
+  if (!g_multiviewEyeTargets.active) {
+    return;
+  }
+  if (g_multiviewEyeTargets.densityMap != 0) {
+    webgpu::fdm::release_map(g_multiviewEyeTargets.densityMap);
+  }
+  g_multiviewEyeTargets = {};
+  for (auto& target : g_stereoEyeTargets) {
+    target = {};
+  }
+}
+
+// The eye targets as the two layers of one colour and one depth texture (gfx/stereo_multiview.hpp).
+void ensure_multiview_eye_targets(uint32_t width, uint32_t height) {
+  auto& shared = g_multiviewEyeTargets;
+  const auto format = webgpu::g_graphicsConfig.surfaceConfiguration.format;
+  const auto& left = g_stereoEyeTargets[0];
+  if (shared.active && left.color.texture && left.requestedWidth == width && left.requestedHeight == height &&
+      left.colorFormat == format) {
+    return;
+  }
+  release_multiview_eye_targets();
+  for (auto& target : g_stereoEyeTargets) {
+    release_eye_density_map(target);
+    target = {};
+  }
+  const auto layered = webgpu::create_layered_render_texture(width, height, AURORA_STEREO_EYE_COUNT);
+  const wgpu::Extent3D layerSize{layered.size.width, layered.size.height, 1};
+  shared.color = layered.texture;
+  shared.colorView = layered.view;
+  const wgpu::TextureDescriptor depthDescriptor{
+      .label = "Stereo eye depth (multiview)",
+      .usage = wgpu::TextureUsage::RenderAttachment,
+      .dimension = wgpu::TextureDimension::e2D,
+      .size = {layerSize.width, layerSize.height, AURORA_STEREO_EYE_COUNT},
+      .format = wgpu::TextureFormat::Depth24PlusStencil8,
+      .mipLevelCount = 1,
+      .sampleCount = 1,
+  };
+  shared.depth = g_device.CreateTexture(&depthDescriptor);
+  const wgpu::TextureViewDescriptor depthArrayDescriptor{
+      .label = "Stereo eye depth (multiview)",
+      .dimension = wgpu::TextureViewDimension::e2DArray,
+      .arrayLayerCount = AURORA_STEREO_EYE_COUNT,
+  };
+  shared.depthView = shared.depth.CreateView(&depthArrayDescriptor);
+  const auto layer_view = [](const wgpu::Texture& texture, uint32_t layer, const char* label) {
+    const wgpu::TextureViewDescriptor descriptor{
+        .label = label,
+        .dimension = wgpu::TextureViewDimension::e2D,
+        .baseArrayLayer = layer,
+        .arrayLayerCount = 1,
+    };
+    return texture.CreateView(&descriptor);
+  };
+  for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+    auto& target = g_stereoEyeTargets[eye];
+    target.color = webgpu::TextureWithSampler{
+        .texture = shared.color,
+        .view = layer_view(shared.color, eye, eye == 0 ? "Stereo left eye layer" : "Stereo right eye layer"),
+        .size = layerSize,
+        .format = format,
+        .sampler = layered.sampler,
+    };
+    target.depth.texture = shared.depth;
+    target.depth.view = layer_view(shared.depth, eye, eye == 0 ? "Stereo left eye depth" : "Stereo right eye depth");
+    target.depth.size = layerSize;
+    target.depth.format = wgpu::TextureFormat::Depth24PlusStencil8;
+    target.requestedWidth = width;
+    target.requestedHeight = height;
+    target.samples = 1;
+    target.colorFormat = format;
+    target.depthFormat = target.depth.format;
+  }
+  shared.active = true;
+  Log.info("Stereo eye replay targets {}x{}, both eyes as layers (multiview)", layerSize.width, layerSize.height);
+}
+
 void ensure_stereo_eye_target(uint32_t eyeIndex, uint32_t width, uint32_t height) {
+  // Separate targets again after multiview: the shared texture's views would pass the check below.
+  release_multiview_eye_targets();
   auto& target = g_stereoEyeTargets[eyeIndex];
   const uint32_t samples = webgpu::g_graphicsConfig.msaaSamples;
   if (target.color.texture && target.requestedWidth == width && target.requestedHeight == height &&
@@ -722,7 +818,7 @@ wgpu::TextureView foveated_eye_view(uint32_t eyeIndex, const AuroraStereoEye& in
     gfx::foveation::Map map;
     gfx::foveation::build(target.color.size.width, target.color.size.height, webgpu::fdm::texel_size(), fov, level,
                           map);
-    target.densityMap = webgpu::fdm::create_map(map.width, map.height, map.rg8.data());
+    target.densityMap = webgpu::fdm::create_map(map.width, map.height, 1, map.rg8.data());
     if (target.densityMap != 0 && !webgpu::fdm::bind(target.foveatedView, target.densityMap)) {
       webgpu::fdm::release_map(target.densityMap);
       target.densityMap = 0;
@@ -738,6 +834,68 @@ wgpu::TextureView foveated_eye_view(uint32_t eyeIndex, const AuroraStereoEye& in
   }
   return target.densityMap != 0 && webgpu::fdm::map_ready(target.densityMap) ? target.foveatedView
                                                                              : wgpu::TextureView{};
+}
+
+// The foveated view of both layers under multiview, bound to a two-layer density map (one layer per eye,
+// each built for that eye's field of view), or none; rebuilt as foveated_eye_view's.
+wgpu::TextureView foveated_multiview_view(const AuroraStereoFrame& input) {
+  auto& shared = g_multiviewEyeTargets;
+  const auto level = static_cast<gfx::foveation::Level>(gfx::get_stereo_foveation());
+  if (!shared.active || level == gfx::foveation::Level::Off || !webgpu::fdm::available()) {
+    return {};
+  }
+  const auto& size = g_stereoEyeTargets[0].color.size;
+  const auto hundredths = [](float value) { return static_cast<int32_t>(std::lround(value * 100.0f)); };
+  std::array<gfx::foveation::EyeFov, AURORA_STEREO_EYE_COUNT> fovs{};
+  std::array<int32_t, 11> key{static_cast<int32_t>(size.width), static_cast<int32_t>(size.height),
+                              static_cast<int32_t>(level)};
+  for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+    fovs[eye] = gfx::foveation::fov_from_projection(input.eyes[eye].projection);
+    key[3 + eye * 4 + 0] = hundredths(fovs[eye].tanLeft);
+    key[3 + eye * 4 + 1] = hundredths(fovs[eye].tanRight);
+    key[3 + eye * 4 + 2] = hundredths(fovs[eye].tanDown);
+    key[3 + eye * 4 + 3] = hundredths(fovs[eye].tanUp);
+  }
+  if (key != shared.densityKey) {
+    if (shared.densityMap != 0) {
+      webgpu::fdm::release_map(shared.densityMap);
+      shared.densityMap = 0;
+    }
+    shared.densityKey = key;
+    if (!shared.foveatedView) {
+      const wgpu::TextureViewDescriptor descriptor{
+          .label = "Foveated eyes (multiview)",
+          .dimension = wgpu::TextureViewDimension::e2DArray,
+          .arrayLayerCount = AURORA_STEREO_EYE_COUNT,
+          .usage = wgpu::TextureUsage::RenderAttachment,
+      };
+      shared.foveatedView = shared.color.CreateView(&descriptor);
+    }
+    std::array<gfx::foveation::Map, AURORA_STEREO_EYE_COUNT> maps;
+    std::vector<uint8_t> layers;
+    for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+      gfx::foveation::build(size.width, size.height, webgpu::fdm::texel_size(), fovs[eye], level, maps[eye]);
+      layers.insert(layers.end(), maps[eye].rg8.begin(), maps[eye].rg8.end());
+    }
+    if (maps[0].width == maps[1].width && maps[0].height == maps[1].height) {
+      shared.densityMap =
+          webgpu::fdm::create_map(maps[0].width, maps[0].height, AURORA_STEREO_EYE_COUNT, layers.data());
+    }
+    if (shared.densityMap != 0 && !webgpu::fdm::bind(shared.foveatedView, shared.densityMap)) {
+      webgpu::fdm::release_map(shared.densityMap);
+      shared.densityMap = 0;
+    }
+    static constexpr std::array<const char*, gfx::foveation::kLevelCount> kLevelNames{"off", "low", "medium", "high"};
+    if (shared.densityMap != 0) {
+      Log.info("Multiview eye foveation {}: {}x{} density map, two layers, {} pixels per texel",
+               kLevelNames[static_cast<uint32_t>(level)], maps[0].width, maps[0].height, webgpu::fdm::texel_size());
+    } else {
+      Log.warn("Multiview eye foveation {}: the {}x{} two-layer density map could not be created",
+               kLevelNames[static_cast<uint32_t>(level)], maps[0].width, maps[0].height);
+    }
+  }
+  return shared.densityMap != 0 && webgpu::fdm::map_ready(shared.densityMap) ? shared.foveatedView
+                                                                            : wgpu::TextureView{};
 }
 
 std::optional<AuroraStereoFrame> request_stereo_frame(uint32_t logicalFrame, uint64_t contentTag) noexcept {
@@ -847,8 +1005,22 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, 
                               ? frameUnits / input.cockpit.unitsPerMeter
                               : 1.f;
   replay.cockpit.unitsPerMeter = frameUnits;
+  // Both eyes in one pass over two-layer targets when the device, the host and the eyes allow it.
+  replay.multiview =
+      gfx::stereo_multiview::usable(input.eyes[0].width, input.eyes[0].height, input.eyes[1].width,
+                                    input.eyes[1].height, webgpu::g_graphicsConfig.msaaSamples);
+  if (replay.multiview) {
+    ensure_multiview_eye_targets(input.eyes[0].width, input.eyes[0].height);
+    replay.multiviewColorView = g_multiviewEyeTargets.colorView;
+    replay.multiviewDepthView = g_multiviewEyeTargets.depthView;
+    if (input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && !input.window) {
+      replay.multiviewFoveatedColorView = foveated_multiview_view(input);
+    }
+  }
   for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
-    ensure_stereo_eye_target(eye, input.eyes[eye].width, input.eyes[eye].height);
+    if (!replay.multiview) {
+      ensure_stereo_eye_target(eye, input.eyes[eye].width, input.eyes[eye].height);
+    }
     const auto& owned = g_stereoEyeTargets[eye];
     const auto& output = owned.output();
     auto& view = replay.eyes[eye];
@@ -865,7 +1037,7 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, 
     };
     // Not the immersive window's eyes: the host may aim them through the window, whose field of
     // view then changes with every head movement and would rebuild the density map each frame.
-    if (input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && !input.window) {
+    if (!replay.multiview && input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && !input.window) {
       view.target.foveatedColorView = foveated_eye_view(eye, input.eyes[eye]);
     }
     std::memcpy(&view.projection, input.eyes[eye].projection, sizeof(view.projection));
@@ -950,6 +1122,7 @@ std::optional<PendingStereoSink> run_stereo_sink(wgpu::CommandEncoder& encoder, 
         .view = &output.view,
         .size = output.size,
         .format = output.format,
+        .layer = g_multiviewEyeTargets.active ? eye : 0u,
     };
   }
   if (!registration.callback(encoder, frame, registration.userdata)) {
@@ -2040,8 +2213,13 @@ void run_retained_stereo_frame(gfx::SealedFrame& sealedFrame) noexcept {
   auto encoder = g_device.CreateCommandEncoder();
   if (!gfx::prepare_late_stereo_replay(sealedFrame, encoder, replay, weight))
     return;
+  if (replay.multiview) {
+    gfx::render_stereo_eyes_multiview(sealedFrame, encoder, replay, false);
+  }
   for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
-    gfx::render_stereo_eye(sealedFrame, encoder, replay, eye, false);
+    if (!replay.multiview) {
+      gfx::render_stereo_eye(sealedFrame, encoder, replay, eye, false);
+    }
     // The panel texture from the last sealed frame; its draw data is not ours to touch here.
     stereo_overlay::composite_immersive(encoder, g_stereoEyeTargets[eye].output().view, replay.eyes[eye].projection,
                                         replay.eyes[eye].viewFromCenter, eye);
@@ -2289,9 +2467,14 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
       ctx.stereoReplay = interpolated_stereo_frame(*ctx.stereoInput, weight);
       gfx::prepare_late_stereo_replay(sealedFrame, encoder, *ctx.stereoReplay, weight);
     }
+    if (ctx.stereoReplay->multiview) {
+      gfx::render_stereo_eyes_multiview(sealedFrame, encoder, *ctx.stereoReplay, !ctx.retainStereo);
+    }
     for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
-      gfx::render_stereo_eye(sealedFrame, encoder, *ctx.stereoReplay, eye,
-                             !ctx.retainStereo && eye + 1 == AURORA_STEREO_EYE_COUNT);
+      if (!ctx.stereoReplay->multiview) {
+        gfx::render_stereo_eye(sealedFrame, encoder, *ctx.stereoReplay, eye,
+                               !ctx.retainStereo && eye + 1 == AURORA_STEREO_EYE_COUNT);
+      }
       stereo_overlay::composite_immersive(encoder, g_stereoEyeTargets[eye].output().view,
                                           ctx.stereoReplay->eyes[eye].projection,
                                           ctx.stereoReplay->eyes[eye].viewFromCenter, eye);
@@ -3116,6 +3299,11 @@ void aurora_set_stereo_skip_copy_clears(bool enabled) { aurora::gfx::set_stereo_
 bool aurora_get_stereo_skip_copy_clears() { return aurora::gfx::get_stereo_skip_copy_clears(); }
 void aurora_set_stereo_single_pass_eyes(bool enabled) { aurora::gfx::set_stereo_single_pass_eyes(enabled); }
 bool aurora_get_stereo_single_pass_eyes() { return aurora::gfx::get_stereo_single_pass_eyes(); }
+void aurora_set_stereo_multiview(bool enabled) { aurora::gfx::stereo_multiview::set_requested(enabled); }
+bool aurora_get_stereo_multiview() { return aurora::gfx::stereo_multiview::requested(); }
+bool aurora_stereo_multiview_available() {
+  return aurora::gfx::stereo_multiview::kApiAvailable && aurora::gfx::stereo_multiview::supported();
+}
 void aurora_set_gx_deindex_vertices(bool enabled) { aurora::gfx::set_gx_deindex_vertices(enabled); }
 bool aurora_get_gx_deindex_vertices() { return aurora::gfx::get_gx_deindex_vertices(); }
 void aurora_set_gx_geometry_cache_mb(uint32_t mb) { aurora::gfx::set_geometry_buffer_capacity_mb(mb); }

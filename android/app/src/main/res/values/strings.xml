@@ -596,6 +596,8 @@
     <string name="graphics_resident_geometry">Resident geometry</string>
     <string name="graphics_direct_presentation">Direct to headset</string>
     <string name="graphics_direct_presentation_helper">Draws the eyes straight into the headset\'s images on the game\'s own GPU device, which took about 3 ms of GPU time off each frame. Turn off only if the headset shows nothing or flickers: the eyes then cross through shared buffers as before. Takes effect on the next launch.</string>
+    <string name="graphics_multiview">Both eyes in one pass</string>
+    <string name="graphics_multiview_helper">Draws the race for both eyes in a single render pass instead of one after the other, which trims the GPU and CPU time of each frame a little. Turn off only to compare, or if one eye renders wrong. Changes take effect at once.</string>
     <string name="graphics_resident_geometry_helper">Keeps the course and kart models resolved on the GPU and draws them through its vertex-input stage, about a quarter of a race\'s GPU time. Turn off only to compare, or if a model renders wrong. Takes effect on the next launch.</string>
 
     <!-- Controls tab -->

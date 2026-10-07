@@ -7,6 +7,7 @@
 #include "depth_peek.hpp"
 #include "efb_ram_copy.hpp"
 #include "eye_pass_plan.hpp"
+#include "stereo_multiview.hpp"
 #include "../internal.hpp"
 #include "../webgpu/gpu.hpp"
 #include "../gx/pipeline.hpp"
@@ -155,6 +156,7 @@ wgpu::BindGroupLayout g_staticBindGroupLayout;
 wgpu::BindGroup g_staticBindGroup;
 wgpu::BindGroupLayout g_uniformBindGroupLayout;
 wgpu::BindGroup g_uniformBindGroup;
+wgpu::BindGroup g_multiviewUniformBindGroup;
 
 // for imgui debug
 AuroraStats g_stats{};
@@ -256,6 +258,23 @@ void set_stereo_foveation(uint32_t level) noexcept {
   g_stereoFoveation.store(level, std::memory_order_relaxed);
 }
 uint32_t get_stereo_foveation() noexcept { return g_stereoFoveation.load(std::memory_order_relaxed); }
+
+namespace stereo_multiview {
+namespace {
+std::atomic_bool g_multiviewSupported{false};
+std::atomic_bool g_multiviewRequested{true};
+} // namespace
+void set_supported(bool supported) noexcept { g_multiviewSupported.store(supported, std::memory_order_relaxed); }
+bool supported() noexcept { return g_multiviewSupported.load(std::memory_order_relaxed); }
+void set_requested(bool requested) noexcept { g_multiviewRequested.store(requested, std::memory_order_relaxed); }
+bool requested() noexcept { return g_multiviewRequested.load(std::memory_order_relaxed); }
+bool usable(uint32_t leftWidth, uint32_t leftHeight, uint32_t rightWidth, uint32_t rightHeight,
+            uint32_t sampleCount) noexcept {
+  // Only the planned eye (render_eye_planned) renders through multiview.
+  return kApiAvailable && supported() && requested() && get_stereo_single_pass_eyes() && sampleCount <= 1 &&
+         leftWidth == rightWidth && leftHeight == rightHeight && leftWidth != 0 && leftHeight != 0;
+}
+} // namespace stereo_multiview
 
 // The fixed virtual screen orthographic draws are placed on during immersive
 // replay, in game world units. Written from the settings overlay and read by
@@ -776,6 +795,16 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
             .clearDepth = clearDepth,
             .stereoStencil = true,
         }) : 0,
+        .multiviewPipeline = aurora::stereo_frame_provider_active() && stereo_multiview::supported()
+            ? pipeline_ref(clear::PipelineConfig{
+                  .msaaSamples = msaaSamples,
+                  .clearColor = clearColor,
+                  .clearAlpha = clearAlpha,
+                  .clearDepth = clearDepth,
+                  .stereoStencil = true,
+                  .multiview = true,
+              })
+            : 0,
         .color =
             wgpu::Color{
                 .r = clearColorValue.x(),
@@ -1142,6 +1171,22 @@ void initialize() {
         .entries = entries.data(),
     };
     g_uniformBindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
+    // A multiview draw's pair of eye uniforms, bound from the first's offset (gfx/stereo_multiview.hpp);
+    // end_batch_impl pads the staged uniforms so the pair stays within the buffer.
+    const std::array multiviewEntries{
+        wgpu::BindGroupEntry{
+            .binding = 0,
+            .buffer = g_uniformBuffer,
+            .size = 2 * gx::MaxUniformSize,
+        },
+    };
+    const wgpu::BindGroupDescriptor multiviewDescriptor{
+        .label = "Multiview uniform bind group",
+        .layout = g_uniformBindGroupLayout,
+        .entryCount = multiviewEntries.size(),
+        .entries = multiviewEntries.data(),
+    };
+    g_multiviewUniformBindGroup = g_device.CreateBindGroup(&multiviewDescriptor);
   }
 
   gx::initialize();
@@ -1188,6 +1233,7 @@ void shutdown() {
   g_staticBindGroup = {};
   g_staticBindGroupLayout = {};
   g_uniformBindGroup = {};
+  g_multiviewUniformBindGroup = {};
   g_uniformBindGroupLayout = {};
   g_inOffscreen = false;
   g_frameIndex = UINT32_MAX;
@@ -1601,9 +1647,9 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
         replayHudScreenDrawCount);
   }
 
-  // end_batch_impl appends MaxUniformSize bytes after this for safe dynamic-offset reads.
+  // end_batch_impl appends 2 * MaxUniformSize bytes after this for safe dynamic-offset reads.
   if (requiredBytes > UniformBufferSize || g_uniforms.size() > UniformBufferSize - requiredBytes ||
-      g_uniforms.size() + requiredBytes > UniformBufferSize - gx::MaxUniformSize) {
+      g_uniforms.size() + requiredBytes > UniformBufferSize - 2 * gx::MaxUniformSize) {
     Log.warn("Skipping stereo replay: GX uniform buffer needs {} additional bytes ({} of {} already used)",
              requiredBytes, g_uniforms.size(), UniformBufferSize);
     return false;
@@ -1752,7 +1798,8 @@ static bool end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame,
   } else {
     g_pendingLateStereo = {};
   }
-  g_uniforms.append_zeroes(gx::MaxUniformSize); // Pad the end of the buffer
+  // Pad the end of the buffer: a dynamic offset binds MaxUniformSize bytes, a multiview pair twice that.
+  g_uniforms.append_zeroes(2 * gx::MaxUniformSize);
   uint64_t bufferOffset = 0;
   const auto writeBuffer = [&](ByteBuffer& buf, wgpu::Buffer& out, uint64_t size, std::string_view label) {
     const auto writeSize = buf.size(); // Only need to copy this many bytes
@@ -1857,6 +1904,9 @@ struct RenderInvocation {
   int32_t interpolatedFrame = -1;
   uint32_t stereoEye = UINT32_MAX;
   const ReplayTarget* target = nullptr;
+  // Both eyes at once (gfx/stereo_multiview.hpp): target holds the views of both layers, stereoEye is 0
+  // so the draws bind the first of their pair of eye uniforms, and they take their multiview pipelines.
+  bool multiview = false;
   ClipRect replaySourceRegion{};
   uint32_t localPlayerCount = 1;
   // Inclusive index of the last pass to replay; -1 replays every pass.
@@ -1895,8 +1945,9 @@ static void render_eye_planned(std::vector<RenderPass>& renderPasses, wgpu::Comm
                                const RenderInvocation& invocation, const eye_pass_plan::Plan& plan) {
   const ReplayTarget& target = *invocation.target;
   const bool stereoStencil = target.depthFormat == wgpu::TextureFormat::Depth24PlusStencil8;
-  const GpuTimingCategory timingCategory =
-      invocation.stereoEye == 0 ? GpuTimingCategory::EyeLeft : GpuTimingCategory::EyeRight;
+  const GpuTimingCategory timingCategory = invocation.multiview       ? GpuTimingCategory::Eyes
+                                          : invocation.stereoEye == 0 ? GpuTimingCategory::EyeLeft
+                                                                      : GpuTimingCategory::EyeRight;
   // Foveated only as a single render pass: loading a finished eye back under a density map costs a
   // full tile load per split, which is what made foveation a net loss in DolphinXR.
   const wgpu::TextureView& colorView =
@@ -1944,13 +1995,22 @@ static void render_eye_planned(std::vector<RenderPass>& renderPasses, wgpu::Comm
           .stencilStoreOp = stereoStencil ? depthStencilStore : wgpu::StoreOp::Undefined,
           .stencilClearValue = 0,
       };
-      const wgpu::RenderPassDescriptor renderPassDescriptor{
+      wgpu::RenderPassDescriptor renderPassDescriptor{
           .label = render_pass_label(step.pass),
           .colorAttachmentCount = 1,
           .colorAttachments = &colorAttachment,
           .depthStencilAttachment = &depthStencilAttachment,
+          // Dawn writes these outside the render pass instance, so a multiview pass takes one query each.
           .timestampWrites = gpu_timing_pass(timingCategory),
       };
+#if defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
+      // Both layers of the eye targets at once (gfx/stereo_multiview.hpp).
+      wgpu::DawnRenderPassMultiview multiview{};
+      multiview.viewMask = stereo_multiview::kViewMask;
+      if (invocation.multiview) {
+        renderPassDescriptor.nextInChain = &multiview;
+      }
+#endif
       pass = cmd.BeginRenderPass(&renderPassDescriptor);
     } else {
       // Carry on from the state a fresh render pass starts in: render_pass_impl assumes the whole eye
@@ -1970,13 +2030,22 @@ static void render_eye_planned(std::vector<RenderPass>& renderPasses, wgpu::Comm
   // The cockpit that no virtual-screen draw brought in goes over the finished world here rather than
   // in a render pass of its own (render_stereo_eye's fallback), which would load the eye back.
   if (invocation.cockpitFrame != nullptr && !*invocation.cockpitDrawn) {
-    cockpit::render(*invocation.cockpitEncoder, *invocation.cockpitFrame, invocation.stereoEye,
-                    invocation.cockpitDepth, &pass);
+    if (invocation.multiview) {
+      cockpit::render_multiview(*invocation.cockpitEncoder, *invocation.cockpitFrame, invocation.cockpitDepth,
+                                &pass);
+    } else {
+      cockpit::render(*invocation.cockpitEncoder, *invocation.cockpitFrame, invocation.stereoEye,
+                      invocation.cockpitDepth, &pass);
+    }
     *invocation.cockpitDrawn = true;
   }
   // Last of all, over everything the eye draws, in the same render pass.
   if (invocation.windowFrame != nullptr && !*invocation.windowDrawn) {
-    window_mask::draw(pass, *invocation.windowFrame, invocation.stereoEye, invocation.windowScreen);
+    if (invocation.multiview) {
+      window_mask::draw_multiview(pass, *invocation.windowFrame, invocation.windowScreen);
+    } else {
+      window_mask::draw(pass, *invocation.windowFrame, invocation.stereoEye, invocation.windowScreen);
+    }
     *invocation.windowDrawn = true;
   }
   pass.End();
@@ -2381,6 +2450,73 @@ void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd, const Ster
   }
 }
 
+void render_stereo_eyes_multiview(SealedFrame& frame, wgpu::CommandEncoder& cmd,
+                                  const StereoReplayFrame& stereoFrame, bool finalize) {
+  CHECK(stereoFrame.multiview && stereoFrame.multiviewColorView && stereoFrame.multiviewDepthView,
+        "multiview replay without layered eye targets");
+  const auto displaySource = stereo_display_source(frame.data().passes);
+  const int32_t lastPass = get_stereo_stop_at_display_copy() ? displaySource.lastDisplayCopyPass : -1;
+  cockpit::SceneDepth cockpitDepth{};
+  for (size_t i = 0; i < frame.data().passes.size(); ++i) {
+    if (lastPass >= 0 && i > static_cast<size_t>(lastPass)) {
+      break;
+    }
+    if (frame.data().passes[i].cockpitDepth.valid) {
+      cockpitDepth = frame.data().passes[i].cockpitDepth;
+    }
+  }
+  bool cockpitDrawn = false;
+  bool sceneDrawn = false;
+  bool windowDrawn = false;
+  const bool cockpitActive = stereoFrame.cockpit.active && cockpitDepth.valid;
+  const bool skipCopyClears = get_stereo_skip_copy_clears();
+  // The pair's target: both layers' views, the left eye's size (the eyes share one), no MSAA.
+  const ReplayTarget& left = stereoFrame.eyes[0].target;
+  const ReplayTarget target{
+      .colorView = stereoFrame.multiviewColorView,
+      .foveatedColorView = stereoFrame.multiviewFoveatedColorView,
+      .depthView = stereoFrame.multiviewDepthView,
+      .copySourceTexture = left.copySourceTexture,
+      .copySourceView = left.copySourceView,
+      .copySourceDepthView = left.copySourceDepthView,
+      .size = left.size,
+      .msaaSamples = 1,
+      .depthFormat = left.depthFormat,
+  };
+  const eye_pass_plan::Plan& plan = plan_eye_passes(frame.data().passes, lastPass, skipCopyClears);
+  render_impl(frame.data().passes, cmd,
+              RenderInvocation{
+                  .stereoEye = 0,
+                  .target = &target,
+                  .multiview = true,
+                  .replaySourceRegion = displaySource.region,
+                  .localPlayerCount = frame.data().localPlayerCount,
+                  .replayLastPass = lastPass,
+                  .finalize = finalize,
+                  .replayOnlyEfb = true,
+                  .skipCopyClears = skipCopyClears,
+                  .encodeTextureBakes = false,
+                  .encodeResolves = false,
+                  .captureDepth = false,
+                  .cockpitFrame = cockpitActive ? &stereoFrame : nullptr,
+                  .cockpitEncoder = &cmd,
+                  .cockpitDepth = cockpitDepth,
+                  .cockpitDrawn = &cockpitDrawn,
+                  .sceneDrawn = &sceneDrawn,
+                  .eyePlan = &plan,
+                  .windowFrame = stereoFrame.window ? &stereoFrame : nullptr,
+                  .windowScreen = frame.data().windowScreen,
+                  .windowDrawn = &windowDrawn,
+              });
+  // As render_stereo_eye's fallbacks, in a multiview pass of their own over both layers.
+  if (cockpitActive && !cockpitDrawn) {
+    cockpit::render_multiview(cmd, stereoFrame, cockpitDepth);
+  }
+  if (stereoFrame.window && !windowDrawn) {
+    window_mask::render_multiview(cmd, stereoFrame, frame.data().windowScreen);
+  }
+}
+
 void mask_stereo_eye_output(const SealedFrame& frame, wgpu::CommandEncoder& cmd, const StereoReplayFrame& stereoFrame,
                             uint32_t eye, const wgpu::TextureView& output, wgpu::Extent3D size) {
   CHECK(eye < AURORA_STEREO_EYE_COUNT, "invalid stereo eye {}", eye);
@@ -2576,7 +2712,8 @@ std::string gpu_timing_report() {
     return {};
   }
   static constexpr std::array<const char*, static_cast<size_t>(GpuTimingCategory::Count)> kNames{
-      "mono", "eyeL", "eyeR", "interp", "screen", "panel", "efbcopy", "palette", "peek", "snapshot", "present"};
+      "mono",    "eyeL",    "eyeR", "eyes",     "interp", "screen",
+      "panel",   "efbcopy", "palette", "peek", "snapshot", "present"};
   std::string text;
   if (g_gpuTimingFrames != 0) {
     const double frames = g_gpuTimingFrames;
@@ -2618,6 +2755,7 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
   // Per-invocation, not per-process: two encoders can be recording at once.
   gx::DrawEncodeState encodeState{};
   encodeState.boundTextureBindGroup = gx::g_emptyTextureBindGroup.Get();
+  encodeState.multiview = invocation.multiview;
 #ifdef AURORA_GFX_DEBUG_GROUPS
   std::vector<std::string> lastDebugGroupStack;
 #endif
@@ -2774,7 +2912,9 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
       if (!draw.uniformReplayLayout.perspective) {
         continue;
       }
-      const gfx::PipelineRef pipeline = stencilTarget ? draw.stereoCompositeSourcePipeline : draw.compositeSourcePipeline;
+      const gfx::PipelineRef pipeline = invocation.multiview ? draw.multiviewCompositeSourcePipeline
+                                        : stencilTarget      ? draw.stereoCompositeSourcePipeline
+                                                             : draw.compositeSourcePipeline;
       if (pipeline == 0) {
         continue;
       }
@@ -2878,11 +3018,17 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
             *invocation.sceneDrawn = true;
           }
           if (virtualScreenDraw && *invocation.sceneDrawn && !*invocation.cockpitDrawn) {
-            cockpit::render(*invocation.cockpitEncoder, *invocation.cockpitFrame, invocation.stereoEye,
-                            invocation.cockpitDepth, &pass);
+            if (invocation.multiview) {
+              cockpit::render_multiview(*invocation.cockpitEncoder, *invocation.cockpitFrame,
+                                        invocation.cockpitDepth, &pass);
+            } else {
+              cockpit::render(*invocation.cockpitEncoder, *invocation.cockpitFrame, invocation.stereoEye,
+                              invocation.cockpitDepth, &pass);
+            }
             *invocation.cockpitDrawn = true;
             encodeState = {};
             encodeState.boundTextureBindGroup = gx::g_emptyTextureBindGroup.Get();
+            encodeState.multiview = invocation.multiview;
             pass.SetBindGroup(0, g_staticBindGroup);
             pass.SetBindGroup(2, gx::g_emptyTextureBindGroup);
             scissorStateKnown = false;
@@ -2905,15 +3051,25 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
           viewportStateKnown = true;
           apply_viewport(fullEyeDraw);
         }
+        if (invocation.multiview &&
+            (virtualScreenDraw ? draw.gx.multiviewScreenPipeline : draw.gx.multiviewPipeline) == 0) {
+          // Recorded without its multiview sibling: the plain pipeline would not fit the layered pass.
+          break;
+        }
         gx::render(draw.gx, pass, encodeState, renderPasses[idx].requireReadyPipelines, uniformOverride,
-                   overrideTarget && invocation.target->depthFormat == wgpu::TextureFormat::Depth24PlusStencil8
+                   invocation.multiview
+                       ? (virtualScreenDraw ? draw.gx.multiviewScreenPipeline : draw.gx.multiviewPipeline)
+                   : overrideTarget && invocation.target->depthFormat == wgpu::TextureFormat::Depth24PlusStencil8
                        ? (virtualScreenDraw ? draw.gx.stereoScreenPipeline : draw.gx.stereoPipeline)
                        : (virtualScreenDraw ? draw.gx.exactScreenDepthPipeline : 0));
       } break;
       case ShaderType::Clear: {
         auto clearDraw = draw.clear;
         if (overrideTarget && invocation.target->depthFormat == wgpu::TextureFormat::Depth24PlusStencil8) {
-          clearDraw.pipeline = clearDraw.stereoPipeline;
+          clearDraw.pipeline = invocation.multiview ? clearDraw.multiviewPipeline : clearDraw.stereoPipeline;
+          if (clearDraw.pipeline == 0) {
+            break;
+          }
         }
         if (multiplayer) {
           const auto& sc = clearDraw.scissor;

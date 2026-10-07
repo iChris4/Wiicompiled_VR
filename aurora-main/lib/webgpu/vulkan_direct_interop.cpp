@@ -258,7 +258,7 @@ public:
       const wgpu::TexelCopyTextureInfo from{
           .texture = *source.texture,
           .mipLevel = 0,
-          .origin = {},
+          .origin = {0, 0, source.layer},
           .aspect = wgpu::TextureAspect::All,
       };
       const wgpu::TexelCopyTextureInfo to{

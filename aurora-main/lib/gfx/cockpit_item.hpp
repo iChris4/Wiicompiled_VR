@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cockpit_item_data.hpp"
+#include "stereo_multiview.hpp"
 #include "texture_convert.hpp"
 #include "../webgpu/gpu.hpp"
 
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <string>
 
 namespace aurora::gfx::cockpit_item {
 
@@ -108,6 +110,14 @@ struct PipelineKey {
   bool operator==(const PipelineKey&) const = default;
 };
 inline std::vector<std::pair<PipelineKey,wgpu::RenderPipeline>> pipelines;
+// Both eyes at once in a multiview pass (gfx/stereo_multiview.hpp): one buffer with both eyes' frames,
+// which the shader indexes by the view, and pipelines carrying the view mask.
+inline wgpu::Buffer frameBufferMultiview;
+inline wgpu::BindGroup frameGroupMultiview;
+inline wgpu::BindGroupLayout frameLayoutMultiview;
+inline wgpu::PipelineLayout pipelineLayoutMultiview;
+inline wgpu::ShaderModule shaderMultiview;
+inline std::vector<std::pair<PipelineKey,wgpu::RenderPipeline>> multiviewPipelines;
 inline uint32_t pipelineSamples=0;
 inline bool pipelineReversed=false;
 inline wgpu::TextureFormat pipelineColor{},pipelineDepth{};
@@ -116,6 +126,8 @@ inline void shutdown() {
   gpuModels={};gpuReady={};gpuArchive.reset();gpuRevision=0;
   pipelines.clear();samplers={};whiteTexture=nullptr;shader=nullptr;
   frameBuffers={};frameGroups={};materialLayout=nullptr;frameLayout=nullptr;pipelineLayout=nullptr;
+  multiviewPipelines.clear();frameBufferMultiview=nullptr;frameGroupMultiview=nullptr;frameLayoutMultiview=nullptr;
+  pipelineLayoutMultiview=nullptr;shaderMultiview=nullptr;
   pipelineSamples=0;
 }
 
@@ -307,6 +319,38 @@ inline void prepare_layout() {
     const wgpu::BindGroupDescriptor group{.layout=frameLayout,.entryCount=1,.entries=&entry};
     frameGroups[eye]=g_device.CreateBindGroup(&group);
   }
+#if defined(WGPU_DAWN_RENDER_PIPELINE_MULTIVIEW_INIT)
+  if(stereo_multiview::supported()) {
+    // The multiview variant: both eyes' frames in one uniform, picked by @builtin(view_index).
+    const wgpu::BindGroupLayoutEntry framesEntry{.binding=0,.visibility=wgpu::ShaderStage::Vertex,
+      .buffer=wgpu::BufferBindingLayout{.type=wgpu::BufferBindingType::Uniform,.minBindingSize=2*sizeof(GpuFrame)}};
+    const wgpu::BindGroupLayoutDescriptor framesDesc{.entryCount=1,.entries=&framesEntry};
+    frameLayoutMultiview=g_device.CreateBindGroupLayout(&framesDesc);
+    const std::array layoutsMultiview{materialLayout,frameLayoutMultiview};
+    const wgpu::PipelineLayoutDescriptor layoutDescMultiview{.bindGroupLayoutCount=layoutsMultiview.size(),
+      .bindGroupLayouts=layoutsMultiview.data()};
+    pipelineLayoutMultiview=g_device.CreatePipelineLayout(&layoutDescMultiview);
+    std::string code=tevShader;
+    const auto replace=[&](const char* from,const char* to) {
+      const size_t at=code.find(from);
+      if(at!=std::string::npos) code.replace(at,std::strlen(from),to);
+    };
+    replace("@group(1) @binding(0) var<uniform> frame: Frame;","@group(1) @binding(0) var<uniform> frames: array<Frame, 2>;");
+    replace("@vertex fn vs(@location(0) position: vec4f,","@vertex fn vs(@builtin(view_index) view: u32, @location(0) position: vec4f,");
+    replace("    let p4 = vec4f(position.xyz, 1.0);","    let frame = &frames[view];\n    let p4 = vec4f(position.xyz, 1.0);");
+    code="enable chromium_experimental_multiview;\n"+code;
+    wgpu::ShaderSourceWGSL sourceMultiview{};
+    sourceMultiview.code=code.c_str();
+    wgpu::ShaderModuleDescriptor mdMultiview{};mdMultiview.nextInChain=&sourceMultiview;mdMultiview.label="Cockpit item TEV (multiview)";
+    shaderMultiview=g_device.CreateShaderModule(&mdMultiview);
+    const wgpu::BufferDescriptor framesBufferDesc{.label="Cockpit item frames (multiview)",
+      .usage=wgpu::BufferUsage::Uniform|wgpu::BufferUsage::CopyDst,.size=2*sizeof(GpuFrame)};
+    frameBufferMultiview=g_device.CreateBuffer(&framesBufferDesc);
+    const wgpu::BindGroupEntry framesGroupEntry{.binding=0,.buffer=frameBufferMultiview,.size=2*sizeof(GpuFrame)};
+    const wgpu::BindGroupDescriptor framesGroup{.layout=frameLayoutMultiview,.entryCount=1,.entries=&framesGroupEntry};
+    frameGroupMultiview=g_device.CreateBindGroup(&framesGroup);
+  }
+#endif
   const wgpu::TextureDescriptor desc{.label="Cockpit item white",
     .usage=wgpu::TextureUsage::TextureBinding|wgpu::TextureUsage::CopyDst,
     .dimension=wgpu::TextureDimension::e2D,.size={1,1,1},.format=wgpu::TextureFormat::RGBA8Unorm,
@@ -388,16 +432,19 @@ inline wgpu::BlendFactor blend_factor(uint8_t factor,bool source) {
   default: return wgpu::BlendFactor::Zero;
   }
 }
-inline const wgpu::RenderPipeline& pipeline(const PipelineKey& key,const StereoReplayFrame& frame,uint32_t eye,bool reversed) {
+inline const wgpu::RenderPipeline& pipeline(const PipelineKey& key,const StereoReplayFrame& frame,uint32_t eye,bool reversed,
+                                            bool multiview=false) {
   using namespace webgpu;
   const auto& target=frame.eyes[eye].target;
   const auto format=g_graphicsConfig.surfaceConfiguration.format;
   if(pipelineSamples!=target.msaaSamples || pipelineColor!=format ||
      pipelineDepth!=target.depthFormat || pipelineReversed!=reversed) {
-    pipelines.clear();
+    pipelines.clear();multiviewPipelines.clear();
     pipelineSamples=target.msaaSamples;pipelineColor=format;pipelineDepth=target.depthFormat;pipelineReversed=reversed;
   }
-  for(const auto& [cached,value]:pipelines) if(cached==key) return value;
+  auto& cache=multiview?multiviewPipelines:pipelines;
+  const auto& module=multiview?shaderMultiview:shader;
+  for(const auto& [cached,value]:cache) if(cached==key) return value;
   const wgpu::VertexAttribute attrs[]{
     {.format=wgpu::VertexFormat::Float32x4,.offset=0,.shaderLocation=0},
     {.format=wgpu::VertexFormat::Float32x4,.offset=16,.shaderLocation=1},
@@ -416,22 +463,27 @@ inline const wgpu::RenderPipeline& pipeline(const PipelineKey& key,const StereoR
             .dstFactor=wgpu::BlendFactor::OneMinusSrcAlpha},
   };
   const wgpu::ColorTargetState color{.format=format,.blend=key.blend?&blend:nullptr};
-  const wgpu::FragmentState fragment{.module=shader,.entryPoint="fs",.targetCount=1,.targets=&color};
+  const wgpu::FragmentState fragment{.module=module,.entryPoint="fs",.targetCount=1,.targets=&color};
   const bool stencil=target.depthFormat==wgpu::TextureFormat::Depth24PlusStencil8;
   const wgpu::StencilFaceState mark{.compare=wgpu::CompareFunction::Always,
     .passOp=stencil?wgpu::StencilOperation::Replace:wgpu::StencilOperation::Keep};
   const wgpu::DepthStencilState depth{.format=target.depthFormat,.depthWriteEnabled=key.depthWrite,
     .depthCompare=reversed?wgpu::CompareFunction::GreaterEqual:wgpu::CompareFunction::LessEqual,
     .stencilFront=mark,.stencilBack=mark,.stencilReadMask=1,.stencilWriteMask=stencil?1u:0u};
-  wgpu::RenderPipelineDescriptor desc{};desc.label="Cockpit item";desc.layout=pipelineLayout;
-  desc.vertex={.module=shader,.entryPoint="vs",.bufferCount=1,.buffers=&vertices};
+  wgpu::RenderPipelineDescriptor desc{};desc.label=multiview?"Cockpit item (multiview)":"Cockpit item";
+  desc.layout=multiview?pipelineLayoutMultiview:pipelineLayout;
+  desc.vertex={.module=module,.entryPoint="vs",.bufferCount=1,.buffers=&vertices};
   desc.fragment=&fragment;desc.depthStencil=&depth;desc.multisample.count=target.msaaSamples;
   desc.primitive.topology=wgpu::PrimitiveTopology::TriangleList;
   // Same winding as Aurora's GX pipelines: GX front faces are clockwise.
   desc.primitive.frontFace=wgpu::FrontFace::CW;
   desc.primitive.cullMode=key.cull==1?wgpu::CullMode::Front:key.cull==2?wgpu::CullMode::Back:wgpu::CullMode::None;
-  pipelines.emplace_back(key,g_device.CreateRenderPipeline(&desc));
-  return pipelines.back().second;
+#if defined(WGPU_DAWN_RENDER_PIPELINE_MULTIVIEW_INIT)
+  wgpu::DawnRenderPipelineMultiview viewMask{};viewMask.viewMask=stereo_multiview::kViewMask;
+  if(multiview) desc.nextInChain=&viewMask;
+#endif
+  cache.emplace_back(key,g_device.CreateRenderPipeline(&desc));
+  return cache.back().second;
 }
 
 inline bool finite_matrix(const float* m) {
@@ -518,6 +570,60 @@ inline void render(const wgpu::RenderPassEncoder& pass,const StereoReplayFrame& 
       const PipelineKey key{material.cull,material.blendSrc,material.blendDst,material.blend,material.subtract,
                             material.depthWrite};
       pass.SetPipeline(pipeline(key,frame,eye,reversed));
+      pass.SetBindGroup(0,gpu.materials[part.material],0,nullptr);
+      pass.Draw(count,1,start,0);
+    }
+    start+=count;
+  }
+}
+
+// Both eyes at once inside a multiview pass (gfx/stereo_multiview.hpp): the two eyes' frames in one
+// uniform, the shader taking the view's.
+inline void render_multiview(const wgpu::RenderPassEncoder& pass,const StereoReplayFrame& frame,
+                             float sceneZ,float sceneConstant) {
+  if(!frame.cockpit.active || !(frame.cockpit.unitsPerMeter>0) || !frame.multiview) return;
+  refresh_archive();
+  if(!gpuArchive) return;
+  prepare_layout();
+  if(!frameGroupMultiview || !shaderMultiview) return;
+  for(size_t i=0;i<gpuArchive->models.size();++i)
+    if(!gpuReady[i] && gpuArchive->models[i].valid()) prepare_model(i);
+  const auto& item=frame.cockpitItem;
+  if(!item.valid || item.hand>1 || item.count==0 || item.count>3) return;
+  const int index=data::model_index(item.id);
+  if(index<0 || !gpuArchive->models[index].valid()) return;
+  const auto& hand=frame.cockpit.hands[item.hand];
+  std::array<float,12> seatFromItem;
+  if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return;
+  const auto& model=gpuArchive->models[index];
+  const auto itemFromModel=item_from_model(model);
+  if(!(itemFromModel[0]>0)) return;
+  std::array<GpuFrame,2> uniforms{};
+  for(uint32_t eye=0;eye<2;++eye) {
+    auto& uniform=uniforms[eye];
+    compose(seatFromItem.data(),itemFromModel.data(),uniform.seatFromModel);
+    compose(frame.cockpit.eyeFromSeat[eye],uniform.seatFromModel,uniform.eyeFromModel);
+    const auto& projection=frame.eyes[eye].projection;
+    const float projectionRow[4]{projection.m0[0],projection.m0[2],projection.m1[1],projection.m1[2]};
+    const float depth[4]{sceneZ,sceneConstant/std::max(frame.cockpit.unitsPerMeter,0.001f),itemFromModel[0],0};
+    std::memcpy(uniform.projection,projectionRow,sizeof(projectionRow));
+    std::memcpy(uniform.depth,depth,sizeof(depth));
+  }
+  webgpu::g_queue.WriteBuffer(frameBufferMultiview,0,uniforms.data(),sizeof(uniforms));
+  const auto& gpu=gpuModels[index];
+  pass.SetVertexBuffer(0,gpu.vertices);
+  pass.SetBindGroup(1,frameGroupMultiview,0,nullptr);
+  const bool reversed=sceneConstant>0;
+  uint32_t start=0;
+  for(const auto& part:model.parts) {
+    const auto count=static_cast<uint32_t>(part.vertices.size());
+    const auto& material=model.materials[part.material];
+    if(material.cull!=3) {
+      const PipelineKey key{material.cull,material.blendSrc,material.blendDst,material.blend,material.subtract,
+                            material.depthWrite};
+      const auto& pipe=pipeline(key,frame,0,reversed,true);
+      if(!pipe) { start+=count; continue; }
+      pass.SetPipeline(pipe);
       pass.SetBindGroup(0,gpu.materials[part.material],0,nullptr);
       pass.Draw(count,1,start,0);
     }

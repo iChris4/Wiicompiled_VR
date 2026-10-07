@@ -328,6 +328,11 @@ class SettingsPage(
                 read = { it.bool("vr", "direct_presentation") ?: true },
                 write = { c, value -> c.setBool("vr", "direct_presentation", value) },
             )
+            toggle(
+                R.string.graphics_multiview, R.string.graphics_multiview_helper,
+                read = { it.bool("vr", "multiview") ?: true },
+                write = { c, value -> c.setBool("vr", "multiview", value) },
+            )
         }
     }
 

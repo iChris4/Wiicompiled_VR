@@ -1078,6 +1078,10 @@ the resident geometry cache with native vertex input (`[video] deindex_vertices`
 lists are resolved once into flat records in a GPU buffer and drawn through the vertex-input stage
 instead of decoded per vertex in the shader. At Luigi Circuit both eyes went from 6.7 to 4.6 ms and
 the frame's GPU time from 9.5 to 7.2 ms; `docs/quest-port.md` has the method and the per-step numbers.
+Since then the Quest also binds Dawn's own device to the session (`[vr] direct_presentation`, a
+further 3 ms of the frame's GPU time) and draws both eyes in one Vulkan multiview pass
+(`[vr] multiview`: both eyes 4.3 to 3.9 ms, the frame worker's encode 3.3 to 2.5 ms); the `fpslog`
+GPU line then shows one `eyes` figure instead of `eyeL` and `eyeR`.
 
 ## Diagnostics
 

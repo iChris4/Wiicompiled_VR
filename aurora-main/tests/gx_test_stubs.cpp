@@ -5,6 +5,7 @@
 #include "gfx/clear.hpp"
 #include "gfx/common.hpp"
 #include "gfx/depth_peek.hpp"
+#include "gfx/stereo_multiview.hpp"
 #include "gfx/efb_ram_copy.hpp"
 #include "gfx/tex_copy_conv.hpp"
 #include "gfx/tex_palette_conv.hpp"
@@ -500,6 +501,13 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
 // The recorded resolve is the display copy's; the flag only steers render-pass
 // bookkeeping that lives in common.cpp, which this target does not compile.
 void mark_last_resolve_as_display_copy() noexcept {}
+namespace stereo_multiview {
+void set_supported(bool) noexcept {}
+bool supported() noexcept { return false; }
+void set_requested(bool) noexcept {}
+bool requested() noexcept { return true; }
+bool usable(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) noexcept { return false; }
+} // namespace stereo_multiview
 void set_stereo_stop_at_display_copy(bool value) noexcept {}
 bool get_stereo_stop_at_display_copy() noexcept { return true; }
 void set_stereo_skip_copy_clears(bool value) noexcept {}

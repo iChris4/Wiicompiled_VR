@@ -574,7 +574,11 @@ struct ShaderConfig {
   // (gx/native_vertex.hpp) instead of being decoded from the storage buffer. Same layout, so offsets and
   // merging do not change; zero in every recipe recorded before the bit existed.
   u8 nativeVertices : 1 = 0;
-  u8 pad1 : 2 = 0;
+  // The eye passes' Vulkan multiview variant (gfx/stereo_multiview.hpp): the uniform binding holds the
+  // draw's two eye copies back to back and @builtin(view_index) picks one. Zero in every recipe
+  // recorded before the bit existed.
+  u8 multiview : 1 = 0;
+  u8 pad1 : 1 = 0;
   u8 numTexGens = 0;
   u32 zTexture = 0; // bias[0:23], format[24:25], op[26:27]; 0 disables shader depth output.
   std::array<AttrConfig, MaxVtxAttr> attrs;

@@ -71,6 +71,9 @@ bool refresh_surface(bool recreate = true);
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height,
                       bool force = false);
 TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool multisampled);
+// A single-sampled render texture of `layers` layers (the multiview eye targets, gfx/stereo_multiview.hpp),
+// clamped like create_render_texture's; its view is of every layer.
+TextureWithSampler create_layered_render_texture(uint32_t width, uint32_t height, uint32_t layers);
 const TextureWithSampler& present_source() noexcept;
 PresentSource current_present_source() noexcept;
 void set_present_source_override(wgpu::BindGroup bindGroup, wgpu::Texture texture, wgpu::Extent3D size,

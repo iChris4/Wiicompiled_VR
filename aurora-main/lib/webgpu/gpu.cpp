@@ -20,6 +20,7 @@
 #include "../android_debug.hpp"
 #include "fdm.hpp"
 #include "../gfx/common.hpp"
+#include "../gfx/stereo_multiview.hpp"
 #include "../internal.hpp"
 #include "../window.hpp"
 #include "../dolphin/vi/vi_internal.hpp"
@@ -196,6 +197,50 @@ wgpu::TextureFormat best_surface_format() {
 }
 
 } // namespace
+
+TextureWithSampler create_layered_render_texture(uint32_t width, uint32_t height, uint32_t layers) {
+  const auto renderTargetSize = clamp_render_target_size(width, height);
+  const auto format = g_graphicsConfig.surfaceConfiguration.format;
+  if (width == 0 || height == 0 || layers == 0) {
+    Log.fatal("Invalid layered render texture size! {}x{}x{}", width, height, layers);
+  }
+  const wgpu::TextureDescriptor textureDescriptor{
+      .label = "Layered render texture",
+      .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc |
+               wgpu::TextureUsage::CopyDst,
+      .dimension = wgpu::TextureDimension::e2D,
+      .size = {renderTargetSize.width, renderTargetSize.height, layers},
+      .format = format,
+      .mipLevelCount = 1,
+      .sampleCount = 1,
+  };
+  auto texture = g_device.CreateTexture(&textureDescriptor);
+  const wgpu::TextureViewDescriptor viewDescriptor{
+      .label = "Layered render texture view",
+      .dimension = wgpu::TextureViewDimension::e2DArray,
+      .arrayLayerCount = layers,
+  };
+  auto view = texture.CreateView(&viewDescriptor);
+  constexpr wgpu::SamplerDescriptor samplerDescriptor{
+      .label = "Render sampler",
+      .addressModeU = wgpu::AddressMode::ClampToEdge,
+      .addressModeV = wgpu::AddressMode::ClampToEdge,
+      .addressModeW = wgpu::AddressMode::ClampToEdge,
+      .magFilter = wgpu::FilterMode::Linear,
+      .minFilter = wgpu::FilterMode::Linear,
+      .mipmapFilter = wgpu::MipmapFilterMode::Linear,
+      .lodMinClamp = 0.f,
+      .lodMaxClamp = 1000.f,
+      .maxAnisotropy = 1,
+  };
+  return {
+      .texture = std::move(texture),
+      .view = std::move(view),
+      .size = {renderTargetSize.width, renderTargetSize.height, layers},
+      .format = format,
+      .sampler = g_device.CreateSampler(&samplerDescriptor),
+  };
+}
 
 TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool multisampled) {
   const auto renderTargetSize = clamp_render_target_size(width, height);
@@ -696,6 +741,7 @@ bool initialize(AuroraBackend auroraBackend) {
         requiredLimits.minUniformBufferOffsetAlignment, requiredLimits.minStorageBufferOffsetAlignment);
     std::vector<wgpu::FeatureName> requiredFeatures;
     bool implicitDeviceSynchronizationSupported = false;
+    bool multiviewSupported = false;
     wgpu::SupportedFeatures supportedFeatures;
     g_adapter.GetFeatures(&supportedFeatures);
     for (size_t i = 0; i < supportedFeatures.featureCount; ++i) {
@@ -731,12 +777,25 @@ bool initialize(AuroraBackend auroraBackend) {
            feature == wgpu::FeatureName::SharedFenceSyncFD)) {
         requiredFeatures.push_back(feature);
       }
+#if defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
+      // Both eyes of an immersive frame in one render pass (gfx/stereo_multiview.hpp), from a Dawn
+      // built with Aurora's patches.
+      if (g_config.xrInterop && g_backendType == wgpu::BackendType::Vulkan &&
+          feature == wgpu::FeatureName::DawnMultiview) {
+        requiredFeatures.push_back(feature);
+        multiviewSupported = true;
+      }
+#endif
 #endif
     }
     if (!implicitDeviceSynchronizationSupported) {
       Log.warn(
           "Adapter does not support ImplicitDeviceSynchronization; multi-threaded presentation is "
           "not safe on this device.");
+    }
+    gfx::stereo_multiview::set_supported(multiviewSupported);
+    if (multiviewSupported) {
+      Log.info("Vulkan multiview available for the stereo eye passes");
     }
 #ifdef WEBGPU_DAWN
     wgpu::DawnCacheDeviceDescriptor cacheDescriptor({

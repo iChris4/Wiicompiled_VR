@@ -64,6 +64,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrImmersiveWindow;
     std::optional<bool> vrPassthrough;
     std::optional<bool> vrDirectPresentation;
+    std::optional<bool> vrMultiview;
     std::optional<std::string> vrMirrorView;
     std::optional<std::string> vrControllerMode;
     std::optional<uint32_t> vrFrameInterpolationFps;
@@ -588,6 +589,9 @@ inline void EnsureConfigFile() {
               "# Off, they cross to a second device through shared buffers, the\n"
               "# older path. Read at launch; nothing elsewhere.\n"
               "# direct_presentation = true\n"
+              "# On the Quest, both eyes of a race frame are drawn in one render pass\n"
+              "# (Vulkan multiview) instead of one after the other. Changeable live.\n"
+              "# multiview = true\n"
               "# Put the camera at the Player 1 driver's head instead of behind\n"
               "# the kart, with the horizon kept level. Changeable live from the\n"
               "# F10 menu, and only during a single-screen race.\n"
@@ -849,6 +853,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.vrImmersiveWindow = FindConfigValue<bool>(document, "vr", "immersive_window");
     config.vrPassthrough = FindConfigValue<bool>(document, "vr", "passthrough");
     config.vrDirectPresentation = FindConfigValue<bool>(document, "vr", "direct_presentation");
+    config.vrMultiview = FindConfigValue<bool>(document, "vr", "multiview");
     config.vrFirstPerson = FindConfigValue<bool>(document, "vr", "first_person");
     config.vrFirstPersonToggleClick = FindConfigValue<bool>(document, "vr", "first_person_toggle_click");
     if (auto value = FindConfigFloat(document, "vr", "first_person_units_per_meter");
@@ -1745,6 +1750,13 @@ inline bool VrPassthrough(bool fallback = true) {
 // (openxr_vulkan.cpp). Read at launch. Nothing elsewhere.
 inline bool VrDirectPresentation(bool fallback = true) {
     return Get().vrDirectPresentation.value_or(fallback);
+}
+
+// On the Quest, whether both eyes of an immersive frame are drawn in one render
+// pass through Vulkan multiview (aurora_set_stereo_multiview); off replays the
+// eyes one after the other. Live. Nothing elsewhere: it needs the Quest's Dawn.
+inline bool VrMultiview(bool fallback = true) {
+    return Get().vrMultiview.value_or(fallback);
 }
 
 inline bool VrFirstPerson(bool fallback = false) {

@@ -1,4 +1,6 @@
-// Compiled inside VulkanBackend.cpp, using the pinned Dawn implementation (apply.py).
+// Compiled inside VulkanBackend.cpp, using the pinned Dawn implementation (apply.py). A map may have a
+// layer per view of a multiview eye pass (aurora/dawn_fdm_abi.h version 2), after the Metroid Prime
+// port's version of this file.
 //
 // Fragment density maps for Aurora's immersive eye render passes. Aurora uploads immutable RG8
 // maps, binds each to the texture view its eye passes render through, and
@@ -33,6 +35,7 @@ struct AuroraFdmMap {
     ResourceMemoryAllocation memory;
     uint32_t width = 0;
     uint32_t height = 0;
+    uint32_t layers = 1;
     ExecutionSerial readySerial = kMaxExecutionSerial;
 };
 struct AuroraFdmBinding {
@@ -75,14 +78,15 @@ void AuroraFdmRelease(Device* device, AuroraFdmMap& map) {
     map.image = VkImage{};
 }
 
-MaybeError AuroraFdmUpload(Device* device, uint32_t width, uint32_t height, const uint8_t* rg8, AuroraFdmMap& map) {
+MaybeError AuroraFdmUpload(Device* device, uint32_t width, uint32_t height, uint32_t layers,
+                           const uint8_t* rg8, AuroraFdmMap& map) {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.format = VK_FORMAT_R8G8_UNORM;
     imageInfo.extent = {width, height, 1};
     imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
+    imageInfo.arrayLayers = layers;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.usage = VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -103,16 +107,17 @@ MaybeError AuroraFdmUpload(Device* device, uint32_t width, uint32_t height, cons
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = map.image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    // Under a multiview pass the view index picks the layer (one layer serves every view).
+    viewInfo.viewType = layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = VK_FORMAT_R8G8_UNORM;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
                            VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
-    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
     DAWN_TRY(CheckVkSuccess(device->fn.CreateImageView(device->GetVkDevice(), &viewInfo, nullptr, &*map.view),
                             "CreateImageView (fragment density map)"));
 
     Queue* queue = ToBackend(device->GetQueue());
-    const uint64_t size = uint64_t(width) * height * 2;
+    const uint64_t size = uint64_t(width) * height * 2 * layers;
     DAWN_TRY(device->GetDynamicUploader()->WithUploadReservation(
         size, device->GetOptimalBufferToTextureCopyOffsetAlignment(),
         [&](UploadReservation reservation) -> MaybeError {
@@ -128,13 +133,14 @@ MaybeError AuroraFdmUpload(Device* device, uint32_t width, uint32_t height, cons
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = map.image;
-            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
             device->fn.CmdPipelineBarrier(context->commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
             VkBufferImageCopy region{};
             region.bufferOffset = reservation.offsetInBuffer;
-            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            // The layers follow each other in the buffer, as one copy of every layer reads them.
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers};
             region.imageExtent = {width, height, 1};
             device->fn.CmdCopyBufferToImage(context->commandBuffer, ToBackend(reservation.buffer.Get())->GetHandle(),
                                             map.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
@@ -154,6 +160,7 @@ MaybeError AuroraFdmUpload(Device* device, uint32_t width, uint32_t height, cons
         }));
     map.width = width;
     map.height = height;
+    map.layers = layers;
     map.readySerial = queue->GetPendingCommandSerial();
     DAWN_TRY(queue->SubmitPendingCommands());
     return {};
@@ -211,13 +218,15 @@ extern "C" DAWN_NATIVE_EXPORT int AuroraDawnFdmQuery(void* handle, AuroraDawnFdm
     return static_cast<int>(caps->enabled);
 }
 
-extern "C" DAWN_NATIVE_EXPORT uint64_t AuroraDawnFdmCreateMap(void* handle, uint32_t width, uint32_t height,
+extern "C" DAWN_NATIVE_EXPORT uint64_t AuroraDawnFdmCreateMap(void* handle, uint32_t width, uint32_t height, uint32_t layers,
                                                                const uint8_t* rg8) {
     Device* device = AuroraFdmDevice(handle);
     auto guard = device->GetGuard();
-    if (!AuroraFdmEnabled(device) || width == 0 || height == 0 || rg8 == nullptr) return 0;
+    if (!AuroraFdmEnabled(device) || width == 0 || height == 0 || layers == 0 || layers > 8 || rg8 == nullptr) {
+        return 0;
+    }
     AuroraFdmMap map;
-    if (device->ConsumedError(AuroraFdmUpload(device, width, height, rg8, map))) {
+    if (device->ConsumedError(AuroraFdmUpload(device, width, height, layers, rg8, map))) {
         AuroraFdmRelease(device, map);
         return 0;
     }
@@ -271,6 +280,10 @@ extern "C" DAWN_NATIVE_EXPORT int AuroraDawnFdmBind(void* handle, void* viewHand
     const uint64_t maxTexelWidth = std::max<uint32_t>(properties.maxFragmentDensityTexelSize.width, 1);
     const uint64_t maxTexelHeight = std::max<uint32_t>(properties.maxFragmentDensityTexelSize.height, 1);
     if (map->second.width * maxTexelWidth < size.width || map->second.height * maxTexelHeight < size.height) {
+        return 0;
+    }
+    // A layered map needs a layer per view of a multiview pass (a single layer serves them all).
+    if (map->second.layers != 1 && map->second.layers < view->GetLayerCount()) {
         return 0;
     }
     state->bindings[view] = AuroraFdmBinding{Ref<TextureViewBase>(view), id};

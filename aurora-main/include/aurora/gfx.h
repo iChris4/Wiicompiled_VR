@@ -114,6 +114,15 @@ bool aurora_get_stereo_skip_copy_clears();
 // pass per recorded pass.
 void aurora_set_stereo_single_pass_eyes(bool enabled);
 bool aurora_get_stereo_single_pass_eyes();
+// multiview draws both eyes of an immersive frame in one render pass over
+// two-layer eye targets (Vulkan multiview), each draw recorded and bound once
+// for both views. On by default and live; it needs a Dawn built with Aurora's
+// patches (the Quest build) on a device with the feature, which
+// aurora_stereo_multiview_available reports; elsewhere the eyes keep their
+// own passes.
+void aurora_set_stereo_multiview(bool enabled);
+bool aurora_get_stereo_multiview();
+bool aurora_stereo_multiview_available();
 
 // Indexed vertex attributes resolved on the CPU into flat, aligned records as
 // the FIFO is decoded, so the vertex shader reads one record instead of an

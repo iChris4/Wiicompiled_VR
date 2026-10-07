@@ -62,14 +62,15 @@ bool available() noexcept { return g_available; }
 
 uint32_t texel_size() noexcept { return g_texelSize; }
 
-uint64_t create_map(uint32_t width, uint32_t height, const uint8_t* rg8) noexcept {
+uint64_t create_map(uint32_t width, uint32_t height, uint32_t layers, const uint8_t* rg8) noexcept {
 #ifdef AURORA_FDM_SUPPORTED
   if (g_available) {
-    return AuroraDawnFdmCreateMap(g_device.Get(), width, height, rg8);
+    return AuroraDawnFdmCreateMap(g_device.Get(), width, height, layers, rg8);
   }
 #endif
   (void)width;
   (void)height;
+  (void)layers;
   (void)rg8;
   return 0;
 }

@@ -464,7 +464,7 @@ private:
       const wgpu::TexelCopyTextureInfo source{
           .texture = *sources[eye].texture,
           .mipLevel = 0,
-          .origin = {},
+          .origin = {0, 0, sources[eye].layer},
           .aspect = wgpu::TextureAspect::All,
       };
       const wgpu::TexelCopyTextureInfo destination{

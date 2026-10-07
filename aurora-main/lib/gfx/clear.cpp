@@ -1,5 +1,6 @@
 #include "clear.hpp"
 
+#include "stereo_multiview.hpp"
 #include "../webgpu/gpu.hpp"
 #include "tracy/Tracy.hpp"
 
@@ -111,7 +112,7 @@ fn fs_main() -> FragmentOutput {
   };
   const auto label = fmt::format("EFB Clear Pipeline (color {}, alpha {}, depth {})", config.clearColor,
                                  config.clearAlpha, config.clearDepth);
-  const wgpu::RenderPipelineDescriptor pipelineDescriptor{
+  wgpu::RenderPipelineDescriptor pipelineDescriptor{
       .label = label.c_str(),
       .layout = pipelineLayout,
       .vertex =
@@ -130,6 +131,17 @@ fn fs_main() -> FragmentOutput {
           },
       .fragment = &fragmentState,
   };
+  if (config.multiview && !stereo_multiview::supported()) {
+    // A stored multiview recipe on a device without the feature: never bound.
+    return {};
+  }
+#if defined(WGPU_DAWN_RENDER_PIPELINE_MULTIVIEW_INIT)
+  wgpu::DawnRenderPipelineMultiview multiview{};
+  multiview.viewMask = stereo_multiview::kViewMask;
+  if (config.multiview) {
+    pipelineDescriptor.nextInChain = &multiview;
+  }
+#endif
   return g_device.CreateRenderPipeline(&pipelineDescriptor);
 }
 

@@ -935,6 +935,43 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
                      outputValue);
 }
 
+namespace {
+// gfx/stereo_multiview.hpp: the shader runs for both views of a two-layer eye pass. Its uniform binding
+// holds the draw's two eye copies back to back, `uniformStride` bytes apart, as the stereo replay stages
+// them (gfx/common.cpp prepare_stereo_replay_uniforms), and the vertex shader reads the view's copy.
+// The fragment shader reads the first: the eyes share everything it uses (TEV, fog, texture sizes).
+std::string to_multiview_source(const std::string& source, uint32_t uniformStride) {
+  std::string out = source;
+  bool complete = true;
+  const auto replace_once = [&](std::string_view from, std::string_view to) {
+    const size_t pos = out.find(from);
+    if (pos == std::string::npos) {
+      complete = false;
+      return;
+    }
+    out.replace(pos, from.size(), to);
+  };
+  replace_once("@group(1) @binding(0)\nvar<uniform> ubuf: Uniform;",
+               fmt::format("struct UniformEye {{\n    @size({}) u: Uniform,\n}};\n@group(1) @binding(0)\n"
+                           "var<uniform> ubuf_eyes: array<UniformEye, 2>;",
+                           uniformStride));
+  replace_once("fn vs_main(\n    @builtin(vertex_index) vidx: u32",
+               "fn vs_main(\n    @builtin(view_index) mv_view: u32,\n    @builtin(vertex_index) vidx: u32");
+  replace_once("    var out: VertexOutput;", "    var out: VertexOutput;\n    let ubuf = &ubuf_eyes[mv_view].u;");
+  const size_t fragment = out.find("fn fs_main(in: VertexOutput) -> ");
+  const size_t body = fragment != std::string::npos ? out.find(" {", fragment) : std::string::npos;
+  if (body == std::string::npos) {
+    complete = false;
+  } else {
+    out.insert(body + 2, "\n    let ubuf = &ubuf_eyes[0].u;");
+  }
+  if (!complete) {
+    Log.error("Multiview shader rewrite missed an anchor; the generated shader changed shape");
+  }
+  return "enable chromium_experimental_multiview;\n" + out;
+}
+} // namespace
+
 wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
@@ -2152,8 +2189,12 @@ fn fs_main(in: VertexOutput) -> {9} {{{6}{5}
 )""",
                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
                                         fragmentFnPre, vtxXfrAttrsPre, uniformPre, fragmentReturnType, fragmentReturn);
+  // The multiview variant indexes the pair of eye uniforms by the view (gfx/stereo_multiview.hpp); the
+  // pair's stride is the staged uniform's size at the device's uniform offset alignment.
+  const std::string multiviewSource =
+      config.multiview ? to_multiview_source(shaderSource, gfx::align_uniform(info.uniformSize)) : std::string{};
   wgpu::ShaderSourceWGSL wgslDescriptor{};
-  wgslDescriptor.code = shaderSource.c_str();
+  wgslDescriptor.code = config.multiview ? multiviewSource.c_str() : shaderSource.c_str();
   const auto label = fmt::format("GX Shader {:x}", hash);
   const auto shaderDescriptor = wgpu::ShaderModuleDescriptor{
       .nextInChain = &wgslDescriptor,

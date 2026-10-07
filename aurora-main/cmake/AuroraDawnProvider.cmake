@@ -273,6 +273,8 @@ elseif (_aurora_dawn_provider STREQUAL "package")
   # the Quest's direct presentation calls (lib/webgpu/vulkan_direct_interop.cpp).
   set(AURORA_DAWN_VULKAN_ABI 0 PARENT_SCOPE)
   if (EXISTS "${_dawn_pkg_dir}/aurora-dawn.json")
+    # A rebuilt package (a new ABI version) must reconfigure, or the compile definitions below go stale.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_dawn_pkg_dir}/aurora-dawn.json")
     file(READ "${_dawn_pkg_dir}/aurora-dawn.json" _aurora_dawn_manifest)
     string(JSON _aurora_dawn_fdm_abi ERROR_VARIABLE _aurora_dawn_manifest_error
       GET "${_aurora_dawn_manifest}" AuroraFdmAbi)

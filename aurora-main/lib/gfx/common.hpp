@@ -262,6 +262,9 @@ extern wgpu::BindGroupLayout g_staticBindGroupLayout;
 extern wgpu::BindGroup g_staticBindGroup;
 extern wgpu::BindGroupLayout g_uniformBindGroupLayout;
 extern wgpu::BindGroup g_uniformBindGroup;
+// The same buffer bound for twice the uniform size: a multiview draw's pair of eye uniforms
+// (gfx/stereo_multiview.hpp).
+extern wgpu::BindGroup g_multiviewUniformBindGroup;
 
 using BindGroupRef = HashType;
 using PipelineRef = HashType;
@@ -344,6 +347,12 @@ struct StereoReplayFrame {
   // The immersive window (AuroraStereoFrame::window): each eye is masked to the
   // 2D layer's screen after its last draw (gfx/window_mask.hpp).
   bool window = false;
+  // Both eyes in one render pass over the eye targets' two layers (gfx/stereo_multiview.hpp): the
+  // views of both layers, and the foveated one while this frame's eyes are foveated.
+  bool multiview = false;
+  wgpu::TextureView multiviewColorView;
+  wgpu::TextureView multiviewFoveatedColorView;
+  wgpu::TextureView multiviewDepthView;
 };
 
 void end_frame(const wgpu::CommandEncoder& cmd);
@@ -403,6 +412,10 @@ int32_t last_pass_feeding_replay(const SealedFrame& frame) noexcept;
 // mutated by stereo replay.
 void render_stereo_eye(SealedFrame& frame, wgpu::CommandEncoder& cmd,
                        const StereoReplayFrame& stereoFrame, uint32_t eye, bool finalize = false);
+// Both eyes at once through Vulkan multiview (StereoReplayFrame::multiview), what
+// render_stereo_eye does for each in one render pass over the two-layer targets.
+void render_stereo_eyes_multiview(SealedFrame& frame, wgpu::CommandEncoder& cmd,
+                                  const StereoReplayFrame& stereoFrame, bool finalize = false);
 // The immersive window's mask on an eye image that holds the duplicated mono
 // picture instead of a replay (a windowed frame whose stereo replay could not
 // be prepared), so the compositor never blends an undefined alpha channel.
@@ -483,6 +496,7 @@ enum class GpuTimingCategory : uint8_t {
   Mono,          // the native (desktop) render of the recorded GX passes
   EyeLeft,       // stereo replay of the left eye
   EyeRight,      // stereo replay of the right eye
+  Eyes,          // both eyes in one multiview pass (gfx/stereo_multiview.hpp)
   Interpolated,  // interpolated presentation slots
   VirtualScreen, // the 2D virtual screen built for each eye
   Panel,         // the in-headset settings panel

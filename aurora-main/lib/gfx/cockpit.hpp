@@ -8,6 +8,7 @@
 #pragma once
 #include "common.hpp"
 #include "cockpit_item.hpp"
+#include "stereo_multiview.hpp"
 #include "../webgpu/gpu.hpp"
 #include <array>
 #include <atomic>
@@ -292,6 +293,9 @@ inline AuroraCockpit cachedCockpit{};
 inline AuroraCockpitItem cachedCockpitItem{};
 inline uint64_t cachedMeshRevision=0;
 inline wgpu::RenderPipeline pipeline;
+// Both eyes at once in a multiview pass (gfx/stereo_multiview.hpp): the same with each eye's vertices
+// in a vertex buffer slot of its own, rebuilt with `pipeline`.
+inline wgpu::RenderPipeline multiviewPipeline;
 struct SceneDepth {
   float z=0, constant=0;
   bool valid=false;
@@ -301,45 +305,68 @@ inline bool pipelineReversedDepth=false;
 inline wgpu::TextureFormat pipelineFormat{}, pipelineDepthFormat{};
 inline std::array<wgpu::Buffer,2> vertexBuffers;
 inline std::array<uint64_t,2> vertexCapacity{};
-inline void shutdown() { pipeline=nullptr;pipelineSamples=0;vertexBuffers={};vertexCapacity={};cachedMeshRevision=0;cachedCockpitItem={};frameVertices.clear();cockpit_item::shutdown(); }
-inline void render(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,uint32_t eye,SceneDepth sceneDepth={},
-                   const wgpu::RenderPassEncoder* existingPass=nullptr) {
-  if(!frame.cockpit.active || !sceneDepth.valid) return;
+inline void shutdown() { pipeline=nullptr;multiviewPipeline=nullptr;pipelineSamples=0;vertexBuffers={};vertexCapacity={};cachedMeshRevision=0;cachedCockpitItem={};frameVertices.clear();cockpit_item::shutdown(); }
+// The pipeline for an eye target's attachments and depth direction; the multiview one takes both eyes'
+// vertices as two vertex buffers and draws the view's.
+inline wgpu::RenderPipeline make_pipeline(const ReplayTarget& target,bool reversedDepth,bool multiview) {
   using namespace webgpu;
-  const auto& target=frame.eyes[eye].target;
   const auto format=g_graphicsConfig.surfaceConfiguration.format;
-  // The guest can reverse its viewport depth independently of Aurora's
-  // global reversed-Z convention. The final 1/d coefficient is authoritative.
-  const bool reversedDepth=sceneDepth.constant>0;
-  if(!pipeline||pipelineSamples!=target.msaaSamples||pipelineFormat!=format||pipelineReversedDepth!=reversedDepth||pipelineDepthFormat!=target.depthFormat) {
-    wgpu::ShaderSourceWGSL source{};
-    source.code=R"(
+  wgpu::ShaderSourceWGSL source{};
+  source.code=multiview?R"(
+      enable chromium_experimental_multiview;
+      struct Out { @builtin(position) position: vec4f, @location(0) color: vec3f };
+      @vertex fn vs(@builtin(view_index) view: u32, @location(0) position0: vec4f, @location(1) color0: vec3f,
+                    @location(2) position1: vec4f, @location(3) color1: vec3f) -> Out {
+        var o: Out; let right = view == 1u;
+        o.position=select(position0, position1, right); o.color=select(color0, color1, right); return o;
+      }
+      @fragment fn fs(i: Out) -> @location(0) vec4f { return vec4f(i.color,1); }
+    )":R"(
       struct Out { @builtin(position) position: vec4f, @location(0) color: vec3f };
       @vertex fn vs(@location(0) position: vec4f, @location(1) color: vec3f) -> Out {
         var o: Out; o.position=position; o.color=color; return o;
       }
       @fragment fn fs(i: Out) -> @location(0) vec4f { return vec4f(i.color,1); }
     )";
-    wgpu::ShaderModuleDescriptor md{};md.nextInChain=&source;md.label="VR cockpit hands and wheel";
-    auto shader=g_device.CreateShaderModule(&md);
-    const wgpu::VertexAttribute attrs[]={{.format=wgpu::VertexFormat::Float32x4,.offset=0,.shaderLocation=0},
-      {.format=wgpu::VertexFormat::Float32x3,.offset=16,.shaderLocation=1}};
-    const wgpu::VertexBufferLayout layout{.arrayStride=28,.attributeCount=2,.attributes=attrs};
-    const wgpu::ColorTargetState color{.format=format};
-    const wgpu::FragmentState fragment{.module=shader,.entryPoint="fs",.targetCount=1,.targets=&color};
-    const bool stencil=target.depthFormat==wgpu::TextureFormat::Depth24PlusStencil8;
-    const wgpu::StencilFaceState mark{.compare=wgpu::CompareFunction::Always,
-      .passOp=stencil?wgpu::StencilOperation::Replace:wgpu::StencilOperation::Keep};
-    const wgpu::DepthStencilState depth{.format=target.depthFormat,.depthWriteEnabled=true,
-      .depthCompare=reversedDepth?wgpu::CompareFunction::GreaterEqual:wgpu::CompareFunction::LessEqual,
-      .stencilFront=mark,.stencilBack=mark,.stencilReadMask=1,.stencilWriteMask=stencil?1u:0u};
-    wgpu::RenderPipelineDescriptor desc{};desc.label="VR cockpit";
-    desc.vertex={.module=shader,.entryPoint="vs",.bufferCount=1,.buffers=&layout};
-    desc.fragment=&fragment;desc.depthStencil=&depth;desc.multisample.count=target.msaaSamples;
-    desc.primitive.topology=wgpu::PrimitiveTopology::TriangleList;
-    pipeline=g_device.CreateRenderPipeline(&desc);pipelineSamples=target.msaaSamples;pipelineFormat=format;
-    pipelineReversedDepth=reversedDepth;pipelineDepthFormat=target.depthFormat;
+  wgpu::ShaderModuleDescriptor md{};md.nextInChain=&source;md.label="VR cockpit hands and wheel";
+  auto shader=g_device.CreateShaderModule(&md);
+  const wgpu::VertexAttribute attrs[]={{.format=wgpu::VertexFormat::Float32x4,.offset=0,.shaderLocation=0},
+    {.format=wgpu::VertexFormat::Float32x3,.offset=16,.shaderLocation=1}};
+  const wgpu::VertexAttribute attrsRight[]={{.format=wgpu::VertexFormat::Float32x4,.offset=0,.shaderLocation=2},
+    {.format=wgpu::VertexFormat::Float32x3,.offset=16,.shaderLocation=3}};
+  const wgpu::VertexBufferLayout layouts[]={{.arrayStride=28,.attributeCount=2,.attributes=attrs},
+    {.arrayStride=28,.attributeCount=2,.attributes=attrsRight}};
+  const wgpu::ColorTargetState color{.format=format};
+  const wgpu::FragmentState fragment{.module=shader,.entryPoint="fs",.targetCount=1,.targets=&color};
+  const bool stencil=target.depthFormat==wgpu::TextureFormat::Depth24PlusStencil8;
+  const wgpu::StencilFaceState mark{.compare=wgpu::CompareFunction::Always,
+    .passOp=stencil?wgpu::StencilOperation::Replace:wgpu::StencilOperation::Keep};
+  const wgpu::DepthStencilState depth{.format=target.depthFormat,.depthWriteEnabled=true,
+    .depthCompare=reversedDepth?wgpu::CompareFunction::GreaterEqual:wgpu::CompareFunction::LessEqual,
+    .stencilFront=mark,.stencilBack=mark,.stencilReadMask=1,.stencilWriteMask=stencil?1u:0u};
+  wgpu::RenderPipelineDescriptor desc{};desc.label=multiview?"VR cockpit (multiview)":"VR cockpit";
+  desc.vertex={.module=shader,.entryPoint="vs",.bufferCount=multiview?2u:1u,.buffers=layouts};
+  desc.fragment=&fragment;desc.depthStencil=&depth;desc.multisample.count=target.msaaSamples;
+  desc.primitive.topology=wgpu::PrimitiveTopology::TriangleList;
+#if defined(WGPU_DAWN_RENDER_PIPELINE_MULTIVIEW_INIT)
+  wgpu::DawnRenderPipelineMultiview viewMask{};viewMask.viewMask=stereo_multiview::kViewMask;
+  if(multiview) desc.nextInChain=&viewMask;
+#else
+  if(multiview) return {};
+#endif
+  return g_device.CreateRenderPipeline(&desc);
+}
+inline void ensure_pipelines(const ReplayTarget& target,bool reversedDepth,bool multiview) {
+  const auto format=webgpu::g_graphicsConfig.surfaceConfiguration.format;
+  if(!pipeline||pipelineSamples!=target.msaaSamples||pipelineFormat!=format||pipelineReversedDepth!=reversedDepth||pipelineDepthFormat!=target.depthFormat) {
+    pipeline=make_pipeline(target,reversedDepth,false);multiviewPipeline=nullptr;
+    pipelineSamples=target.msaaSamples;pipelineFormat=format;pipelineReversedDepth=reversedDepth;pipelineDepthFormat=target.depthFormat;
   }
+  if(multiview&&!multiviewPipeline) multiviewPipeline=make_pipeline(target,reversedDepth,true);
+}
+// Writes the eye's clip-space vertices into its buffer; null when there is nothing to draw.
+inline const wgpu::Buffer* upload_eye_vertices(const StereoReplayFrame& frame,uint32_t eye,SceneDepth sceneDepth) {
+  using namespace webgpu;
   const auto revision=meshRevision.load();
   if(cachedMeshRevision!=revision || std::memcmp(&cachedCockpit,&frame.cockpit,sizeof(AuroraCockpit))!=0 ||
      std::memcmp(&cachedCockpitItem,&frame.cockpitItem,sizeof(AuroraCockpitItem))!=0) {
@@ -348,7 +375,7 @@ inline void render(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,uint
     cachedCockpit=frame.cockpit;cachedCockpitItem=frame.cockpitItem;cachedMeshRevision=revision;
   }
   const auto& vertices=frameVertices;
-  if(vertices.empty()) return;
+  if(vertices.empty()) return nullptr;
   struct ClipVertex { float p[4]; V color; };
   static std::vector<ClipVertex> clip;
   clip.resize(vertices.size());
@@ -368,8 +395,19 @@ inline void render(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,uint
       .size=vertexCapacity[eye]};
     vertexBuffers[eye]=g_device.CreateBuffer(&bd);
   }
-  auto& buffer=vertexBuffers[eye];
-  g_queue.WriteBuffer(buffer,0,clip.data(),bytes);
+  g_queue.WriteBuffer(vertexBuffers[eye],0,clip.data(),bytes);
+  return &vertexBuffers[eye];
+}
+inline void render(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,uint32_t eye,SceneDepth sceneDepth={},
+                   const wgpu::RenderPassEncoder* existingPass=nullptr) {
+  if(!frame.cockpit.active || !sceneDepth.valid) return;
+  const auto& target=frame.eyes[eye].target;
+  // The guest can reverse its viewport depth independently of Aurora's
+  // global reversed-Z convention. The final 1/d coefficient is authoritative.
+  const bool reversedDepth=sceneDepth.constant>0;
+  ensure_pipelines(target,reversedDepth,false);
+  const wgpu::Buffer* buffer=upload_eye_vertices(frame,eye,sceneDepth);
+  if(!buffer) return;
   const wgpu::RenderPassColorAttachment attachment{.view=target.colorView,.resolveTarget=target.resolveView,
     .loadOp=wgpu::LoadOp::Load,.storeOp=wgpu::StoreOp::Store};
   const wgpu::RenderPassDepthStencilAttachment depth{.view=target.depthView,.depthLoadOp=wgpu::LoadOp::Load,
@@ -382,9 +420,45 @@ inline void render(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,uint
   pass.SetScissorRect(0,0,target.size.width,target.size.height);
   // Mark only depth-visible samples; later virtual-screen draws test for zero.
   pass.SetStencilReference(1);
-  pass.SetPipeline(pipeline);pass.SetVertexBuffer(0,buffer);pass.Draw(clip.size());
+  pass.SetPipeline(pipeline);pass.SetVertexBuffer(0,*buffer);pass.Draw(static_cast<uint32_t>(frameVertices.size()));
   cockpit_item::render(pass,frame,eye,sceneDepth.z,sceneDepth.constant);
   pass.SetStencilReference(0);
   if(!existingPass) pass.End();
+}
+// Both eyes at once in a multiview pass over the two-layer targets (StereoReplayFrame::multiview): each
+// eye's vertices in a vertex buffer slot of its own, the shader drawing the view's.
+inline void render_multiview(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,SceneDepth sceneDepth={},
+                             const wgpu::RenderPassEncoder* existingPass=nullptr) {
+  if(!frame.cockpit.active || !sceneDepth.valid || !frame.multiview) return;
+  const auto& target=frame.eyes[0].target;
+  const bool reversedDepth=sceneDepth.constant>0;
+  ensure_pipelines(target,reversedDepth,true);
+  if(!multiviewPipeline) return;
+  const wgpu::Buffer* left=upload_eye_vertices(frame,0,sceneDepth);
+  const wgpu::Buffer* right=upload_eye_vertices(frame,1,sceneDepth);
+  if(!left||!right) return;
+#if defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
+  const bool stencil=target.depthFormat==wgpu::TextureFormat::Depth24PlusStencil8;
+  const wgpu::RenderPassColorAttachment attachment{.view=frame.multiviewColorView,
+    .loadOp=wgpu::LoadOp::Load,.storeOp=wgpu::StoreOp::Store};
+  const wgpu::RenderPassDepthStencilAttachment depth{.view=frame.multiviewDepthView,.depthLoadOp=wgpu::LoadOp::Load,
+    .depthStoreOp=wgpu::StoreOp::Store,.depthClearValue=1.0f,
+    .stencilLoadOp=stencil?wgpu::LoadOp::Load:wgpu::LoadOp::Undefined,
+    .stencilStoreOp=stencil?wgpu::StoreOp::Store:wgpu::StoreOp::Undefined};
+  wgpu::DawnRenderPassMultiview viewMask{};viewMask.viewMask=stereo_multiview::kViewMask;
+  const wgpu::RenderPassDescriptor pd{.nextInChain=&viewMask,.label="VR cockpit overlay (multiview)",
+    .colorAttachmentCount=1,.colorAttachments=&attachment,.depthStencilAttachment=&depth};
+  auto pass=existingPass?*existingPass:cmd.BeginRenderPass(&pd);
+  pass.SetViewport(0,0,float(target.size.width),float(target.size.height),0,1);
+  pass.SetScissorRect(0,0,target.size.width,target.size.height);
+  pass.SetStencilReference(1);
+  pass.SetPipeline(multiviewPipeline);pass.SetVertexBuffer(0,*left);pass.SetVertexBuffer(1,*right);
+  pass.Draw(static_cast<uint32_t>(frameVertices.size()));
+  cockpit_item::render_multiview(pass,frame,sceneDepth.z,sceneDepth.constant);
+  pass.SetStencilReference(0);
+  if(!existingPass) pass.End();
+#else
+  (void)cmd;(void)existingPass;
+#endif
 }
 } // namespace aurora::gfx::cockpit

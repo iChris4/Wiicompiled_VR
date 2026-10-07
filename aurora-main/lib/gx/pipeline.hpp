@@ -19,6 +19,11 @@ struct DrawData {
   // (note_composite_source_pipeline).
   gfx::PipelineRef compositeSourcePipeline = 0;
   gfx::PipelineRef stereoCompositeSourcePipeline = 0;
+  // Multiview siblings of stereoPipeline, stereoScreenPipeline and stereoCompositeSourcePipeline
+  // (gfx/stereo_multiview.hpp), set while the device has the feature.
+  gfx::PipelineRef multiviewPipeline = 0;
+  gfx::PipelineRef multiviewScreenPipeline = 0;
+  gfx::PipelineRef multiviewCompositeSourcePipeline = 0;
   gfx::Range vertRange;
   gfx::Range idxRange;
   gfx::Range uniformRange;
@@ -106,6 +111,8 @@ struct DrawEncodeState {
   bool geometryBound = false;
   // Whether vertex buffer 0 (the geometry cache's buffer, for native vertex input) is bound in this pass.
   bool vertexBufferBound = false;
+  // A multiview eye pass (gfx/stereo_multiview.hpp): group 1 binds each draw's pair of eye uniforms.
+  bool multiview = false;
 };
 
 void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, DrawEncodeState& state,

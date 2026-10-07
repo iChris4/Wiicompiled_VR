@@ -91,7 +91,8 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, DrawEncod
   // avoids copying the whole DrawData per draw per slot.
   const gfx::Range& uniformRange = uniformRangeOverride != nullptr ? *uniformRangeOverride : data.uniformRange;
   const std::array offsets{uniformRange.offset};
-  pass.SetBindGroup(1, gfx::g_uniformBindGroup, offsets.size(), offsets.data());
+  pass.SetBindGroup(1, state.multiview ? gfx::g_multiviewUniformBindGroup : gfx::g_uniformBindGroup,
+                    offsets.size(), offsets.data());
   // Resolved when the draw was recorded; see GXBindGroups.
   if (data.bindGroups.resolvedTextureBindGroup != nullptr &&
       data.bindGroups.resolvedTextureBindGroup != state.boundTextureBindGroup) {

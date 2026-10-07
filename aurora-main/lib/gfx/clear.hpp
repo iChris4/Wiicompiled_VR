@@ -8,6 +8,8 @@ namespace aurora::gfx::clear {
 struct DrawData {
   PipelineRef pipeline;
   PipelineRef stereoPipeline = 0;
+  // Its multiview sibling (gfx/stereo_multiview.hpp), while the device has the feature.
+  PipelineRef multiviewPipeline = 0;
   Range uniformRange;
   wgpu::Color color;
   float depth = 0.f;
@@ -19,7 +21,7 @@ struct DrawData {
   ClipRect scissor{};
 };
 
-constexpr uint32_t ClearPipelineConfigVersion = 4;
+constexpr uint32_t ClearPipelineConfigVersion = 5;
 struct PipelineConfig {
   uint32_t version = ClearPipelineConfigVersion;
   uint32_t msaaSamples = 1;
@@ -27,6 +29,9 @@ struct PipelineConfig {
   bool clearAlpha = true;
   bool clearDepth = true;
   bool stereoStencil = false;
+  // Both layers of a multiview eye pass (gfx/stereo_multiview.hpp); needs stereoStencil.
+  bool multiview = false;
+  uint8_t pad[3] = {};
 };
 static_assert(std::has_unique_object_representations_v<PipelineConfig>);
 

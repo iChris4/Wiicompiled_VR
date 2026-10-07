@@ -9,6 +9,7 @@
 #include "model_visibility.hpp"
 #include "geometry_cache.hpp"
 #include "native_vertex.hpp"
+#include "../gfx/stereo_multiview.hpp"
 #include "../gfx/geometry_buffer.hpp"
 #include "gx_fmt.hpp"
 #include "pipeline.hpp"
@@ -2441,6 +2442,10 @@ struct CachedPipelineState {
   // compositeSourceGeneration falls behind that set (resolve_composite_source_pipelines).
   mutable gfx::PipelineRef compositeSourceRef = 0;
   mutable gfx::PipelineRef stereoCompositeSourceRef = 0;
+  // Multiview siblings (gfx/stereo_multiview.hpp), while the device has the feature.
+  mutable gfx::PipelineRef multiviewRef = 0;
+  mutable gfx::PipelineRef multiviewScreenRef = 0;
+  mutable gfx::PipelineRef multiviewCompositeSourceRef = 0;
   mutable u32 compositeSourceGeneration = 0;
   HashType configHash = 0;
   // Carried here so the draw can be recorded without keeping the PipelineConfig that produced it alive; it is the only
@@ -2538,6 +2543,7 @@ static void resolve_composite_source_pipelines(const CachedPipelineState& state)
   if (!s_compositeSourcePipelines.contains(state.ref)) {
     state.compositeSourceRef = 0;
     state.stereoCompositeSourceRef = 0;
+    state.multiviewCompositeSourceRef = 0;
     return;
   }
   if (state.compositeSourceRef == 0) {
@@ -2546,6 +2552,10 @@ static void resolve_composite_source_pipelines(const CachedPipelineState& state)
     state.compositeSourceRef = gfx::pipeline_ref(config);
     config.stereoStencil = kCompositeSourceBlend | kStereoStencilFormat;
     state.stereoCompositeSourceRef = gfx::pipeline_ref(config);
+    if (gfx::stereo_multiview::supported()) {
+      config.shaderConfig.multiview = 1;
+      state.multiviewCompositeSourceRef = gfx::pipeline_ref(config);
+    }
   }
 }
 
@@ -2553,15 +2563,28 @@ static void resolve_composite_source_pipelines(const CachedPipelineState& state)
 // draws only read the refs: no extra config population/hashing on the Quest CPU.
 // Shader modules are shared by the depth-format variants.
 static void resolve_replay_pipelines(const CachedPipelineState& state, bool screen) {
-  if (state.stereoRef && (!screen || state.stereoScreenRef)) return;
+  const bool multiview = gfx::stereo_multiview::supported();
+  if (state.stereoRef && (!screen || state.stereoScreenRef) &&
+      (!multiview || (state.multiviewRef && (!screen || state.multiviewScreenRef))))
+    return;
   PipelineConfig config = *state.config;
   config.stereoStencil = kStereoStencilFormat;
   if (!state.stereoRef) state.stereoRef = gfx::pipeline_ref(config);
-  if (screen && !state.stereoScreenRef) {
+  if (multiview && !state.multiviewRef) {
+    config.shaderConfig.multiview = 1;
+    state.multiviewRef = gfx::pipeline_ref(config);
+    config.shaderConfig.multiview = 0;
+  }
+  if (screen && (!state.stereoScreenRef || (multiview && !state.multiviewScreenRef))) {
     config.shaderConfig.exactScreenDepth = 1;
-    state.stereoScreenRef = gfx::pipeline_ref(config);
+    if (!state.stereoScreenRef) state.stereoScreenRef = gfx::pipeline_ref(config);
+    if (multiview && !state.multiviewScreenRef) {
+      config.shaderConfig.multiview = 1;
+      state.multiviewScreenRef = gfx::pipeline_ref(config);
+      config.shaderConfig.multiview = 0;
+    }
     config.stereoStencil = 0;
-    state.screenRef = gfx::pipeline_ref(config);
+    if (!state.screenRef) state.screenRef = gfx::pipeline_ref(config);
   }
 }
 
@@ -2913,6 +2936,10 @@ static void push_resolved_draw(const ResolvedDraw& draw) {
       .compositeSourcePipeline = stereo && replayLayout.perspective ? pipelineState.compositeSourceRef : 0,
       .stereoCompositeSourcePipeline =
           stereo && replayLayout.perspective ? pipelineState.stereoCompositeSourceRef : 0,
+      .multiviewPipeline = stereo ? pipelineState.multiviewRef : 0,
+      .multiviewScreenPipeline = stereo && screen ? pipelineState.multiviewScreenRef : 0,
+      .multiviewCompositeSourcePipeline =
+          stereo && replayLayout.perspective ? pipelineState.multiviewCompositeSourceRef : 0,
       .vertRange = draw.vertRange,
       .idxRange = draw.idxRange,
       .uniformRange = uniformRanges.current,
