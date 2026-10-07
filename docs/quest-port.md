@@ -61,9 +61,12 @@ session is therefore impossible without a patched Dawn. Instead:
    (`VK_ANDROID_external_memory_android_hardware_buffer`).
 3. Aurora imports the same buffers as Dawn shared texture memory
    (`SharedTextureMemoryAHardwareBuffer`) and, inside the frame worker's
-   command buffer, copies each replayed eye into the buffer
+   command buffer, draws each replayed eye into the buffer with one
+   full-screen triangle that loads the eye's texels
    (`aurora-main/lib/webgpu/vulkan_interop.cpp`, the twin of
    `d3d12_interop.cpp` and registered through the same stereo sink).
+   `CopyTextureToTexture` remains only for a buffer Dawn cannot render into:
+   on Adreno a transfer copy is the slow path (below).
 4. Ordering across the two devices uses Android sync file descriptors:
    Dawn's `EndAccess` exports a `SharedFenceSyncFD` the OpenXR device waits on
    before its `vkCmdCopyImage` into the acquired swapchain image, and the copy
@@ -88,12 +91,19 @@ next frame is tried; only work that may have been queued with no completion
 marker, a lost device above all, ends the session. Three hundred skipped copies
 in a row end it too.
 
-The cost is one extra GPU copy per eye per frame, a few hundred microseconds
-at Quest eye resolutions; the benefit is that the bridge needs nothing from
-Dawn beyond its public API, and the OpenXR device outlives Aurora's, which is
-exactly the failure DolphinXR hit on Vulkan when a game's device was destroyed
-under the compositor. (The Quest's Dawn carries Aurora's patches for foveated
-rendering only; see below.)
+The cost is one extra pass per eye per frame on Dawn's side and the
+`vkCmdCopyImage` on the runtime's; the benefit is that the bridge needs
+nothing from Dawn beyond its public API, and the OpenXR device outlives
+Aurora's, which is exactly the failure DolphinXR hit on Vulkan when a game's
+device was destroyed under the compositor. Dawn's side was a transfer copy
+too until 2026-10-07: the Metroid Prime port, on this renderer, measured a
+transfer copy of both eyes into the runtime's images at about 2.6 ms a frame
+against 0.4 ms for a draw, and here the draw took 0.2 to 0.6 ms of App GPU
+time off a Luigi Circuit race at `render_scale` 0.8 (measured below). The
+runtime-side copy still stands; direct presentation into the swapchain
+(Prime's `openxr_vulkan_direct.cpp`, after this repo's Windows Vulkan binding)
+would remove it. (The Quest's Dawn carries Aurora's patches for foveated
+rendering and the Vulkan hooks that binding needs; see below.)
 
 `gpu.cpp` steers Aurora to an RGBA8 surface format under `xrInterop` on Android
 (there is no BGRA `AHardwareBuffer` format) and requests the two Dawn features
@@ -1142,6 +1152,30 @@ variable: both the drain and the idle consumer now spin for a few hundred
 microseconds before blocking, with a sequentially consistent sleep handshake,
 and the 22 drains cost 2.6 ms per frame in total; that screen runs at 60 with
 the thread on.
+
+Three renderer changes measured on 2026-10-07 came from comparing this port
+with the Metroid Prime port (`MetroidPrimePortVR`, the same Aurora lineage,
+whose Quest 3 campaign is in its `docs/CHOZO_PERFORMANCE.md`). Method: the
+base game's first Grand Prix race at Luigi Circuit, player idle while the
+CPUs race (so the draw count cycles between about 280 and 450 a frame as the
+pack passes; eye times are compared at a matched draw count through a line
+fit per state), `render_scale` 0.8, foveation medium, `fpslog` on, each
+change alternated on and off in 11 s windows for 6 to 10 rounds inside one
+session, the GPU at 492 MHz throughout, the game at 60 FPS throughout, and
+`VrApi App=` from the game's process.
+
+| Change | Both eyes, matched draws | App GPU per frame |
+| --- | --- | --- |
+| Constant position-matrix index baked into compacted-layout shaders instead of a uniform load and a dynamic index (`gx/shader.cpp`; Prime `cd00553e`) | 7.59 -> 6.39 ms at 356 draws (-16%) | 10.06 -> 8.82 ms |
+| The eye's last render pass discards depth and stencil instead of storing them (`gfx/common.cpp` `render_eye_planned`) | 7.04 -> 6.51 ms at 328 draws (-7.5%, 10 rounds) | 9.51 -> 9.08 ms |
+| Eyes drawn into the AHardwareBuffers with a full-screen triangle instead of `CopyTextureToTexture` (`webgpu/vulkan_interop.cpp`) | 6.89 -> 6.47 ms at 337 draws, then 6.72 -> 6.51 at 333 (10 rounds) | 9.41 -> 8.76, then 9.14 -> 8.91 ms |
+
+The three together take the race from about 10.1 to 8.8 ms of App GPU time
+at the same clock, with the image unchanged (compositor screenshots with the
+blit on and off are identical in content). What Prime found largest, native
+vertex input over a resident de-indexed geometry cache (App GPU 9.6 -> 5.1 ms
+on its scene), is the next step; the eye passes here are bound by the same
+per-vertex storage-buffer decoding.
 
 Verified on device since: the menus on the virtual screen, controller input
 (the user has driven races), and an immersive Grand Prix start with all 12
