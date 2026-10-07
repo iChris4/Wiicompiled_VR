@@ -304,6 +304,43 @@ Range push_indices(const uint8_t* data, size_t length) {
 }
 Range push_uniform(const uint8_t* data, size_t length) { return {}; }
 Range push_storage(const uint8_t* data, size_t length) { return {}; }
+
+// --- Geometry cache stubs (gfx/geometry_buffer.hpp): a capacity the tests set, the uploads and 32-bit indices
+// recorded, the index staging offset running so consecutive cached draws stay contiguous. ---
+namespace {
+uint64_t s_geometryCapacity = 0;
+std::vector<std::pair<uint32_t, uint32_t>> s_geometryUploads; // destination offset, size
+std::vector<uint8_t> s_lastGeometryUploadBytes;
+std::vector<uint32_t> s_lastPushedIndices32;
+uint32_t s_indexStagingOffset = 0;
+} // namespace
+void set_geometry_buffer_capacity_mb(uint32_t mb) noexcept { s_geometryCapacity = static_cast<uint64_t>(mb) << 20; }
+uint64_t ensure_geometry_buffer() noexcept { return s_geometryCapacity; }
+uint64_t geometry_buffer_capacity() noexcept { return s_geometryCapacity; }
+bool queue_geometry_upload(uint32_t offset, const uint8_t* data, uint32_t size) {
+  s_geometryUploads.emplace_back(offset, size);
+  s_lastGeometryUploadBytes.assign(data, data + size);
+  return true;
+}
+size_t vertex_staging_room() noexcept { return VertexBufferSize; }
+Range push_indices32(const uint32_t* data, size_t count) {
+  s_lastPushedIndices32.assign(data, data + count);
+  const Range range{s_indexStagingOffset, static_cast<uint32_t>(count * sizeof(uint32_t))};
+  s_indexStagingOffset += range.size;
+  return range;
+}
+namespace testing {
+void set_geometry_buffer_capacity_bytes(uint64_t bytes) noexcept { s_geometryCapacity = bytes; }
+const std::vector<std::pair<uint32_t, uint32_t>>& geometry_uploads() noexcept { return s_geometryUploads; }
+const std::vector<uint8_t>& last_geometry_upload_bytes() noexcept { return s_lastGeometryUploadBytes; }
+const std::vector<uint32_t>& last_pushed_indices32() noexcept { return s_lastPushedIndices32; }
+void reset_geometry_records() noexcept {
+  s_geometryUploads.clear();
+  s_lastGeometryUploadBytes.clear();
+  s_lastPushedIndices32.clear();
+  s_indexStagingOffset = 0;
+}
+} // namespace testing
 std::pair<ByteBuffer, Range> map_uniform(size_t length) {
   s_uniformAllocations.emplace_back(length, 0);
   auto& uniformBytes = s_uniformAllocations.back();

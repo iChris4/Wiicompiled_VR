@@ -115,6 +115,28 @@ bool aurora_get_stereo_skip_copy_clears();
 void aurora_set_stereo_single_pass_eyes(bool enabled);
 bool aurora_get_stereo_single_pass_eyes();
 
+// Indexed vertex attributes resolved on the CPU into flat, aligned records as
+// the FIFO is decoded, so the vertex shader reads one record instead of an
+// index and then an array element (the dependent fetch the Quest's Adreno
+// stalls on). Live; a frame's draws all follow one setting.
+void aurora_set_gx_deindex_vertices(bool enabled);
+bool aurora_get_gx_deindex_vertices();
+
+// Display lists that only draw (a model's shapes) are resolved once into
+// de-indexed records kept in a persistent GPU buffer of this many MiB, and
+// drawn from there while the guest-RAM write tracking says neither the list
+// nor its arrays changed; 0 (the default) keeps nothing. Needs
+// deindex_vertices. The buffer is created at its first use.
+void aurora_set_gx_geometry_cache_mb(uint32_t mb);
+// Asks for every cached list to go at the next frame begin (a race ends and
+// its course goes away). Any thread.
+void aurora_request_geometry_cache_clear(void);
+// Cached lists whose records map onto vertex formats are drawn through the
+// GPU's vertex-input stage instead of decoding the storage buffer in the
+// vertex shader; the rest keep the storage path. Needs the geometry cache.
+// Live.
+void aurora_set_gx_native_vertex_input(bool enabled);
+
 // Fixed foveated rendering of the immersive eyes: 0 off, 1 low, 2 medium, 3
 // high. Each eye's render pass runs under a fragment density map that shades
 // the periphery in 2x2, then 4x4 pixel blocks, the higher the level the closer

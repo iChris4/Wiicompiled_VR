@@ -7,6 +7,7 @@
 #include "runtime_log.h"
 #include "vr/mkw_vr_first_person.h"
 #include "vr/mkw_vr_policy.h"
+#include <aurora/gfx.h>
 
 #include <algorithm>
 #include <array>
@@ -195,6 +196,9 @@ extern "C" void MkwVRObserveTranslatedFunctionEntry(uint32_t address,
         MkwVRPolicyPublishScene(scene);
         MkwVRPolicyInvalidateRaceCamera();
         MkwVRFirstPersonReset();
+        // The course and its karts go with the race: the resolved display lists
+        // the geometry cache kept for them are released at the next frame begin.
+        aurora_request_geometry_cache_clear();
         RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] exited RaceScene at frame " << frame
                                << std::endl;
         break;

@@ -630,7 +630,8 @@ the mono pass and both eyes) and took a 56 FPS race down to 42. `debug.wiicompil
 the draw calls a frame and the primitives merged away, which is where that shows up first, and a line
 counting why the other draws did not join the one before them (a GX state change, a particle quad, a
 2D draw while stereo records, the first draw of a pass, lines or points, a vertex-motion or instanced
-predecessor, or the wheel's arrays).
+predecessor, or the wheel's arrays), and with the geometry cache on (`[video] geometry_cache_mb`, the
+Quest's default) a line counting the display lists it served and resolved.
 
 The copy is matched against the race camera's view (`RaceCamera::GetViewMtx` with no dolly offset),
 because the scene camera is only set once the draws run. The log reports, once a second, how far
@@ -1070,6 +1071,13 @@ but fine animated detail does not: on Retro Rewind's swamp goo the tiles show as
 ripples give way to a smoother look. It is no fix for a heavy track: on Retro Rewind's SNES Ghost Valley
 2 at 1.0, GPU-bound at about 40 FPS, no level raised the frame rate, while merging the eye passes
 did (39 to 41.5 FPS).
+
+The geometry side has since been cut by the eye's last pass discarding its depth and stencil and by
+the resident geometry cache with native vertex input (`[video] deindex_vertices`, `geometry_cache_mb`,
+`native_vertex_input`, on by default on the Quest, opt-in on the PC): the course's and karts' display
+lists are resolved once into flat records in a GPU buffer and drawn through the vertex-input stage
+instead of decoded per vertex in the shader. At Luigi Circuit both eyes went from 6.7 to 4.6 ms and
+the frame's GPU time from 9.5 to 7.2 ms; `docs/quest-port.md` has the method and the per-step numbers.
 
 ## Diagnostics
 

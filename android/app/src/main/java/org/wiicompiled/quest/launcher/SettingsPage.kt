@@ -316,6 +316,13 @@ class SettingsPage(
                 read = { it.bool("video", "gx_thread") ?: true },
                 write = { c, value -> c.setBool("video", "gx_thread", value) },
             )
+            // deindex_vertices is the first stage of the resident geometry cache; without it the cache
+            // and native vertex input stay out too (runtime_config.h).
+            toggle(
+                R.string.graphics_resident_geometry, R.string.graphics_resident_geometry_helper,
+                read = { it.bool("video", "deindex_vertices") ?: true },
+                write = { c, value -> c.setBool("video", "deindex_vertices", value) },
+            )
         }
     }
 

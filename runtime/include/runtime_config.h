@@ -49,6 +49,9 @@ struct RuntimeUserConfig {
     std::optional<bool> textureDumps;
     std::optional<bool> showFps;
     std::optional<bool> gxThread;
+    std::optional<bool> deindexVertices;
+    std::optional<uint32_t> geometryCacheMb;
+    std::optional<bool> nativeVertexInput;
     std::optional<uint32_t> disabledPostProcessingPaths;
     std::optional<bool> vrEnabled;
     std::optional<bool> vrRequired;
@@ -517,6 +520,20 @@ inline void EnsureConfigFile() {
               "# texture uploads) on its own thread. On by default on the Quest, where\n"
               "# the game thread is the bottleneck; opt-in elsewhere.\n"
               "# gx_thread = true\n"
+              "# Resolve indexed vertex attributes on the CPU into flat, aligned\n"
+              "# records as the FIFO is decoded: one record per vertex for the GPU\n"
+              "# instead of an index and a dependent array fetch. On by default on\n"
+              "# the Quest, where it took 8% off the eyes' GPU time; opt-in elsewhere.\n"
+              "# deindex_vertices = true\n"
+              "# Keep display lists that only draw (a model's shapes) resolved on the GPU\n"
+              "# across frames, in a buffer of this many MiB; 0 keeps nothing. Needs\n"
+              "# deindex_vertices. 32 by default on the Quest, 0 elsewhere.\n"
+              "# geometry_cache_mb = 32\n"
+              "# Draw the cached lists through the GPU's vertex-input stage instead of\n"
+              "# decoding their records in the vertex shader: a quarter of a race's GPU\n"
+              "# time on the Quest, where it is on by default; opt-in elsewhere. Needs\n"
+              "# geometry_cache_mb.\n"
+              "# native_vertex_input = true\n"
               "# Dolphin-style custom textures. When enabled, the renderer indexes\n"
               "# texture_replacements/ next to this file at startup and substitutes\n"
               "# any tex1_<W>x<H>_<hash>[_<tlut hash>]_<format>.dds or .png it finds\n"
@@ -793,6 +810,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.disableCopyFilter = FindConfigValue<bool>(document, "video", "disable_copy_filter");
     config.showFps = FindConfigValue<bool>(document, "video", "show_fps");
     config.gxThread = FindConfigValue<bool>(document, "video", "gx_thread");
+    config.deindexVertices = FindConfigValue<bool>(document, "video", "deindex_vertices");
+    config.geometryCacheMb = FindConfigUint(document, "video", "geometry_cache_mb");
+    config.nativeVertexInput = FindConfigValue<bool>(document, "video", "native_vertex_input");
     config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
     config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
     if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths");
@@ -1599,6 +1619,29 @@ inline bool GxThread() {
     return Get().gxThread.value_or(false);
 #endif
 }
+
+// The resident geometry cache (docs/quest-port.md): on by default on the Quest,
+// where it took a quarter off a race's GPU time; opt-in elsewhere, unmeasured.
+#if defined(__ANDROID__)
+inline constexpr bool kResidentGeometryDefault = true;
+inline constexpr uint32_t kGeometryCacheMbDefault = 32u;
+#else
+inline constexpr bool kResidentGeometryDefault = false;
+inline constexpr uint32_t kGeometryCacheMbDefault = 0u;
+#endif
+
+// Resolves indexed vertex attributes into flat, aligned records as the FIFO is
+// decoded (aurora_set_gx_deindex_vertices): one record per vertex for the GPU
+// instead of an index and a dependent array fetch.
+inline bool DeindexVertices() { return Get().deindexVertices.value_or(kResidentGeometryDefault); }
+
+// MiB of GPU memory for display lists kept resolved across frames
+// (aurora_set_gx_geometry_cache_mb); 0 keeps nothing. Needs DeindexVertices.
+inline uint32_t GeometryCacheMb() { return Get().geometryCacheMb.value_or(kGeometryCacheMbDefault); }
+
+// Cached lists drawn through the GPU's vertex-input stage rather than decoded in
+// the vertex shader (aurora_set_gx_native_vertex_input). Needs GeometryCacheMb.
+inline bool NativeVertexInput() { return Get().nativeVertexInput.value_or(kResidentGeometryDefault); }
 
 inline bool TextureReplacements(bool fallback = false) {
     return Get().textureReplacements.value_or(fallback);

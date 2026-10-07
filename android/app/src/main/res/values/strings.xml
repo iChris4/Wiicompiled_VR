@@ -593,6 +593,8 @@
     <string name="graphics_skip_unready_helper">Skips a draw for a moment while its shader compiles instead of pausing the game.</string>
     <string name="graphics_gx_thread">Graphics thread</string>
     <string name="graphics_gx_thread_helper">Prepares the drawing on a second CPU core so busy scenes keep their speed. Turn off only to compare against the single-threaded path. Takes effect on the next launch.</string>
+    <string name="graphics_resident_geometry">Resident geometry</string>
+    <string name="graphics_resident_geometry_helper">Keeps the course and kart models resolved on the GPU and draws them through its vertex-input stage, about a quarter of a race\'s GPU time. Turn off only to compare, or if a model renders wrong. Takes effect on the next launch.</string>
 
     <!-- Controls tab -->
     <string name="section_controls">Controllers</string>

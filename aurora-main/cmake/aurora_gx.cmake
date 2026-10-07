@@ -4,6 +4,7 @@ add_library(aurora_gx STATIC
         lib/gfx/depth_peek.cpp
         lib/gfx/efb_ram_copy.cpp
         lib/gfx/efb_ram_encoder.cpp
+        lib/gfx/geometry_buffer.cpp
         lib/gfx/pipeline_cache.cpp
         lib/gfx/dds_io.cpp
         lib/gfx/tex_copy_conv.cpp
@@ -14,6 +15,7 @@ add_library(aurora_gx STATIC
         lib/gx/command_processor.cpp
         lib/gx/fifo.cpp
         lib/gx/frame_interpolation.cpp
+        lib/gx/geometry_cache.cpp
         lib/gx/gx.cpp
         lib/gx/pipeline.cpp
         lib/gx/shader.cpp

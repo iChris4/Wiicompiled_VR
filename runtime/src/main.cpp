@@ -1509,6 +1509,9 @@ int RuntimeMain(int argc, char** argv) {
         aurora_set_frame_worker_wait_callback(ServiceGuestTimingDuringAuroraFrameWait);
         GxGuestWrite::InstallAuroraHooks();
         GxThread::Configure(RuntimeConfigFile::GxThread());
+        aurora_set_gx_deindex_vertices(RuntimeConfigFile::DeindexVertices());
+        aurora_set_gx_geometry_cache_mb(RuntimeConfigFile::GeometryCacheMb());
+        aurora_set_gx_native_vertex_input(RuntimeConfigFile::NativeVertexInput());
         GxThread::SetWaitCallback(ServiceGuestTimingDuringAuroraFrameWait);
         GxThread::Start();
         if (GxThread::Enabled()) {

@@ -683,7 +683,8 @@ auto normal_group_load(const ShaderConfig& config, u8 group, std::string_view vi
 
   auto buf = "vbuf"sv;
   auto offs = fmt::format("ubuf.vtx_start + {} * {}u + {}u", vidx, config.vtxStride, mapping.offset);
-  auto le = false; // Vertex buffer is always big endian (for now)
+  // Direct FIFO data is big endian; a record the FIFO processor de-indexed carries its array's byte order.
+  bool le = mapping.le;
   const bool indexedNbt3 =
       mapping.nrmIndexCount == 3 && (mapping.attrType == GX_INDEX8 || mapping.attrType == GX_INDEX16);
   const u32 groupOffset = indexedNbt3 ? 0 : group * 3u * attr_comp_type_size(mapping.compType);
@@ -707,14 +708,59 @@ auto normal_group_load(const ShaderConfig& config, u8 group, std::string_view vi
   return fetch_attr(mapping, buf, offs, le, 3);
 }
 
+// Native vertex input (gx/native_vertex.hpp): the WGSL type of an attribute's vertex-stage input, and the value the
+// shader reads from it. The fixed-point scaling is the storage path's expression, so a record decodes to the same
+// floats whichever way it arrives.
+static std::string native_input_type(GXAttr attr, const AttrConfig& mapping) {
+  if (attr < GX_VA_POS) {
+    return "u32";
+  }
+  if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
+    return "vec4f";
+  }
+  if (mapping.compType == GX_F32) {
+    return mapping.cnt == 1 ? "f32" : fmt::format("vec{}f", mapping.cnt);
+  }
+  return fmt::format("vec{}{}", mapping.cnt <= 2 ? 2 : 4,
+                     mapping.compType == GX_S8 || mapping.compType == GX_S16 ? "i" : "u");
+}
+
+static std::string native_attr_load(GXAttr attr, const AttrConfig& mapping) {
+  std::string value = fmt::format("native_attr{}", static_cast<u32>(attr));
+  if (attr < GX_VA_POS) {
+    // The matrix index byte, fetched with its whole word.
+    value = fmt::format("(({} >> {}u) & 255u)", value, (mapping.offset % 4) * 8);
+    return attr == GX_VA_PNMTXIDX ? fmt::format("({} / 3u)", value) : value;
+  }
+  if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
+    return value;
+  }
+  if (mapping.compType != GX_F32) {
+    constexpr std::array swizzles{"x", "xy", "xyz", "xyzw"};
+    const auto type = mapping.cnt == 1 ? "f32" : fmt::format("vec{}f", mapping.cnt);
+    value = fmt::format("({}({}.{}) / f32({}u))", type, value, swizzles[mapping.cnt - 1], 1u << mapping.frac);
+  }
+  if (attr == GX_VA_POS && mapping.cnt == 2) {
+    return fmt::format("vec3f({}, 0.0)", value);
+  }
+  if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7 && mapping.cnt == 1) {
+    return fmt::format("vec2f({}, 0.0)", value);
+  }
+  return value;
+}
+
 auto attr_load(const ShaderConfig& config, GXAttr attr, std::string_view vidx) -> std::string {
   const auto& mapping = config.attrs[attr];
   if (mapping.attrType == GX_NONE) {
     return vtx_attr(config, attr);
   }
+  if (config.nativeVertices) {
+    return native_attr_load(attr, mapping);
+  }
   auto buf = "vbuf"sv;
   auto offs = fmt::format("ubuf.vtx_start + {} * {}u + {}u", vidx, config.vtxStride, mapping.offset);
-  auto le = false; // Vertex buffer is always big endian (for now)
+  // Direct FIFO data is big endian; a record the FIFO processor de-indexed carries its array's byte order.
+  bool le = mapping.le;
   if (mapping.attrType == GX_INDEX8) {
     offs = fmt::format("ubuf.array_start[{}] + raw_fetch_u8_1(&{}, {}) * {}u", attr - GX_VA_POS, buf, offs,
                        mapping.stride);
@@ -955,10 +1001,16 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   }
 
   // Load vertex attributes
+  u32 nativeLocation = 0;
   for (GXAttr attr = GX_VA_PNMTXIDX; attr <= GX_VA_TEX7; attr = static_cast<GXAttr>(attr + 1)) {
     const auto attrType = config.attrs[attr].attrType;
     if (attrType == GX_NONE) {
       continue;
+    }
+    if (config.nativeVertices) {
+      // One vertex-stage input per attribute, in the order native_vertex::layout numbers them.
+      vtxInAttrs += fmt::format(",\n    @location({}) native_attr{}: {}", nativeLocation++, static_cast<u32>(attr),
+                                native_input_type(attr, config.attrs[attr]));
     }
     // in_pnmtxidx and in_pos written above for line mode
     if ((attr != GX_VA_PNMTXIDX && attr != GX_VA_POS) || config.lineMode == 0) {

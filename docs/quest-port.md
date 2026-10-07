@@ -984,7 +984,7 @@ the app:
 | `debug.wiicompiled.validation 1` | Keeps WebGPU validation and robustness on in release builds |
 | `debug.wiicompiled.fdm 0` | Launches without fragment density maps at all, whatever `foveation` says, which also drops their flag from every pipeline; `1` asks for them even with `foveation = "off"` |
 | `debug.wiicompiled.inject <n>:<button>` | Presses `a`, `b`, `x`, `y`, `start`, `up`, `down`, `left` or `right` for 12 XR frames each time `<n>` changes. As a Wii Remote, `x`/`y`/`start` are 1/2/+, the directions push the Nunchuk stick, and `home`, `c` and `z` also exist. `panel` presses the settings panel's button (left Y, or both thumbsticks as a gamepad), opening or closing it (see `OPENXR.md`). `flick` plays the bare hands' flick, one 150 ms shake of the remote (a trick off a ramp, a wheelie on a bike), with the controllers or none. `throw_forward` and `throw_backward` play a throw of the held item: the stick pushed that way while the item button is pressed and released (see "Throwing the held item" in `OPENXR.md`) |
-| `debug.wiicompiled.fpslog 1` | Logs the game's rendered frame rate every 5 s, with per-frame averages of the producer's waits for the frame worker's DONE and SEALED phases and of the worker's seal, permit wait, prepare and encode stretches, and of the draw calls the recorded frame holds and the primitives that merged into them (an overlay that stops draws merging shows up there first). A following line counts, per frame, why the other draws did not join the draw before them: a GX state change, a particle quad, a 2D draw while stereo records, the first draw of a pass, lines or points, a previous vertex-motion or instanced draw, or the wheel's animated arrays (a race start at Luigi Circuit: about 320 by state, 20 2D, 3 first). A third line reports the GX thread's command ring (records, waits, busy share). A second line gives the GPU time per frame from timestamp queries on every pass (`mono` native render, `eyeL`/`eyeR` replays, `screen`, `panel`, `efbcopy`, `palette`, `peek`, plus `passes-span` from the first pass begin to the last pass end and `between-passes` for copies and idle gaps). The compositor's `VrApi` log line gives headset FPS, `GPU%`, `CPU%`, clock levels and app GPU time (`App=`) |
+| `debug.wiicompiled.fpslog 1` | Logs the game's rendered frame rate every 5 s, with per-frame averages of the producer's waits for the frame worker's DONE and SEALED phases and of the worker's seal, permit wait, prepare and encode stretches, and of the draw calls the recorded frame holds and the primitives that merged into them (an overlay that stops draws merging shows up there first). A following line counts, per frame, why the other draws did not join the draw before them: a GX state change, a particle quad, a 2D draw while stereo records, the first draw of a pass, lines or points, a previous vertex-motion or instanced draw, or the wheel's animated arrays (a race start at Luigi Circuit: about 320 by state, 20 2D, 3 first). A third line reports the GX thread's command ring (records, waits, busy share). With the geometry cache on, a fourth counts, per frame, the display lists drawn from it (how many through native vertex input, how many after a re-digest), those resolved into it, those left in place and why (unsupported, untracked, no room, rewritten by the game), and the entries and MiB resident. A second line gives the GPU time per frame from timestamp queries on every pass (`mono` native render, `eyeL`/`eyeR` replays, `screen`, `panel`, `efbcopy`, `palette`, `peek`, plus `passes-span` from the first pass begin to the last pass end and `between-passes` for copies and idle gaps). The compositor's `VrApi` log line gives headset FPS, `GPU%`, `CPU%`, clock levels and app GPU time (`App=`) |
 
 A `Config.toml` written with `adb push` (or `sed -i` in `adb shell`) belongs
 to the shell user afterwards, and the app then fails every save with EACCES
@@ -1169,13 +1169,42 @@ session, the GPU at 492 MHz throughout, the game at 60 FPS throughout, and
 | Constant position-matrix index baked into compacted-layout shaders instead of a uniform load and a dynamic index (`gx/shader.cpp`; Prime `cd00553e`) | 7.59 -> 6.39 ms at 356 draws (-16%) | 10.06 -> 8.82 ms |
 | The eye's last render pass discards depth and stencil instead of storing them (`gfx/common.cpp` `render_eye_planned`) | 7.04 -> 6.51 ms at 328 draws (-7.5%, 10 rounds) | 9.51 -> 9.08 ms |
 | Eyes drawn into the AHardwareBuffers with a full-screen triangle instead of `CopyTextureToTexture` (`webgpu/vulkan_interop.cpp`) | 6.89 -> 6.47 ms at 337 draws, then 6.72 -> 6.51 at 333 (10 rounds) | 9.41 -> 8.76, then 9.14 -> 8.91 ms |
+| Indexed vertex attributes resolved on the CPU into flat, aligned records as the FIFO is decoded, so the vertex shader reads one record instead of an index and a dependent array fetch (`gx/command_processor.cpp` `deindex_plan`; Prime `229bc15f`) | 6.72 -> 6.16 ms at 338 draws (-8%) | 9.14 -> 8.73 ms |
+| Display lists that only draw kept resolved on the GPU across frames, a hit staging only its indices (`gx/geometry_cache.cpp`, `gfx/geometry_buffer.cpp`; Prime `1885428c`) | 6.06 -> 6.03 ms at 332 draws | 8.70 -> 8.54 ms |
+| The cached lists drawn through the GPU's vertex-input stage instead of decoded in the vertex shader (`gx/native_vertex.hpp`, `gx/shader.cpp`; Prime `3aa490a4`) | 6.13 -> 4.61 ms at 333 draws (-25%) | 8.88 -> 7.16 ms |
 
-The three together take the race from about 10.1 to 8.8 ms of App GPU time
-at the same clock, with the image unchanged (compositor screenshots with the
-blit on and off are identical in content). What Prime found largest, native
-vertex input over a resident de-indexed geometry cache (App GPU 9.6 -> 5.1 ms
-on its scene), is the next step; the eye passes here are bound by the same
-per-vertex storage-buffer decoding.
+The first three together take the race from about 10.1 to 8.8 ms of App GPU
+time at the same clock, with the image unchanged (compositor screenshots with
+the blit on and off are identical in content). The last three are Prime's
+largest finding, native vertex input over a resident de-indexed geometry
+cache (App GPU 9.6 -> 5.1 ms on its scene), measured here in a second
+session the same way. All three against the shipping path: both eyes
+6.69 -> 4.57 ms at 338 draws (-32%), App GPU 9.52 -> 7.21 ms (-24%), the
+image identical. A race frame at Luigi Circuit calls about 370 display lists
+that only draw (the course's and the karts' shapes, about 300 distinct). On
+the old path every vertex reached the GPU as one index per attribute, and
+the vertex shader fetched the array element through it and decoded the
+bytes. Now (`[video] deindex_vertices`, `geometry_cache_mb`,
+`native_vertex_input`, all on by default on the Quest and opt-in on the PC;
+the settings page's Resident geometry toggle turns the three off together)
+such a list is resolved once into flat, 4-byte-aligned records in a 32 MiB
+storage and vertex buffer (`gx/geometry_cache.cpp`,
+`gfx/geometry_buffer.cpp`), keyed by its address, size and the layout of
+its records (vertex format, arrays and offsets), valid while the guest-RAM
+write tracking says neither the list nor the arrays it indexes were written;
+a list whose granule moved is re-digested before its entry is dropped. A hit
+stages only 32-bit indices, and because every block sits at a multiple of
+its stride the surfaces of one material still merge into one draw. The
+records are converted once to the GPU's byte order and drawn through real
+vertex attributes (`gx/native_vertex.hpp`), a pipeline variant whose bit
+came out of the recipe's padding so the stored recipes keep their bytes; the
+first race after an install compiles the new variants at first use and the
+player's pipeline cache keeps them. Lists the game rewrites every frame
+(four a frame here) are left to the plain path after their second change.
+Everything is read where the GX thread executes the call, as the hazard rule
+wants, and the entries go at the race exit. Luigi Circuit holds 2.7 MiB of
+records; a full buffer leaves the lists beyond it on the plain path and logs
+once.
 
 Verified on device since: the menus on the virtual screen, controller input
 (the user has driven races), and an immersive Grand Prix start with all 12

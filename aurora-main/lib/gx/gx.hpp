@@ -435,6 +435,16 @@ struct GXState {
   u8 numTevStages = 0;
   u8 numTexGens = 0;
   bool stateDirty = true;
+  // Indexed vertex attributes are resolved into flat, aligned records by the FIFO processor
+  // (command_processor.cpp deindex_plan), so the vertex shader reads one record instead of an index
+  // and then an array element. Latched at frame begin (gfx::set_gx_deindex_vertices).
+  bool deindexVertices = false;
+  // ShaderConfig::nativeVertices for the draw being recorded (command_processor.cpp select_native_vertices): only
+  // a geometry-cache draw whose records have a native layout sets it.
+  bool nativeVertices = false;
+  // Whether cached lists may take native vertex input at all, latched at frame begin
+  // (gfx::set_gx_native_vertex_input).
+  bool nativeVertexInputRequested = false;
   // Bumped by the decoded register writes that feed populate_pipeline_config, and by nothing else.
   u32 pipelineStateGeneration = next_gx_state_epoch();
   std::array<u32, 0x100> bpRegCache = [] {
@@ -560,7 +570,11 @@ struct ShaderConfig {
   // Alternate replay-only shader variant that exports the original flat-screen
   // depth for draws reprojected onto the VR virtual screen.
   u8 exactScreenDepth : 1 = 0;
-  u8 pad1 : 3 = 0;
+  // The attributes arrive through the GPU's vertex-input stage from the geometry cache's aligned records
+  // (gx/native_vertex.hpp) instead of being decoded from the storage buffer. Same layout, so offsets and
+  // merging do not change; zero in every recipe recorded before the bit existed.
+  u8 nativeVertices : 1 = 0;
+  u8 pad1 : 2 = 0;
   u8 numTexGens = 0;
   u32 zTexture = 0; // bias[0:23], format[24:25], op[26:27]; 0 disables shader depth output.
   std::array<AttrConfig, MaxVtxAttr> attrs;
@@ -777,4 +791,89 @@ u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept;
 // data packed at `packedStride` bytes. Equal to `packedStride` except on Android, which pads to a multiple of 4
 // (see gx.cpp).
 u32 padded_upload_stride(u32 packedStride) noexcept;
+
+// The records the FIFO processor resolves for a format with an indexed attribute (GXState::deindexVertices) are
+// laid out aligned: every attribute but the one-byte matrix indices starts on a 4-byte boundary and the stride is a
+// multiple of 4, so the vertex shader reads whole words (the Quest's Adreno mis-reads values that straddle words in a
+// storage buffer, see padded_upload_stride). populate_pipeline_config and the FIFO processor's plan both follow it.
+constexpr u32 deindexed_attr_align(GXAttr attr) noexcept {
+  return attr >= GX_VA_PNMTXIDX && attr <= GX_VA_TEX7MTXIDX ? 1u : 4u;
+}
+inline bool deindexed_layout() noexcept {
+  if (!g_gxState.deindexVertices) {
+    return false;
+  }
+  for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
+    if (g_gxState.vtxDesc[i] == GX_INDEX8 || g_gxState.vtxDesc[i] == GX_INDEX16) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Bytes per index attribute of a FIFO record (GX_NRM_NBT3 carries three indices).
+inline u8 index_attr_size(GXAttr attr, GXCompCnt cnt, GXAttrType type) noexcept {
+  const u8 indexSize = type == GX_INDEX16 ? 2 : 1;
+  return attr == GX_VA_NRM && cnt == GX_NRM_NBT3 ? static_cast<u8>(indexSize * 3) : indexSize;
+}
+
+// The vertex layout of the current format and descriptor: `config.attrs` and `config.vtxStride`, as the shader reads
+// a record (populate_pipeline_config takes the rest of the config from here). Shared with the geometry cache's native
+// vertex decision, so the two never disagree about where an attribute lands.
+inline void populate_vertex_layout(ShaderConfig& config, GXVtxFmt fmt) noexcept {
+  const auto& vtxFmt = g_gxState.vtxFmts[fmt];
+  u8 vtxOffset = 0;
+  // gx.hpp deindexed_attr_align: the layout the FIFO processor resolves indexed attributes into.
+  const bool aligned = deindexed_layout();
+  for (int i = GX_VA_PNMTXIDX; i <= GX_VA_TEX7; ++i) {
+    const auto attr = static_cast<GXAttr>(i);
+    const auto type = g_gxState.vtxDesc[i];
+    auto& mapping = config.attrs[i];
+    if (type == GX_NONE) {
+      mapping = {};
+      continue;
+    }
+    if (aligned) {
+      vtxOffset = static_cast<u8>(AURORA_ALIGN(vtxOffset, deindexed_attr_align(attr)));
+    }
+    const auto& attrFmt = vtxFmt.attrs[i];
+    const auto cnt = comp_cnt_count(attr, attrFmt.cnt);
+    mapping = AttrConfig{
+        .attrType = static_cast<u8>(type),
+        .cnt = cnt,
+        .compType = static_cast<u8>(attrFmt.type),
+        .offset = vtxOffset,
+        .stride = 0,
+        .frac = attrFmt.frac,
+        .le = false,
+        .nrmIndexCount = static_cast<u8>(attr == GX_VA_NRM && attrFmt.cnt == GX_NRM_NBT3 ? 3 : 1),
+    };
+    switch (type) {
+    case GX_DIRECT:
+      vtxOffset += comp_type_size(attr, attrFmt.type) * cnt;
+      break;
+    case GX_INDEX8:
+    case GX_INDEX16:
+      if (g_gxState.deindexVertices) {
+        // Resolved by the FIFO processor (command_processor.cpp deindex_plan): the array's elements inline, in the
+        // array's byte order, the three slices of an NBT3 normal as one block.
+        mapping.attrType = GX_DIRECT;
+        mapping.le = g_gxState.arrays[i].le;
+        mapping.nrmIndexCount = 1;
+        vtxOffset += comp_type_size(attr, attrFmt.type) * cnt;
+        break;
+      }
+      mapping.stride = static_cast<u8>(padded_upload_stride(g_gxState.arrays[i].stride));
+      mapping.le = g_gxState.arrays[i].le;
+      vtxOffset += index_attr_size(attr, attrFmt.cnt, type);
+      break;
+    default:
+      // An invalid descriptor was rejected where it was decoded; here it contributes nothing.
+      break;
+    }
+  }
+  // An aligned record is already a multiple of 4 bytes, which is all the Adreno padding adds.
+  config.vtxStride =
+      aligned ? static_cast<u8>(AURORA_ALIGN(vtxOffset, 4u)) : static_cast<u8>(padded_upload_stride(vtxOffset));
+}
 } // namespace aurora::gx

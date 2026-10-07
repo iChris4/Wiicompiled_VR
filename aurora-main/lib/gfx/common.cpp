@@ -1,5 +1,7 @@
 #include "common.hpp"
+#include "../gx/geometry_cache.hpp"
 #include "../gx/shader_info.hpp"
+#include "geometry_buffer.hpp"
 
 #include "clear.hpp"
 #include "depth_peek.hpp"
@@ -228,6 +230,9 @@ static std::atomic_bool g_stereoSkipCopyClears{true};
 // Replays each eye in as few render passes as its clears allow (eye_pass_plan.hpp) rather than one
 // per recorded pass. Same image, fewer tile loads and stores.
 static std::atomic_bool g_stereoSinglePassEyes{true};
+// GXState::deindexVertices and nativeVertexInputRequested, latched in begin_frame_impl.
+static std::atomic_bool g_gxDeindexVertices{false};
+static std::atomic_bool g_gxNativeVertexInput{false};
 // foveation::Level of the immersive eyes.
 static std::atomic_uint32_t g_stereoFoveation{0};
 
@@ -243,6 +248,10 @@ void set_stereo_single_pass_eyes(bool value) noexcept {
   g_stereoSinglePassEyes.store(value, std::memory_order_relaxed);
 }
 bool get_stereo_single_pass_eyes() noexcept { return g_stereoSinglePassEyes.load(std::memory_order_relaxed); }
+void set_gx_deindex_vertices(bool value) noexcept { g_gxDeindexVertices.store(value, std::memory_order_relaxed); }
+bool get_gx_deindex_vertices() noexcept { return g_gxDeindexVertices.load(std::memory_order_relaxed); }
+void set_gx_native_vertex_input(bool value) noexcept { g_gxNativeVertexInput.store(value, std::memory_order_relaxed); }
+bool get_gx_native_vertex_input() noexcept { return g_gxNativeVertexInput.load(std::memory_order_relaxed); }
 void set_stereo_foveation(uint32_t level) noexcept {
   g_stereoFoveation.store(level, std::memory_order_relaxed);
 }
@@ -1174,6 +1183,8 @@ void shutdown() {
   g_offscreenCache.clear();
   g_offscreenColor = {};
   g_offscreenDepth = {};
+  gx::geometry_cache::clear();
+  detail::shutdown_geometry_buffer();
   g_staticBindGroup = {};
   g_staticBindGroupLayout = {};
   g_uniformBindGroup = {};
@@ -1256,6 +1267,17 @@ static bool begin_frame_impl(bool clearEfb) {
   g_drawCallCount = 0;
   g_mergedDrawCallCount = 0;
   g_mergeBreaks = {};
+  // The resolved vertex layout is part of every shader config, so the switch applies to whole frames and
+  // invalidates the pipeline-state memo like a register write would.
+  if (const bool deindex = g_gxDeindexVertices.load(std::memory_order_relaxed);
+      gx::g_gxState.deindexVertices != deindex) {
+    gx::g_gxState.deindexVertices = deindex;
+    gx::g_gxState.pipelineStateGeneration = gx::next_gx_state_epoch();
+    gx::g_gxState.stateDirty = true;
+  }
+  // Per list, not per shader config: a cached list resolved either way keeps its own key, so no re-resolution.
+  gx::g_gxState.nativeVertexInputRequested = g_gxNativeVertexInput.load(std::memory_order_relaxed);
+  gx::geometry_cache::begin_frame(g_frameIndex);
   if (clearEfb) {
     gx::begin_frame_interpolation();
   }
@@ -1291,6 +1313,9 @@ bool resume_frame() { return begin_frame_impl(false); }
 void abort_frame() noexcept {
   efb_ram::cancel();
   efb_ram::abort_async();
+  // Records queued for the geometry buffer never reach it: forget their entries too.
+  detail::drop_geometry_uploads();
+  gx::geometry_cache::uploads_dropped();
   g_verts.release();
   g_uniforms.release();
   g_uniformUploadDestination = nullptr;
@@ -1749,6 +1774,10 @@ static bool end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame,
   g_stats.drawCallCount = g_drawCallCount;
   g_stats.mergedDrawCallCount = g_mergedDrawCallCount;
   g_sealedMergeBreaks = g_mergeBreaks;
+  // The geometry cache's new records ride in the vertex staging (its region starts the staging buffer) and are
+  // copied on to the persistent buffer here, before the frame's passes that read them.
+  detail::encode_geometry_uploads(cmd, g_stagingBuffers[currentStagingBuffer]);
+  gx::geometry_cache::uploads_encoded();
   g_stats.lastVertSize = writeBuffer(g_verts, g_vertexBuffer, VertexBufferSize, "Vertex");
   g_stats.lastUniformSize = writeBuffer(g_uniforms, g_uniformBuffer, UniformBufferSize, "Uniform");
   g_stats.lastIndexSize = writeBuffer(g_indices, g_indexBuffer, IndexBufferSize, "Index");
@@ -3016,6 +3045,16 @@ static inline Range map(ByteBuffer& target, size_t length, size_t alignment) {
 }
 Range push_verts(const uint8_t* data, size_t length) { return push(g_verts, data, length, 0); }
 Range push_indices(const uint8_t* data, size_t length) { return push(g_indices, data, length, 0); }
+Range push_indices32(const uint32_t* data, size_t count) {
+  // The 16-bit templates before it may leave the staging on a half word; a 32-bit index must start on a whole one.
+  if (const size_t misaligned = g_indices.size() % sizeof(uint32_t); misaligned != 0) {
+    g_indices.append_zeroes(sizeof(uint32_t) - misaligned);
+  }
+  return push(g_indices, reinterpret_cast<const uint8_t*>(data), count * sizeof(uint32_t), 4);
+}
+size_t vertex_staging_room() noexcept {
+  return g_verts.capacity() > g_verts.size() ? g_verts.capacity() - g_verts.size() : 0;
+}
 Range push_uniform(const uint8_t* data, size_t length) {
   return push(g_uniforms, data, length, g_cachedLimits.minUniformBufferOffsetAlignment);
 }

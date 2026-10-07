@@ -1771,14 +1771,6 @@ u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept {
   Log.fatal("comp_cnt_count: Unsupported attr/cnt {} {}", attr, cnt);
 }
 
-static u8 index_attr_size(GXAttr attr, GXCompCnt cnt, GXAttrType type) noexcept {
-  const u8 indexSize = type == GX_INDEX16 ? 2 : 1;
-  if (attr == GX_VA_NRM && cnt == GX_NRM_NBT3) {
-    return indexSize * 3;
-  }
-  return indexSize;
-}
-
 // The Quest 3's Adreno 740 Vulkan driver decodes the wrong bytes when the vertex shader's
 // `ubuf.vtx_start + vidx * stride + offset` uses a stride that is not a multiple of 4. GX packs vertices byte-tight,
 // so every skinned character (a 1-byte PNMTXIDX first, stride 7) exploded and textured menu panels smeared. Rewriting
@@ -1804,54 +1796,14 @@ u32 padded_upload_stride(u32 packedStride) noexcept {
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept {
   ZoneScoped;
 
-  const auto& vtxFmt = g_gxState.vtxFmts[fmt];
   // GX applies integer logic ops in the PE after fog.
   config.shaderConfig.fogType = effective_pipeline_fog_type(
       g_gxState.fog.type, g_gxState.zTextureOp, g_gxState.zCompLocBeforeTex,
       g_gxState.blendMode, g_gxState.blendOp);
   config.shaderConfig.fogRangeAdjust =
       config.shaderConfig.fogType != GX_FOG_NONE && (g_gxState.fogRange[0] & (1u << 10)) != 0;
-  u8 vtxOffset = 0;
-  for (int i = GX_VA_PNMTXIDX; i <= GX_VA_TEX7; ++i) {
-    const auto attr = static_cast<GXAttr>(i);
-    const auto type = g_gxState.vtxDesc[i];
-    auto& mapping = config.shaderConfig.attrs[i];
-    if (type == GX_NONE) {
-      mapping = {};
-      continue;
-    }
-    const auto& attrFmt = vtxFmt.attrs[i];
-    const auto cnt = comp_cnt_count(attr, attrFmt.cnt);
-    mapping = AttrConfig{
-        .attrType = static_cast<u8>(type),
-        .cnt = cnt,
-        .compType = static_cast<u8>(attrFmt.type),
-        .offset = vtxOffset,
-        .stride = 0,
-        .frac = attrFmt.frac,
-        .le = false,
-        .nrmIndexCount = static_cast<u8>(attr == GX_VA_NRM && attrFmt.cnt == GX_NRM_NBT3 ? 3 : 1),
-    };
-    switch (type) {
-    case GX_DIRECT: {
-      vtxOffset += comp_type_size(attr, attrFmt.type) * cnt;
-      break;
-    }
-    case GX_INDEX8:
-      mapping.stride = static_cast<u8>(padded_upload_stride(g_gxState.arrays[i].stride));
-      mapping.le = g_gxState.arrays[i].le;
-      vtxOffset += index_attr_size(attr, attrFmt.cnt, type);
-      break;
-    case GX_INDEX16:
-      mapping.stride = static_cast<u8>(padded_upload_stride(g_gxState.arrays[i].stride));
-      mapping.le = g_gxState.arrays[i].le;
-      vtxOffset += index_attr_size(attr, attrFmt.cnt, type);
-      break;
-    default:
-      Log.fatal("populate_pipeline_config: Invalid vertex type {}", type);
-    }
-  }
-  config.shaderConfig.vtxStride = static_cast<u8>(padded_upload_stride(vtxOffset));
+  populate_vertex_layout(config.shaderConfig, fmt);
+  config.shaderConfig.nativeVertices = g_gxState.nativeVertices ? 1 : 0;
   if (primitive == GX_LINES) {
     config.shaderConfig.lineMode = 1;
   } else if (primitive == GX_LINESTRIP) {

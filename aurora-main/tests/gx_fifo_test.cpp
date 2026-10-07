@@ -2934,6 +2934,63 @@ TEST_F(GXFifoTest, MergeBreakCountsNameWhyDrawsDoNotJoin) {
   EXPECT_EQ(aurora::gfx::g_mergeBreaks.stateDirty, 2u);
 }
 
+// With GXState::deindexVertices, a draw whose format indexes an array reaches the vertex staging as flat records in
+// the aligned layout populate_pipeline_config describes (gx.hpp deindexed_layout): the array elements inline, every
+// attribute after a one-byte matrix index on a 4-byte boundary, the stride a multiple of 4.
+TEST_F(GXFifoTest, DeindexedDrawResolvesIndexedAttributesIntoAlignedRecords) {
+  struct Reset {
+    ~Reset() {
+      g_gxState.deindexVertices = false;
+      for (auto& desc : g_gxState.vtxDesc) {
+        desc = GX_NONE;
+      }
+      g_gxState.arrays[GX_VA_POS] = {};
+      aurora::gfx::testing::use_real_vertex_format_helpers(false);
+    }
+  } reset;
+  aurora::gfx::testing::use_real_vertex_format_helpers(true);
+  aurora::gfx::testing::use_draw_command_tracking(true);
+  g_gxState.deindexVertices = true;
+  for (auto& desc : g_gxState.vtxDesc) {
+    desc = GX_NONE;
+  }
+  // One-byte position index into S16 xyz elements, then a direct U8 st texture coordinate.
+  g_gxState.vtxDesc[GX_VA_POS] = GX_INDEX8;
+  g_gxState.vtxDesc[GX_VA_TEX0] = GX_DIRECT;
+  g_gxState.vtxFmts[GX_VTXFMT0].attrs[GX_VA_POS] = {GX_POS_XYZ, GX_S16, 0};
+  g_gxState.vtxFmts[GX_VTXFMT0].attrs[GX_VA_TEX0] = {GX_TEX_ST, GX_U8, 0};
+  static const std::array<u8, 18> positions{
+      0x00, 0x01, 0x00, 0x02, 0x00, 0x03, // element 0
+      0x10, 0x11, 0x10, 0x12, 0x10, 0x13, // element 1
+      0x20, 0x21, 0x20, 0x22, 0x20, 0x23, // element 2
+  };
+  g_gxState.arrays[GX_VA_POS].data = positions.data();
+  g_gxState.arrays[GX_VA_POS].size = positions.size();
+  g_gxState.arrays[GX_VA_POS].stride = 6;
+  g_gxState.arrays[GX_VA_POS].le = false;
+  g_gxState.lastVtxFmt = GX_MAX_VTXFMT;
+  g_gxState.stateDirty = true;
+  g_gxState.pipelineStateGeneration = aurora::gx::next_gx_state_epoch();
+
+  // A triangle whose records are [index, s, t]: elements 2, 0 and 1, and an index past the array.
+  std::vector<u8> fifo{static_cast<u8>(GX_TRIANGLES) | static_cast<u8>(GX_VTXFMT0), 0, 4,
+                       2, 0xAA, 0xBB,  // vertex 0
+                       0, 0xCC, 0xDD,  // vertex 1
+                       1, 0xEE, 0xFF,  // vertex 2
+                       7, 0x01, 0x02}; // vertex 3: index 7 does not exist, reads as zeros
+  decode_fifo(fifo);
+
+  // Record: position at 0 (6 bytes), texture coordinate at 8, stride 12.
+  const std::vector<u8> expected{
+      0x20, 0x21, 0x20, 0x22, 0x20, 0x23, 0, 0, 0xAA, 0xBB, 0, 0, //
+      0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0, 0, 0xCC, 0xDD, 0, 0, //
+      0x10, 0x11, 0x10, 0x12, 0x10, 0x13, 0, 0, 0xEE, 0xFF, 0, 0, //
+      0,    0,    0,    0,    0,    0,    0, 0, 0x01, 0x02, 0, 0, //
+  };
+  EXPECT_EQ(aurora::gfx::testing::last_pushed_vertices(), expected);
+  EXPECT_EQ(aurora::gfx::g_mergedDrawCallCount, 0u);
+}
+
 TEST_F(GXFifoTest, VrDirectParticleQuadsRetainSeparateCentersInFifoAndRawDraws) {
   struct Reset {
     ~Reset() {

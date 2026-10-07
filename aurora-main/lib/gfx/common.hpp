@@ -134,6 +134,7 @@ public:
   [[nodiscard]] uint8_t* data() noexcept { return m_data; }
   [[nodiscard]] const uint8_t* data() const noexcept { return m_data; }
   [[nodiscard]] size_t size() const noexcept { return m_length; }
+  [[nodiscard]] size_t capacity() const noexcept { return m_capacity; }
   [[nodiscard]] bool empty() const noexcept { return m_length == 0; }
 
   void append(const void* data, size_t size) {
@@ -441,6 +442,14 @@ bool get_stereo_skip_copy_clears() noexcept;
 // default and live, like the two above.
 void set_stereo_single_pass_eyes(bool value) noexcept;
 bool get_stereo_single_pass_eyes() noexcept;
+// GXState::deindexVertices for the next frames, latched at frame begin so a frame's draws agree (a change
+// re-resolves every pipeline, since the vertex layout is part of the shader config).
+void set_gx_deindex_vertices(bool value) noexcept;
+bool get_gx_deindex_vertices() noexcept;
+// GXState::nativeVertexInputRequested for the next frames: whether the geometry cache's lists may be drawn through
+// native vertex input (gx/native_vertex.hpp).
+void set_gx_native_vertex_input(bool value) noexcept;
+bool get_gx_native_vertex_input() noexcept;
 // Foveated rendering level for the immersive eyes (gfx/foveation.hpp Level). Live: the next frame's
 // eyes use it, provided the device has fragment density maps.
 void set_stereo_foveation(uint32_t level) noexcept;
@@ -513,6 +522,10 @@ template <typename T>
 static Range push_indices(ArrayRef<T> data) {
   return push_indices(reinterpret_cast<const uint8_t*>(data.data()), data.size() * sizeof(T));
 }
+// 32-bit indices (the geometry cache's), 4-byte aligned in the same index staging.
+Range push_indices32(const uint32_t* data, size_t count);
+// The frame's vertex staging bytes still free (a mapped region of VertexBufferSize that cannot grow).
+size_t vertex_staging_room() noexcept;
 Range push_uniform(const uint8_t* data, size_t length);
 template <typename T>
 static Range push_uniform(const T& data) {

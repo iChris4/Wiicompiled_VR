@@ -73,7 +73,10 @@ if (AURORA_ENABLE_GX)
     model_visibility_test.cpp
     cockpit_geometry_test.cpp
     texture_bind_group_cache_key_test.cpp
+    gx_geometry_cache_test.cpp
+    native_vertex_test.cpp
     ../lib/gfx/efb_ram_encoder.cpp
+    ../lib/gx/geometry_cache.cpp
     # GX API implementations (encoders)
     ../lib/dolphin/gx/GXBump.cpp
     ../lib/dolphin/gx/GXCull.cpp

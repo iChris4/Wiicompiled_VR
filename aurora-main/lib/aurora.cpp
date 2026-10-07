@@ -4,6 +4,8 @@
 #include "gfx/common.hpp"
 #include "gfx/efb_ram_copy.hpp"
 #include "gfx/foveation.hpp"
+#include "gfx/geometry_buffer.hpp"
+#include "gx/geometry_cache.hpp"
 #include "gfx/stereo_replay.hpp"
 #include "gx/fifo.hpp"
 #include "gx/shader_info.hpp"
@@ -2516,6 +2518,29 @@ void record_frame_telemetry() {
         windowBreaks = {};
         windowDraws = 0;
         windowMerged = 0;
+        if (gfx::geometry_buffer_capacity() != 0) {
+          // The geometry cache's window: lists drawn from it, resolved into it, and the ones it could not take.
+          namespace cache = gx::geometry_cache;
+          const auto take = [](std::atomic<uint32_t>& counter) {
+            return static_cast<double>(counter.exchange(0, std::memory_order_relaxed)) / std::max(windowFrames, 1u);
+          };
+          const double hits = take(cache::g_hits);
+          const double misses = take(cache::g_misses);
+          const double revalidated = take(cache::g_revalidated);
+          const double reresolved = take(cache::g_reresolved);
+          const double unsupported = take(cache::g_inPlaceUnsupported);
+          const double untracked = take(cache::g_inPlaceUntracked);
+          const double full = take(cache::g_inPlaceFull);
+          const double volatiles = take(cache::g_inPlaceVolatile);
+          const double native = take(cache::g_nativeDraws);
+          const auto stats = cache::stats();
+          Log.info("Geometry cache a frame: {:.0f} lists drawn from it ({:.0f} through native vertex input, {:.1f} "
+                   "after a re-digest), {:.1f} resolved into it ({:.1f} replacing changed bytes), in place {:.1f} "
+                   "unsupported, {:.1f} untracked, {:.1f} for want of room, {:.1f} rewritten by the game; {} "
+                   "entries, {:.1f} MiB of {} MiB resident",
+                   hits, native, revalidated, misses, reresolved, unsupported, untracked, full, volatiles,
+                   stats.entries, static_cast<double>(stats.residentBytes) / (1024.0 * 1024.0), stats.capacity >> 20);
+        }
         if (const std::string gpuTiming = gfx::gpu_timing_report(); !gpuTiming.empty()) {
           Log.info("{}", gpuTiming);
         }
@@ -3091,6 +3116,11 @@ void aurora_set_stereo_skip_copy_clears(bool enabled) { aurora::gfx::set_stereo_
 bool aurora_get_stereo_skip_copy_clears() { return aurora::gfx::get_stereo_skip_copy_clears(); }
 void aurora_set_stereo_single_pass_eyes(bool enabled) { aurora::gfx::set_stereo_single_pass_eyes(enabled); }
 bool aurora_get_stereo_single_pass_eyes() { return aurora::gfx::get_stereo_single_pass_eyes(); }
+void aurora_set_gx_deindex_vertices(bool enabled) { aurora::gfx::set_gx_deindex_vertices(enabled); }
+bool aurora_get_gx_deindex_vertices() { return aurora::gfx::get_gx_deindex_vertices(); }
+void aurora_set_gx_geometry_cache_mb(uint32_t mb) { aurora::gfx::set_geometry_buffer_capacity_mb(mb); }
+void aurora_request_geometry_cache_clear(void) { aurora::gx::geometry_cache::request_clear(); }
+void aurora_set_gx_native_vertex_input(bool enabled) { aurora::gfx::set_gx_native_vertex_input(enabled); }
 void aurora_set_stereo_foveation(uint32_t level) {
   aurora::gfx::set_stereo_foveation(std::min(level, aurora::gfx::foveation::kLevelCount - 1));
 }

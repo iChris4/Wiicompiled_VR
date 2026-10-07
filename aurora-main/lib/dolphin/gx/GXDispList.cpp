@@ -64,9 +64,10 @@ void GXCallDisplayList(const void* data, u32 nbytes) {
     return;
   }
 
-  // Decode the display list immediately while its borrowed resources are valid.
+  // Decode the display list immediately while its borrowed resources are valid; a list that only draws may be
+  // served from the geometry cache instead (command_processor.cpp process_display_list).
   aurora::gx::fifo::drain();
-  aurora::gx::fifo::process(static_cast<const u8*>(data), nbytes, true);
+  aurora::gx::fifo::process_display_list(static_cast<const u8*>(data), nbytes);
 }
 
 void GXCallDisplayListLE(const void* data, u32 nbytes) {
