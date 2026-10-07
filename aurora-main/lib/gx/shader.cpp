@@ -942,7 +942,16 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
     }
     vidxAttr = "in_vidx"sv;
   } else if (config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
-    vtxXfrAttrsPre += "\n    let in_pnmtxidx = ubuf.current_pnmtx;";
+    // With a compacted matrix region the live matrix sits at compact slot 0 and build_uniform writes 0
+    // into current_pnmtx (shader_info.cpp). Spelling that constant out lets the GPU keep the one matrix
+    // in constant memory instead of indexing the array per vertex through a uniform load; on the
+    // Quest's Adreno the eye passes are bound by exactly that vertex-side memory traffic (a Luigi
+    // Circuit race: both eyes 7.5 -> 6.4 ms at the same draw count and clock, App GPU 10.1 -> 8.6 ms).
+    if (!info.matrixLayout.absolutePosRegion) {
+      vtxXfrAttrsPre += "\n    let in_pnmtxidx = 0u;";
+    } else {
+      vtxXfrAttrsPre += "\n    let in_pnmtxidx = ubuf.current_pnmtx;";
+    }
   }
 
   // Load vertex attributes
