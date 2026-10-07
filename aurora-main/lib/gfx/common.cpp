@@ -366,6 +366,8 @@ struct LateStereoUniform {
   Range current;
   Range previous;
   std::array<Range, AURORA_STEREO_EYE_COUNT> eyes;
+  // Both eyes take `current` as it is (prepare_stereo_replay_uniforms, the shared pair).
+  bool shared = false;
 };
 struct LateStereoData {
   std::vector<LateStereoUniform> uniforms;
@@ -1586,6 +1588,17 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
     return (!multiplayer || !layout.nativeEfbEffect) &&
            (layout.perspective || (hudScreen.valid() && !layout.nativeEfbEffect));
   };
+  // A multiview pass binds every GX draw's uniform as a pair the shader indexes by the view (ubuf_eyes[view],
+  // gx/shader.cpp to_multiview_source). A draw the eyes keep on its recorded transforms (a native EFB effect
+  // such as the shadow tint quad, 2D content the virtual screen does not claim, another player's draw) gets two
+  // copies of the uniform it recorded with, or the second view would read whatever follows that uniform. A
+  // frame prepared for the late replay does not know its eyes yet and stages the pairs whenever a multiview
+  // pass may draw it; a per-eye pass binding such a copy draws exactly what the mono uniform drew.
+  const bool sharedPairs =
+      stereoFrame.multiview || (history != nullptr && stereo_multiview::supported() && stereo_multiview::requested());
+  const auto sharedPairBytes = [&](const gx::DrawData& draw) noexcept -> size_t {
+    return sharedPairs ? static_cast<size_t>(draw.uniformRange.size) * AURORA_STEREO_EYE_COUNT : 0;
+  };
   size_t requiredBytes = 0;
   size_t efbPassCount = 0;
   size_t perspectiveDrawCount = 0;
@@ -1602,12 +1615,17 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
         const auto& vp = command.data.setViewport;
         allocationViewport = {vp.left, vp.top, vp.width, vp.height};
       }
-      if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX ||
-          !replayed(command.data.draw.gx.uniformReplayLayout)) {
+      if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX) {
         continue;
       }
       const auto& draw = command.data.draw.gx;
       const auto& layout = draw.uniformReplayLayout;
+      if (!replayed(layout)) {
+        if (pass.efbTarget) {
+          requiredBytes += sharedPairBytes(draw);
+        }
+        continue;
+      }
       if (layout.perspective) {
         ++perspectiveDrawCount;
       }
@@ -1616,6 +1634,7 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
       }
       if (multiplayer && !stereo_replay::replay_player_one_draw(allocationViewport, playerRegion, layout.perspective,
                                                                 layout.nativeEfbEffect)) {
+        requiredBytes += sharedPairBytes(draw);
         continue;
       }
       if (layout.perspective) {
@@ -1675,6 +1694,39 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
   // all read/modify/write operations in cached CPU memory before uploading.
   std::array<uint8_t, gx::MaxUniformSize> sourceUniform;
   std::array<uint8_t, gx::MaxUniformSize> eyeUniform;
+  // Bytes the late replay reads back at display time (history != nullptr).
+  const auto save = [&](const uint8_t* source, uint32_t size) -> Range {
+    if (size == 0)
+      return {};
+    const Range copy{static_cast<uint32_t>(history->sources.size()), size};
+    history->sources.resize(history->sources.size() + size);
+    std::memcpy(history->sources.data() + copy.offset, source, size);
+    return copy;
+  };
+  // The shared pair (see sharedPairs): two copies of the draw's recorded uniform, left to the late replay
+  // when the frame has one, like the eye uniforms are.
+  const auto stageSharedPair = [&](gx::DrawData& draw) {
+    if (!sharedPairs || draw.uniformRange.size == 0) {
+      return;
+    }
+    std::memcpy(sourceUniform.data(), g_uniforms.data() + draw.uniformRange.offset, draw.uniformRange.size);
+    LateStereoUniform* saved = nullptr;
+    if (history != nullptr) {
+      saved = &history->uniforms.emplace_back();
+      saved->shared = true;
+      saved->current = save(sourceUniform.data(), draw.uniformRange.size);
+    }
+    for (uint32_t eyeIndex = 0; eyeIndex < AURORA_STEREO_EYE_COUNT; ++eyeIndex) {
+      auto [uniform, range] = map_uniform(draw.uniformRange.size);
+      draw.stereoUniformRanges[eyeIndex] = range;
+      if (saved != nullptr) {
+        saved->eyes[eyeIndex] = range;
+      } else {
+        std::memcpy(uniform.data(), sourceUniform.data(), range.size);
+      }
+    }
+    draw.stereoPairShared = true;
+  };
   for (auto& pass : g_renderPasses) {
     pass.cockpitDepth = {};
     if (!pass.efbTarget) {
@@ -1685,16 +1737,20 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
         drawViewport = command.data.setViewport;
         continue;
       }
-      if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX ||
-          !replayed(command.data.draw.gx.uniformReplayLayout)) {
+      if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX) {
         continue;
       }
       auto& draw = command.data.draw.gx;
       const auto& layout = draw.uniformReplayLayout;
+      if (!replayed(layout)) {
+        stageSharedPair(draw);
+        continue;
+      }
       const stereo_replay::SubviewRect viewportRect{drawViewport.left, drawViewport.top, drawViewport.width,
                                                     drawViewport.height};
       if (multiplayer && !stereo_replay::replay_player_one_draw(viewportRect, playerRegion, layout.perspective,
                                                                 layout.nativeEfbEffect)) {
+        stageSharedPair(draw);
         continue;
       }
       // Pane-local HUD coordinates expand with P1. Shared race/pause overlays
@@ -1725,6 +1781,7 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
       // whose matrix disagrees keeps its recorded transforms instead of being
       // folded onto the screen from a shape the composition cannot represent.
       if (!layout.perspective && !stereo_replay::is_orthographic_projection(gameProjection)) {
+        stageSharedPair(draw);
         continue;
       }
       // Producer-side and one-shot, so a mirror-mode race can be confirmed from
@@ -1740,14 +1797,6 @@ static bool prepare_stereo_replay_uniforms(const StereoReplayFrame& stereoFrame,
         saved->layout = layout;
         saved->viewport = drawViewport;
         saved->displayRegion = uniformRegion;
-        const auto save = [&](const uint8_t* source, uint32_t size) -> Range {
-          if (size == 0)
-            return {};
-          const Range copy{static_cast<uint32_t>(history->sources.size()), size};
-          history->sources.resize(history->sources.size() + size);
-          std::memcpy(history->sources.data() + copy.offset, source, size);
-          return copy;
-        };
         saved->current = save(sourceUniform.data(), draw.uniformRange.size);
         saved->previous = save(g_uniforms.data() + draw.previousUniformRange.offset, draw.previousUniformRange.size);
       }
@@ -2290,6 +2339,15 @@ bool prepare_late_stereo_replay(SealedFrame& frame, wgpu::CommandEncoder& cmd, c
   auto* bytes = data.uploadBytes.data();
   weight = std::clamp(weight, 0.0f, 1.0f);
   for (const auto& saved : data.uniforms) {
+    if (saved.shared) {
+      // The recorded uniform for both eyes (prepare_stereo_replay_uniforms sharedPairs): nothing to
+      // interpolate or compose.
+      for (uint32_t eye = 0; eye < AURORA_STEREO_EYE_COUNT; ++eye) {
+        std::memcpy(bytes + saved.eyes[eye].offset - data.uploadOffset, data.sources.data() + saved.current.offset,
+                    saved.current.size);
+      }
+      continue;
+    }
     // Interpolate once; both eyes share exactly the same scene sample.
     std::span<uint8_t> uniform{bytes + saved.eyes[0].offset - data.uploadOffset, saved.current.size};
     std::memcpy(uniform.data(), data.sources.data() + saved.current.offset, uniform.size());
@@ -3000,12 +3058,13 @@ static void render_pass_impl(const wgpu::RenderPassEncoder& pass, const std::vec
         }
         const gfx::Range* uniformOverride = nullptr;
         // Only a 2D draw the virtual screen actually claimed carries a stereo
-        // uniform range without being perspective.
+        // uniform range without being perspective; a shared pair
+        // (stereoPairShared) keeps the draw where the game put it.
         bool virtualScreenDraw = false;
         if (invocation.stereoEye < draw.gx.stereoUniformRanges.size() &&
             draw.gx.stereoUniformRanges[invocation.stereoEye].size != 0) {
           uniformOverride = &draw.gx.stereoUniformRanges[invocation.stereoEye];
-          virtualScreenDraw = !draw.gx.uniformReplayLayout.perspective;
+          virtualScreenDraw = !draw.gx.uniformReplayLayout.perspective && !draw.gx.stereoPairShared;
         } else if (invocation.interpolatedFrame >= 0 &&
                    static_cast<size_t>(invocation.interpolatedFrame) < draw.gx.interpolatedUniformRanges.size() &&
                    draw.gx.interpolatedUniformRanges[invocation.interpolatedFrame].size != 0) {

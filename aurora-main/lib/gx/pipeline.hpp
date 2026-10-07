@@ -45,6 +45,10 @@ struct DrawData {
   bool cachedGeometry = false;
   // The pipeline reads those records through vertex buffer 0 (gx/native_vertex.hpp).
   bool nativeVertices = false;
+  // stereoUniformRanges hold two copies of the recorded uniform (gfx prepare_stereo_replay_uniforms): the
+  // eyes keep this draw on its recorded transforms, and a multiview pass reads a valid uniform for either
+  // view. Such a draw is never folded onto the virtual screen.
+  bool stereoPairShared = false;
 };
 
 constexpr uint32_t GXPipelineConfigVersion = 21;

@@ -1255,6 +1255,12 @@ recorded and bound once for both views. The GX shaders' multiview variant (a
 bytes) declares `@builtin(view_index)` and binds the draw's two eye uniforms,
 which the per-eye replay already stages back to back, as one range indexed by
 the view: the per-eye mathematics is untouched and the images are identical.
+That pair is the only way the multiview shader reads a uniform, so a draw the
+eyes keep on its recorded transforms (a native EFB effect such as the
+dynamic shadows' tint quad, 2D content the virtual screen does not claim,
+another player's draw) gets two copies of the uniform it recorded with;
+before it did, the right view read the bytes after that uniform and the
+dynamic shadows were missing from the right eye.
 The cockpit and the window mask hand both eyes' vertices in as two vertex
 buffer slots, the held item both eyes' frames in one uniform. The feature
 needs the Dawn built with Aurora's patches, which gained Tint's
