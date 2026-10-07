@@ -162,6 +162,7 @@ wgpu::BindGroup g_multiviewUniformBindGroup;
 AuroraStats g_stats{};
 uint32_t g_drawCallCount = 0;
 uint32_t g_mergedDrawCallCount = 0;
+StagingStats g_stagingStats;
 MergeBreakCounts g_mergeBreaks{};
 MergeBreakCounts g_sealedMergeBreaks{};
 std::atomic<bool> g_countMergeBreaks{false};
@@ -1877,6 +1878,13 @@ static bool end_batch_impl(const wgpu::CommandEncoder& cmd, bool advanceFrame,
   g_stats.lastVertSize = writeBuffer(g_verts, g_vertexBuffer, VertexBufferSize, "Vertex");
   g_stats.lastUniformSize = writeBuffer(g_uniforms, g_uniformBuffer, UniformBufferSize, "Uniform");
   g_stats.lastIndexSize = writeBuffer(g_indices, g_indexBuffer, IndexBufferSize, "Index");
+  // Only this thread raises them; the fpslog takes them with an exchange.
+  if (g_stats.lastVertSize > g_stagingStats.peakVertexBytes.load(std::memory_order_relaxed)) {
+    g_stagingStats.peakVertexBytes.store(g_stats.lastVertSize, std::memory_order_relaxed);
+  }
+  if (g_stats.lastIndexSize > g_stagingStats.peakIndexBytes.load(std::memory_order_relaxed)) {
+    g_stagingStats.peakIndexBytes.store(g_stats.lastIndexSize, std::memory_order_relaxed);
+  }
   g_stats.lastStorageSize = writeBuffer(g_storage, g_storageBuffer, StorageBufferSize, "Storage");
   if constexpr (UseTextureBuffer) {
     g_stats.lastTextureUploadSize = g_textureUpload.size();
@@ -3269,6 +3277,17 @@ Range push_indices32(const uint32_t* data, size_t count) {
 }
 size_t vertex_staging_room() noexcept {
   return g_verts.capacity() > g_verts.size() ? g_verts.capacity() - g_verts.size() : 0;
+}
+size_t index_staging_room() noexcept {
+  return g_indices.capacity() > g_indices.size() ? g_indices.capacity() - g_indices.size() : 0;
+}
+void staging_overflow_abort(size_t requested, size_t capacity) noexcept {
+  // The region that overflowed is the one whose use matches its size.
+  Log.fatal("Frame staging overflow: {} bytes needed in a mapped region of {} (vertex staging {} of {} KiB in "
+            "use, index {} of {} KiB, uniform {} of {} KiB, storage {} of {} KiB)",
+            requested, capacity, g_verts.size() >> 10, VertexBufferSize >> 10, g_indices.size() >> 10,
+            IndexBufferSize >> 10, g_uniforms.size() >> 10, UniformBufferSize >> 10, g_storage.size() >> 10,
+            StorageBufferSize >> 10);
 }
 Range push_uniform(const uint8_t* data, size_t length) {
   return push(g_uniforms, data, length, g_cachedLimits.minUniformBufferOffsetAlignment);

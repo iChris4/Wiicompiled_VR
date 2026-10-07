@@ -95,6 +95,12 @@ private:
   XXH3_state_t state;
 };
 
+namespace gfx {
+// A push past the end of a mapped staging region (ByteBuffer::resize on a buffer it does not own): the regions'
+// fill goes to the log before the process aborts, where it used to abort without a word.
+[[noreturn]] void staging_overflow_abort(size_t requested, size_t capacity) noexcept;
+} // namespace gfx
+
 class ByteBuffer {
 public:
   ByteBuffer() noexcept = default;
@@ -209,7 +215,7 @@ private:
     }
     if (size > m_capacity) {
       if (!m_owned) {
-        abort();
+        gfx::staging_overflow_abort(size, m_capacity);
       }
       // Exponential expansion to avoid O(n^2) time complexity.
       size_t capacity = size;
@@ -229,8 +235,11 @@ private:
 namespace aurora::gfx {
 inline constexpr bool UseTextureBuffer = false;
 inline constexpr uint64_t UniformBufferSize = 25165824;  // 24mb
-inline constexpr uint64_t VertexBufferSize = 3145728;    // 3mb
-inline constexpr uint64_t IndexBufferSize = 2097152;     // 2mb
+// A frame's de-indexed records (command_processor.cpp deindex_plan) are four to eight times its FIFO bytes, and
+// the geometry cache's 32-bit indices twice the plain path's 16-bit ones; a mapped region cannot grow, so the
+// FIFO processor keeps to these (stage_plain_vertices) and sizes them for a race start with a cold cache.
+inline constexpr uint64_t VertexBufferSize = 8388608;    // 8mb
+inline constexpr uint64_t IndexBufferSize = 4194304;     // 4mb
 inline constexpr uint64_t StorageBufferSize = 8388608;   // 8mb
 inline constexpr uint64_t TextureUploadSize = 25165824;  // 24mb
 
@@ -538,8 +547,21 @@ static Range push_indices(ArrayRef<T> data) {
 }
 // 32-bit indices (the geometry cache's), 4-byte aligned in the same index staging.
 Range push_indices32(const uint32_t* data, size_t count);
-// The frame's vertex staging bytes still free (a mapped region of VertexBufferSize that cannot grow).
+// The frame's vertex and index staging bytes still free (mapped regions of VertexBufferSize and IndexBufferSize
+// that cannot grow: a push past the end aborts).
 size_t vertex_staging_room() noexcept;
+size_t index_staging_room() noexcept;
+// What the frames' staging came to and what did not fit (command_processor.cpp), read and reset by the
+// fpslog: the high-water marks of the vertex and index regions, the frames whose draws stopped de-indexing
+// for want of vertex room (stage_plain_vertices) and the draws skipped because not even their FIFO bytes or
+// indices fit.
+struct StagingStats {
+  std::atomic<uint32_t> peakVertexBytes{0};
+  std::atomic<uint32_t> peakIndexBytes{0};
+  std::atomic<uint32_t> deindexStops{0};
+  std::atomic<uint32_t> skippedDraws{0};
+};
+extern StagingStats g_stagingStats;
 Range push_uniform(const uint8_t* data, size_t length);
 template <typename T>
 static Range push_uniform(const T& data) {

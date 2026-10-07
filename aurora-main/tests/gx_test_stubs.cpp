@@ -16,6 +16,7 @@
 #include "webgpu/gpu.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <deque>
@@ -323,7 +324,14 @@ bool queue_geometry_upload(uint32_t offset, const uint8_t* data, uint32_t size) 
   s_lastGeometryUploadBytes.assign(data, data + size);
   return true;
 }
-size_t vertex_staging_room() noexcept { return VertexBufferSize; }
+StagingStats g_stagingStats;
+namespace {
+size_t s_vertexStagingRoom = VertexBufferSize;
+size_t s_indexStagingRoom = IndexBufferSize;
+} // namespace
+size_t vertex_staging_room() noexcept { return s_vertexStagingRoom; }
+size_t index_staging_room() noexcept { return s_indexStagingRoom; }
+void staging_overflow_abort(size_t, size_t) noexcept { std::abort(); }
 Range push_indices32(const uint32_t* data, size_t count) {
   s_lastPushedIndices32.assign(data, data + count);
   const Range range{s_indexStagingOffset, static_cast<uint32_t>(count * sizeof(uint32_t))};
@@ -341,6 +349,8 @@ void reset_geometry_records() noexcept {
   s_lastPushedIndices32.clear();
   s_indexStagingOffset = 0;
 }
+void set_vertex_staging_room(size_t bytes) noexcept { s_vertexStagingRoom = bytes; }
+void set_index_staging_room(size_t bytes) noexcept { s_indexStagingRoom = bytes; }
 } // namespace testing
 std::pair<ByteBuffer, Range> map_uniform(size_t length) {
   s_uniformAllocations.emplace_back(length, 0);

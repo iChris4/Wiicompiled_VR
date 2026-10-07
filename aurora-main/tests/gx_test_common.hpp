@@ -50,6 +50,9 @@ void reset_uniform_allocations() noexcept;
 const std::vector<uint8_t>& uniform_allocation(size_t index) noexcept;
 void use_draw_command_tracking(bool enabled) noexcept;
 void use_real_vertex_format_helpers(bool enabled) noexcept;
+// What vertex_staging_room() and index_staging_room() answer (the stubs' staging never fills by itself).
+void set_vertex_staging_room(size_t bytes) noexcept;
+void set_index_staging_room(size_t bytes) noexcept;
 } // namespace aurora::gfx::testing
 
 class GXFifoTest : public ::testing::Test {

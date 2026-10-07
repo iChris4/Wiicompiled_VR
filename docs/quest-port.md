@@ -1009,7 +1009,9 @@ ahead:
   wrong under both, until indexed arrays got the same element padding. That
   combined padding is the shipped fix. It costs one copy per vertex and per
   array element. Peak uploads at a 12-racer race start were about 570 KB of
-  the 3 MB vertex buffer and 710 KB of the 8 MB storage buffer.
+  the then 3 MB vertex buffer and 710 KB of the 8 MB storage buffer (the
+  vertex staging has since grown to 8 MB for the de-indexed records, see
+  the geometry cache below).
 - KartPad's Android reports of corrupted drivers on Adreno 750 match this
   symptom. That is plausible but not tested.
 
@@ -1023,7 +1025,7 @@ the app:
 | `debug.wiicompiled.validation 1` | Keeps WebGPU validation and robustness on in release builds |
 | `debug.wiicompiled.fdm 0` | Launches without fragment density maps at all, whatever `foveation` says, which also drops their flag from every pipeline; `1` asks for them even with `foveation = "off"` |
 | `debug.wiicompiled.inject <n>:<button>` | Presses `a`, `b`, `x`, `y`, `start`, `up`, `down`, `left` or `right` for 12 XR frames each time `<n>` changes. As a Wii Remote, `x`/`y`/`start` are 1/2/+, the directions push the Nunchuk stick, and `home`, `c` and `z` also exist. `panel` presses the settings panel's button (left Y, or both thumbsticks as a gamepad), opening or closing it (see `OPENXR.md`). `flick` plays the bare hands' flick, one 150 ms shake of the remote (a trick off a ramp, a wheelie on a bike), with the controllers or none. `throw_forward` and `throw_backward` play a throw of the held item: the stick pushed that way while the item button is pressed and released (see "Throwing the held item" in `OPENXR.md`) |
-| `debug.wiicompiled.fpslog 1` | Logs the game's rendered frame rate every 5 s, with per-frame averages of the producer's waits for the frame worker's DONE and SEALED phases and of the worker's seal, permit wait, prepare and encode stretches, and of the draw calls the recorded frame holds and the primitives that merged into them (an overlay that stops draws merging shows up there first). A following line counts, per frame, why the other draws did not join the draw before them: a GX state change, a particle quad, a 2D draw while stereo records, the first draw of a pass, lines or points, a previous vertex-motion or instanced draw, or the wheel's animated arrays (a race start at Luigi Circuit: about 320 by state, 20 2D, 3 first). A third line reports the GX thread's command ring (records, waits, busy share). With the geometry cache on, a fourth counts, per frame, the display lists drawn from it (how many through native vertex input, how many after a re-digest), those resolved into it, those left in place and why (unsupported, untracked, no room, rewritten by the game), and the entries and MiB resident. A second line gives the GPU time per frame from timestamp queries on every pass (`mono` native render, `eyeL`/`eyeR` replays, or `eyes` for the one multiview pass, `screen`, `panel`, `efbcopy`, `palette`, `peek`, plus `passes-span` from the first pass begin to the last pass end and `between-passes` for copies and idle gaps). The compositor's `VrApi` log line gives headset FPS, `GPU%`, `CPU%`, clock levels and app GPU time (`App=`) |
+| `debug.wiicompiled.fpslog 1` | Logs the game's rendered frame rate every 5 s, with per-frame averages of the producer's waits for the frame worker's DONE and SEALED phases and of the worker's seal, permit wait, prepare and encode stretches, and of the draw calls the recorded frame holds and the primitives that merged into them (an overlay that stops draws merging shows up there first). A following line counts, per frame, why the other draws did not join the draw before them: a GX state change, a particle quad, a 2D draw while stereo records, the first draw of a pass, lines or points, a previous vertex-motion or instanced draw, or the wheel's animated arrays (a race start at Luigi Circuit: about 320 by state, 20 2D, 3 first). A third line reports the GX thread's command ring (records, waits, busy share). With the geometry cache on, a fourth counts, per frame, the display lists drawn from it (how many through native vertex input, how many after a re-digest), those resolved into it, those left in place and why (unsupported, untracked, no room, rewritten by the game), and the entries and MiB resident. A fifth gives the frames' staging high water (vertex and index KiB of their regions), the frames on which de-indexing stopped early for want of room, and the draws skipped. A second line gives the GPU time per frame from timestamp queries on every pass (`mono` native render, `eyeL`/`eyeR` replays, or `eyes` for the one multiview pass, `screen`, `panel`, `efbcopy`, `palette`, `peek`, plus `passes-span` from the first pass begin to the last pass end and `between-passes` for copies and idle gaps). The compositor's `VrApi` log line gives headset FPS, `GPU%`, `CPU%`, clock levels and app GPU time (`App=`) |
 
 A `Config.toml` written with `adb push` (or `sed -i` in `adb shell`) belongs
 to the shell user afterwards, and the app then fails every save with EACCES
@@ -1245,6 +1247,21 @@ Everything is read where the GX thread executes the call, as the hazard rule
 wants, and the entries go at the race exit. Luigi Circuit holds 2.7 MiB of
 records; a full buffer leaves the lists beyond it on the plain path and logs
 once.
+
+The frame's staging regions are mapped buffers that cannot grow, and a push
+past the end of one aborted the process without a line of log: that is what
+a Retro Rewind race start did once the cache existed, because a frame's
+de-indexed records are four to eight times its FIFO bytes and the first
+frame of a race, with the cache cold, resolves every list in place. The
+vertex staging grew from 3 to 8 MB and the index staging from 2 to 4 MB (a
+cached list's 32-bit indices take twice the plain path's), and the FIFO
+processor now keeps to them: past three quarters of the vertex staging the
+frame's remaining draws keep their indexed FIFO records and the arrays'
+storage path (de-indexing is latched again at the next frame), a cached list
+whose indices do not fit is drawn in place, and a draw not even its FIFO
+bytes or indices fit is skipped and reported, never merged into. With
+`fpslog` on, a line reports the frames' staging high water, the frames on
+which de-indexing stopped early and the draws skipped.
 
 Last, Vulkan multiview (`[vr] multiview`, on by default on the Quest, the
 settings page's "Both eyes in one pass"): the eye targets become the two

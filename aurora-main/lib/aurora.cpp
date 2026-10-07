@@ -2724,6 +2724,22 @@ void record_frame_telemetry() {
                    hits, native, revalidated, misses, reresolved, unsupported, untracked, full, volatiles,
                    stats.entries, static_cast<double>(stats.residentBytes) / (1024.0 * 1024.0), stats.capacity >> 20);
         }
+        {
+          // The frames' staging high water (gfx::StagingStats): how close the frames came to the regions'
+          // ends, and what did not fit.
+          auto& staging = gfx::g_stagingStats;
+          const auto take = [](std::atomic<uint32_t>& counter) {
+            return counter.exchange(0, std::memory_order_relaxed);
+          };
+          const uint32_t peakVertices = take(staging.peakVertexBytes);
+          const uint32_t peakIndices = take(staging.peakIndexBytes);
+          const uint32_t stops = take(staging.deindexStops);
+          const uint32_t skipped = take(staging.skippedDraws);
+          Log.info("Frame staging high water: vertices {} of {} KiB, indices {} of {} KiB; de-indexing stopped "
+                   "early on {} frames, {} draws skipped",
+                   peakVertices >> 10, gfx::VertexBufferSize >> 10, peakIndices >> 10, gfx::IndexBufferSize >> 10,
+                   stops, skipped);
+        }
         if (const std::string gpuTiming = gfx::gpu_timing_report(); !gpuTiming.empty()) {
           Log.info("{}", gpuTiming);
         }

@@ -2991,6 +2991,94 @@ TEST_F(GXFifoTest, DeindexedDrawResolvesIndexedAttributesIntoAlignedRecords) {
   EXPECT_EQ(aurora::gfx::g_mergedDrawCallCount, 0u);
 }
 
+// The frame's vertex staging cannot grow, and de-indexed records are several times their FIFO bytes: once
+// they would take it past three quarters, the frame's remaining draws keep their FIFO records (the indexed
+// storage path) instead of aborting in the staging; a draw not even those fit is skipped, and the next draw
+// must not merge into the one before it.
+class GXFifoStagingTest : public GXFifoTest {
+protected:
+  void SetUp() override {
+    GXFifoTest::SetUp();
+    aurora::gfx::testing::use_real_vertex_format_helpers(true);
+    aurora::gfx::testing::use_draw_command_tracking(true);
+    aurora::gfx::g_stagingStats.deindexStops.store(0);
+    aurora::gfx::g_stagingStats.skippedDraws.store(0);
+    g_gxState.deindexVertices = true;
+    for (auto& desc : g_gxState.vtxDesc) {
+      desc = GX_NONE;
+    }
+    g_gxState.vtxDesc[GX_VA_POS] = GX_INDEX8;
+    g_gxState.vtxDesc[GX_VA_TEX0] = GX_DIRECT;
+    g_gxState.vtxFmts[GX_VTXFMT0].attrs[GX_VA_POS] = {GX_POS_XYZ, GX_S16, 0};
+    g_gxState.vtxFmts[GX_VTXFMT0].attrs[GX_VA_TEX0] = {GX_TEX_ST, GX_U8, 0};
+    g_gxState.arrays[GX_VA_POS].data = positions.data();
+    g_gxState.arrays[GX_VA_POS].size = positions.size();
+    g_gxState.arrays[GX_VA_POS].stride = 6;
+    g_gxState.arrays[GX_VA_POS].le = false;
+    g_gxState.lastVtxFmt = GX_MAX_VTXFMT;
+    g_gxState.stateDirty = true;
+    g_gxState.pipelineStateGeneration = aurora::gx::next_gx_state_epoch();
+  }
+  void TearDown() override {
+    aurora::gfx::testing::set_vertex_staging_room(aurora::gfx::VertexBufferSize);
+    aurora::gfx::testing::set_index_staging_room(aurora::gfx::IndexBufferSize);
+    g_gxState.deindexVertices = false;
+    for (auto& desc : g_gxState.vtxDesc) {
+      desc = GX_NONE;
+    }
+    g_gxState.arrays[GX_VA_POS] = {};
+    aurora::gfx::testing::use_real_vertex_format_helpers(false);
+  }
+
+  std::array<u8, 18> positions{
+      0x00, 0x01, 0x00, 0x02, 0x00, 0x03, // element 0
+      0x10, 0x11, 0x10, 0x12, 0x10, 0x13, // element 1
+      0x20, 0x21, 0x20, 0x22, 0x20, 0x23, // element 2
+  };
+  // A triangle whose records are [index, s, t]: 9 FIFO bytes, 36 bytes of de-indexed records.
+  const std::vector<u8> triangle{static_cast<u8>(GX_TRIANGLES) | static_cast<u8>(GX_VTXFMT0), 0, 3,
+                                 2, 0xAA, 0xBB, 0, 0xCC, 0xDD, 1, 0xEE, 0xFF};
+  const std::vector<u8> fifoRecords{2, 0xAA, 0xBB, 0, 0xCC, 0xDD, 1, 0xEE, 0xFF};
+};
+
+TEST_F(GXFifoStagingTest, DeindexingStopsForTheFrameWhenTheVertexStagingRunsLow) {
+  // Room for the records themselves, but not for them and the quarter kept free.
+  aurora::gfx::testing::set_vertex_staging_room(aurora::gfx::VertexBufferSize / 4 + 32);
+  decode_fifo(triangle);
+  EXPECT_EQ(aurora::gfx::testing::last_pushed_vertices(), fifoRecords) << "the draw kept its FIFO records";
+  EXPECT_FALSE(g_gxState.deindexVertices) << "the rest of the frame does too";
+  EXPECT_EQ(aurora::gfx::g_stagingStats.deindexStops.load(), 1u);
+  EXPECT_EQ(aurora::gfx::g_stagingStats.skippedDraws.load(), 0u);
+  ASSERT_NE(aurora::gfx::get_last_draw_command<aurora::gx::DrawData>(), nullptr);
+  EXPECT_EQ(aurora::gfx::get_last_draw_command<aurora::gx::DrawData>()->vtxCount, 3u);
+  // The next draw of the frame goes the same way without a second stop.
+  g_gxState.stateDirty = true;
+  decode_fifo(triangle);
+  EXPECT_EQ(aurora::gfx::testing::last_pushed_vertices(), fifoRecords);
+  EXPECT_EQ(aurora::gfx::g_stagingStats.deindexStops.load(), 1u);
+}
+
+TEST_F(GXFifoStagingTest, ADrawWhoseFifoBytesDoNotFitIsSkipped) {
+  decode_fifo(triangle);
+  ASSERT_NE(aurora::gfx::get_last_draw_command<aurora::gx::DrawData>(), nullptr);
+  EXPECT_EQ(aurora::gfx::testing::last_pushed_vertices().size(), 36u) << "de-indexed while there is room";
+  aurora::gfx::testing::use_draw_command_tracking(true); // forgets the draw above
+  aurora::gfx::testing::set_vertex_staging_room(8);
+  g_gxState.stateDirty = false;
+  decode_fifo(triangle);
+  EXPECT_EQ(aurora::gfx::get_last_draw_command<aurora::gx::DrawData>(), nullptr) << "nothing was recorded";
+  EXPECT_EQ(aurora::gfx::g_stagingStats.skippedDraws.load(), 1u);
+  EXPECT_TRUE(g_gxState.stateDirty) << "the next draw must not merge into the one before the skipped draw";
+}
+
+TEST_F(GXFifoStagingTest, ADrawWhoseIndicesDoNotFitIsSkipped) {
+  aurora::gfx::testing::set_index_staging_room(4); // three 16-bit indices need 6
+  decode_fifo(triangle);
+  EXPECT_EQ(aurora::gfx::get_last_draw_command<aurora::gx::DrawData>(), nullptr);
+  EXPECT_EQ(aurora::gfx::g_stagingStats.skippedDraws.load(), 1u);
+  EXPECT_TRUE(g_gxState.stateDirty);
+}
+
 TEST_F(GXFifoTest, VrDirectParticleQuadsRetainSeparateCentersInFifoAndRawDraws) {
   struct Reset {
     ~Reset() {

@@ -77,6 +77,7 @@ protected:
     list = {kDraw, 0, 3, 2, 0xAA, 0xBB, 0, 0xCC, 0xDD, 1, 0xEE, 0xFF};
   }
   void TearDown() override {
+    gfx::testing::set_index_staging_room(gfx::IndexBufferSize);
     aurora::g_guestWriteGenerationHook = nullptr;
     gfx::set_geometry_buffer_capacity_mb(0);
     cache::clear();
@@ -306,6 +307,23 @@ TEST_F(GeometryCacheTest, AnOrthographicListStaysOnThePlainPath) {
   call(list);
   EXPECT_TRUE(gfx::testing::geometry_uploads().empty());
   EXPECT_EQ(gfx::testing::last_pushed_vertices().size(), 36u);
+}
+
+// A cached list's 32-bit indices take twice the index staging of the plain path's 16-bit templates: a frame
+// that has filled it draws the list in place (the staging cannot grow) and from the cache again afterwards.
+TEST_F(GeometryCacheTest, ACachedListDrawsInPlaceWhenTheIndexStagingIsFull) {
+  gfx::testing::set_index_staging_room(8); // three 16-bit indices fit, three 32-bit ones do not
+  call(list);
+  EXPECT_EQ(gfx::testing::geometry_uploads().size(), 1u) << "resolved into the cache all the same";
+  ASSERT_NE(last_draw(), nullptr);
+  EXPECT_FALSE(last_draw()->cachedGeometry);
+  EXPECT_EQ(gfx::testing::last_pushed_vertices().size(), 36u) << "drawn from the frame's records";
+  EXPECT_EQ(cache::g_inPlaceFull.load(), 1u);
+  gfx::testing::set_index_staging_room(gfx::IndexBufferSize);
+  gxState().stateDirty = true;
+  call(list);
+  EXPECT_TRUE(last_draw()->cachedGeometry);
+  EXPECT_EQ(cache::g_hits.load(), 1u);
 }
 
 } // namespace
