@@ -76,6 +76,8 @@
 
 #if defined(__ANDROID__)
 #include <android/log.h>
+#include <dlfcn.h>
+#include <unwind.h>
 // Renames main() to SDL_main(), which SDLActivity's nativeRunMain resolves
 // from libmain.so with dlsym once the Java side has set up the surface.
 #include <SDL3/SDL_main.h>
@@ -698,6 +700,57 @@ std::string FormatHostStackTrace(unsigned framesToSkip) {
         out << ")\n";
     }
     return out.str();
+#elif defined(__ANDROID__)
+    // No DbgHelp here: _Unwind_Backtrace walks the calling thread (an abort handler included,
+    // through the signal frame) and dladdr names what a dynamic symbol table exports. Everything
+    // else, the runtime's, Aurora's and the translated functions alike, is named offline from the
+    // module offset: the library keeps its full symbol table. The translated-function registry is
+    // not asked, since it attributes any address to the nearest translated function before it.
+    // The process is ending, so the strict async-signal-safety these calls lack does not matter.
+    struct Walk {
+        std::array<void*, 64> frames{};
+        unsigned count = 0;
+    } walk;
+    _Unwind_Backtrace(
+        [](struct _Unwind_Context* context, void* arg) -> _Unwind_Reason_Code {
+            auto* walk = static_cast<Walk*>(arg);
+            if (walk->count >= walk->frames.size()) {
+                return _URC_END_OF_STACK;
+            }
+            if (const uintptr_t pc = _Unwind_GetIP(context); pc != 0) {
+                walk->frames[walk->count++] = reinterpret_cast<void*>(pc);
+            }
+            return _URC_NO_REASON;
+        },
+        &walk);
+    std::ostringstream out;
+    if (walk.count <= framesToSkip) {
+        out << "[runtime] host stack trace unavailable (_Unwind_Backtrace returned " << walk.count << " frames)\n";
+        return out.str();
+    }
+    out << "[runtime] host stack trace (most recent call first; name the libmain.so frames with "
+           "llvm-symbolizer --obj=<that build's libmain.so> <module offsets>):\n";
+    for (unsigned i = framesToSkip; i < walk.count; ++i) {
+        const uintptr_t addr = reinterpret_cast<uintptr_t>(walk.frames[i]);
+        Dl_info info{};
+        const bool known = dladdr(walk.frames[i], &info) != 0;
+        const char* modulePath = known && info.dli_fname != nullptr ? info.dli_fname : "?";
+        out << "  [" << std::setw(2) << std::setfill('0') << (i - framesToSkip) << std::setfill(' ') << "] "
+            << modulePath << "!";
+        // Bionic's dladdr names a symbol only when the address lies inside it.
+        if (known && info.dli_sname != nullptr) {
+            out << info.dli_sname << " + 0x" << std::hex << std::uppercase
+                << (addr - reinterpret_cast<uintptr_t>(info.dli_saddr));
+        } else {
+            out << "?" << std::hex << std::uppercase;
+        }
+        out << " (0x" << addr;
+        if (known && info.dli_fbase != nullptr) {
+            out << ", module+0x" << (addr - reinterpret_cast<uintptr_t>(info.dli_fbase));
+        }
+        out << std::dec << std::nouppercase << ")\n";
+    }
+    return out.str();
 #else
     (void)framesToSkip;
     return {};
@@ -767,7 +820,7 @@ void SetRuntimeExitCodeImpl(int code) {
 namespace {
 
 void DumpHostStackTrace() {
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__ANDROID__)
     static std::atomic_flag s_inProgress = ATOMIC_FLAG_INIT;
     if (s_inProgress.test_and_set()) {
         return;
@@ -1276,7 +1329,11 @@ void AbortSignalHandler(int signum) {
         std::_Exit(EXIT_FAILURE);
     }
 
-    WriteFatalLogImpl("sigabrt");
+    // The handler runs on the thread that called abort(), so its stack names the assertion or
+    // renderer path that gave up (an Aurora fatal log line, when there was one, is in console.log).
+    const std::string hostStack = FormatHostStackTrace(1);
+    const std::string details = hostStack.empty() ? std::string{} : "\n" + hostStack;
+    WriteFatalLogImpl("sigabrt", details);
 
     std::fflush(stderr);
     std::fflush(stdout);

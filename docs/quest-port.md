@@ -913,6 +913,15 @@ Kotlin-only change the kit fingerprint stays the same and the installed game kee
 directly) writes a first `Config.toml` with `[vr] enabled = true` and
 `paths.dvd_root` set. Logs: `adb logcat -s SDL WiiCompiledQuest WiiCompiledLauncher`
 plus the `Logs/<product>_<stamp>_pid<pid>/console.log` folder the runtime writes.
+An abort leaves `crash_sigabrt.txt` there with the guest state and the
+aborting thread's native stack. System libraries' frames are named; the
+game library's carry `module+0x` offsets, which the PC copy of that build's
+`libmain.so` names (it is the file the headset runs, symbol table included):
+
+```bash
+.scratch/vr-build-workspace/Toolkit/llvm-mingw/bin/llvm-symbolizer.exe \
+  --obj=android/app/build/questGame/modernQuestDebug/base/libmain.so 0x139A34C
+```
 
 A CMake-only cross-compile of the native runtime (no game) is the quick
 compile check and needs no Gradle:
