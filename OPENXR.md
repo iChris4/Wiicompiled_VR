@@ -839,6 +839,9 @@ around hitches, and the compositor's own markers counted 720 new and 720 repeate
 strict alternation over 12 s. The runtime's minimum lead came out between 17 and 19.4 ms at each
 calibration. 72 Hz shows one frame in five for two refreshes by construction. 120 Hz left the app's
 GPU time and the CPU load unchanged and added about 4 points of GPU load (the compositor).
+A repeated frame is re-warped for the head only, so what moves across the view as the kart turns is
+still seen twice at 120 Hz; VR frame interpolation renders a new image every refresh instead, at the
+cost of a full eye replay per displayed frame (measured on the Quest in `docs/quest-port.md`).
 `mkw_display_phase_lock_tests` checks the lock against a simulated
 compositor: drift alone reproduces uneven frames, and locked from any starting phase every
 frame is shown for two refreshes, also with a runtime that wakes the app every second refresh.

@@ -2430,8 +2430,15 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
   // produces one of those copies (never the display copy), which on a Quest 3 was 4 to 6 ms of a
   // 12 ms GPU frame spent on a 1280x720 image nobody saw. A pending CPU readback or a frame
   // capture still gets the whole image.
+  //
+  // With VR interpolation most frames are sealed without a stereo packet: their eyes are drawn
+  // later, once per display slot, by run_retained_stereo_frame, which samples the same copies and
+  // nothing else (about 2 ms of mono render a game frame on a Quest 3). A packet that arrives with
+  // the seal and is not an immersive replay (the virtual screen across a transition) builds its eyes
+  // from the whole image, so the retained case is only taken without one.
+  const bool eyesFromRetainedReplay = ctx.retainStereo && !ctx.stereoReplay.has_value();
   int32_t nativeRenderLastPass = INT32_MAX;
-  if (headsetOnly && immersiveReplay && !gfx::efb_ram::has_pending() &&
+  if (headsetOnly && (immersiveReplay || eyesFromRetainedReplay) && !gfx::efb_ram::has_pending() &&
       g_captureFrame.load(std::memory_order_acquire) == UINT32_MAX) {
     nativeRenderLastPass = gfx::last_pass_feeding_replay(sealedFrame);
   }

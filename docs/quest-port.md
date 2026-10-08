@@ -1315,6 +1315,23 @@ Meta's runtime does not block in xrWaitFrame for these late, render-first
 frames (0.08 ms), so the lock steers by the lead to the granted display
 time, which on this headset spans about 17-28 ms.
 
+Showing a frame twice still doubles what moves across the view when the
+kart turns: the compositor re-warps the repeat for the head, not for the
+game's camera. Only a new image per refresh removes that, which is what VR
+frame interpolation renders. Its first Quest measurement (Retro Rewind
+race, player idle, one launch per setting) found the native mono render
+drawn in full, about 2 ms a game frame for an image nobody sees: with
+interpolation most frames are sealed without a stereo packet and their eyes
+come from the retained replay, which the cut after the last pass feeding
+the replay did not cover. Covering it took interpolation at 72 Hz from 55%
+to 48% GPU busy (App GPU 6.60 -> 5.74 ms a displayed frame, missed frames
+1.0 -> 0 a second, the frame worker 38 -> 32% of a core, its encode
+2.25 -> 1.07 ms), and at 120 Hz from 83% to 80% (4.3 -> 1.1 missed frames a
+second, the game's lowest 5 s window 53.9 -> 57.0 FPS). Interpolation off
+at 120 Hz runs at 45%. At 120 Hz every displayed frame is a full eye replay
+and the runtime keeps the GPU at level 3 (492 MHz), so 72 Hz is the
+comfortable interpolation rate on this headset.
+
 Verified on device since: the menus on the virtual screen, controller input
 (the user has driven races), and an immersive Grand Prix start with all 12
 racers rendering correctly. Not yet verified: stereo comfort and scale,
