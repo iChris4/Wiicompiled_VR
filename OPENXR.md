@@ -879,6 +879,13 @@ frame, the pose is solved once and only the palette is set again around each cal
 palm profiles, the reach fit, the IK solve, the wrist placement, segment thinning, alignment and
 the rig classification.
 
+**Cost on a Quest 3** (2026-10-08, base game, Birdo at the start of the first Grand Prix race with
+the CPUs racing, controllers idle, GPU clock fixed at 492 MHz; `body_ik` switched live in one session,
+8 rounds of 20 s with the order swapped each round): the compositor's App GPU time went from 6.80 to
+7.11 ms a frame (GPU 56.7% to 59.3%), the driver being drawn in both eyes again; CPU 48.2% against
+46.1%, so no measurable CPU cost. The game held 60 FPS and the headset 72 both ways. simpleperf
+puts the body's own work at about 0.17% of the game thread.
+
 ## Presentation policy
 
 The runtime deliberately fails safe instead of guessing which Mario Kart camera is active:
