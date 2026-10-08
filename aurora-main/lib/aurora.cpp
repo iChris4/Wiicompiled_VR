@@ -1153,10 +1153,12 @@ struct PendingFrameCapture {
 };
 
 std::optional<PendingFrameCapture> encode_frame_capture(const wgpu::CommandEncoder& encoder,
-                                                        const webgpu::PresentSource& source) {
+                                                        const webgpu::PresentSource& source, bool sourceComplete) {
   const uint32_t requestedFrame = g_captureFrame.load(std::memory_order_acquire);
   const uint32_t currentFrame = gfx::current_frame();
-  if (requestedFrame == UINT32_MAX || currentFrame < requestedFrame)
+  // A request stored after this frame's native render was cut short would read an older display
+  // copy: leave it pending, and the next frame reports it missed.
+  if (requestedFrame == UINT32_MAX || currentFrame < requestedFrame || !sourceComplete)
     return std::nullopt;
   g_captureFrame.store(UINT32_MAX, std::memory_order_release);
   if (currentFrame != requestedFrame) {
@@ -2425,11 +2427,16 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
   // A demanded CPU-visible EFB readback submits a prefix of the frame, so replaying the resumed
   // stream would mutate an already-rendered EFB. Render once, then duplicate into the slots.
   //
-  // On a headset an immersive frame's native render is never presented: the eyes replay the draws
-  // themselves and only sample the EFB copies it resolves. So it stops after the last pass that
-  // produces one of those copies (never the display copy), which on a Quest 3 was 4 to 6 ms of a
-  // 12 ms GPU frame spent on a 1280x720 image nobody saw. A pending CPU readback or a frame
-  // capture still gets the whole image.
+  // An immersive frame's native render reaches no headset: the eyes replay the draws themselves
+  // and only sample the EFB copies it resolves. Only the desktop window can show it, and only when
+  // its plan is Mono: Desktop view Normal, or an eye view until a seal has taken an immersive
+  // packet. None clears the window and the eye views otherwise copy the eyes.
+  // Otherwise it stops after the last pass that produces an EFB copy (never the display copy),
+  // which on a Quest 3, whose plan is always Black, was 4 to 6 ms of a 12 ms GPU frame spent on a
+  // 1280x720 image nobody saw. A frame capture still gets the whole image (and a request that lands
+  // after this check skips the cut frame, see encode_frame_capture). CPU readbacks never read
+  // this render: the sealed frame's lazy requests were dropped at the seal, a demanded one renders
+  // the producer's own frame, and the async ones read copies the cut keeps.
   //
   // With VR interpolation most frames are sealed without a stereo packet: their eyes are drawn
   // later, once per display slot, by run_retained_stereo_frame, which samples the same copies and
@@ -2438,7 +2445,7 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
   // from the whole image, so the retained case is only taken without one.
   const bool eyesFromRetainedReplay = ctx.retainStereo && !ctx.stereoReplay.has_value();
   int32_t nativeRenderLastPass = INT32_MAX;
-  if (headsetOnly && (immersiveReplay || eyesFromRetainedReplay) && !gfx::efb_ram::has_pending() &&
+  if (mirrorPlan != MirrorPlan::Mono && (immersiveReplay || eyesFromRetainedReplay) &&
       g_captureFrame.load(std::memory_order_acquire) == UINT32_MAX) {
     nativeRenderLastPass = gfx::last_pass_feeding_replay(sealedFrame);
   }
@@ -2527,7 +2534,8 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
   if (stereoOutput) {
     pendingStereoSink = run_stereo_sink(encoder, ctx.stereoFrameToken, ctx.logicalFrame, ctx.stereoFrameMode);
   }
-  auto pendingFrameCapture = encode_frame_capture(encoder, ctx.presentSource);
+  auto pendingFrameCapture =
+      encode_frame_capture(encoder, ctx.presentSource, nativeRenderLastPass == INT32_MAX);
   presentationJobs.push_back({
       .image = std::move(finalImage),
       .logicalFrame = ctx.logicalFrame,

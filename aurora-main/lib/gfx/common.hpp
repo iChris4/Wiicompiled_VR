@@ -408,8 +408,9 @@ bool prepare_late_stereo_replay(SealedFrame& frame, wgpu::CommandEncoder& cmd, c
 // Encode a sealed frame. Never touches the producer-visible recording state,
 // so this may run concurrently with the producer's FIFO drains.
 // `nativeRenderLastPass` limits the passes that do render work (texture bakes still run for every
-// pass): a headset never shows an immersive frame's native render, so encode_sealed_frame stops it
-// after the last pass whose EFB copy the eye replays sample.
+// pass): when nothing shows an immersive frame's native render (no headset does, nor a desktop
+// window mirroring the eyes or black), encode_sealed_frame stops it after the last pass whose EFB
+// copy the eye replays sample.
 void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedFrame = -1, bool finalize = true,
             int32_t nativeRenderLastPass = INT32_MAX);
 // Index of the last recorded pass that resolves an EFB copy other than the display copy, or -1

@@ -340,9 +340,10 @@ app also declares `com.oculus.software.body_tracking`.
   Since 2026-09-19 an immersive race also stops that native render after the
   last pass whose EFB copy the eye replays sample (`last_pass_feeding_replay`):
   the main scene and display copy of a 1280x720 image nobody sees were 4 to
-  6 ms of a 12 ms GPU frame on a Quest 3. A pending CPU readback of an EFB
-  copy or a frame capture still renders the whole image, and menus (the
-  virtual screen) keep it because their eyes are built from that snapshot.
+  6 ms of a 12 ms GPU frame on a Quest 3. A frame capture still renders the
+  whole image, and menus (the virtual screen) keep it because their eyes are
+  built from that snapshot. The PC takes the same cut whenever its desktop
+  window is not showing that image (Desktop view None or an eye).
 - **JNI only on the real thread stack.** Guest threads run on libco stacks
   inside the SDL thread, and SDL's Android event pump can reach Java (joystick
   polling, HIDAPI). ART binds JNI transitions to the thread's real stack, so

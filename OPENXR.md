@@ -90,6 +90,13 @@ three eye choices show that same image; only `"none"` differs. The F10 bar is dr
 image is chosen, so the setting can always be changed back.
 Eye mirror modes retain the last eye image when a desktop frame has no new XR packet, so they
 do not alternate with the normal camera. `"none"` also stays black between XR packets.
+While the window shows black or the eyes during an immersive race, the game's own flat render is
+seen nowhere, so it stops after the last pass whose EFB copy the eyes sample, as it always does on
+the Quest. This saves GPU time in proportion to the internal resolution. An eye choice shows that
+render, in full, until the window has received the race's first immersive frame, and with VR
+interpolation that can take a while. On a PC with a PS VR2 through SteamVR (Vulkan, interpolation
+Auto, automatic internal resolution), the flat render of a race frame cost 0.50 ms of GPU time with
+`"normal"`, 0.24 with `"left"` and 0.14 with `"none"`.
 
 ## Local multiplayer
 
