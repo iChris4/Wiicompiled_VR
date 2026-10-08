@@ -187,6 +187,14 @@ int g_vrFrameInterpolationMode = [] {
     return static_cast<int>(std::find(kVrInterpolationFps.begin(), kVrInterpolationFps.end(), value) -
                             kVrInterpolationFps.begin());
 }();
+// [vr] refresh_rate as the menu offers it; 0 is the headset's own rate.
+constexpr std::array<uint32_t, 5> kVrRefreshRates{0, 72, 80, 90, 120};
+constexpr std::array<const char*, 5> kVrRefreshRateLabels{"Headset default", "72 Hz", "80 Hz", "90 Hz", "120 Hz"};
+int g_vrRefreshRate = [] {
+    const auto value = RuntimeConfigFile::VrRefreshRate();
+    const auto it = std::find(kVrRefreshRates.begin(), kVrRefreshRates.end(), value);
+    return it == kVrRefreshRates.end() ? 0 : static_cast<int>(it - kVrRefreshRates.begin());
+}();
 int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
 bool g_openxrDiagnosticsLogging = RuntimeConfigFile::DiagnosticsOpenXRLogging(false);
 bool g_firstPersonDiagnosticsLogging = RuntimeConfigFile::DiagnosticsFirstPersonLogging(false);
@@ -1517,6 +1525,19 @@ void DrawVrSettings() {
                         "off, or without a GPU that supports it: a new level applies after a restart.");
     }
 #endif
+    if (ImGui::Combo("Display refresh rate", &g_vrRefreshRate, kVrRefreshRateLabels.data(),
+                     static_cast<int>(kVrRefreshRateLabels.size()))) {
+        const auto hz = kVrRefreshRates[static_cast<size_t>(g_vrRefreshRate)];
+        mkw::vr::OpenXRSetDisplayRefreshRate(hz);
+        RuntimeConfigFile::SetVrRefreshRate(hz);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "The headset's refresh rate. At 120 Hz every 60 Hz game frame is shown for exactly two refreshes, "
+            "and the game is kept in step with the display, so motion is even without interpolation; at 72 Hz "
+            "one frame in five is shown twice. 120 Hz costs the headset a little more power. Meta runtimes "
+            "only (the Quest, Quest Link); elsewhere set the rate in your VR runtime. Applies immediately.");
+    }
     if (ImGui::Combo("VR frame interpolation (experimental)", &g_vrFrameInterpolationMode,
                      kVrInterpolationLabels.data(), static_cast<int>(kVrInterpolationLabels.size()))) {
         const auto target = kVrInterpolationFps[static_cast<size_t>(g_vrFrameInterpolationMode)];
@@ -1532,7 +1553,13 @@ void DrawVrSettings() {
     }
     const auto xrTiming = mkw::vr::OpenXRGetFrameTiming();
     if (mkw::vr::OpenXRIsRunning()) {
-        ImGui::TextDisabled("Headset: %.1f Hz | New VR frames: %.1f FPS", xrTiming.headset_hz, xrTiming.rendered_fps);
+        if (xrTiming.locked_refreshes != 0) {
+            ImGui::TextDisabled("Headset: %.1f Hz | New VR frames: %.1f FPS | each shown %u refreshes",
+                                xrTiming.headset_hz, xrTiming.rendered_fps, xrTiming.locked_refreshes);
+        } else {
+            ImGui::TextDisabled("Headset: %.1f Hz | New VR frames: %.1f FPS", xrTiming.headset_hz,
+                                xrTiming.rendered_fps);
+        }
         if (g_vrFrameInterpolationMode != 0 && !mkw::vr::OpenXRFrameInterpolationAvailable()) {
             ImGui::TextWrapped("The OpenXR runtime does not provide the clock conversion needed for interpolation.");
         }

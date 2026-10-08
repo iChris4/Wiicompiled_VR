@@ -527,6 +527,8 @@ public:
         frame.xr_frame.serial = active_frame_.serial;
         frame.xr_frame.predicted_display_time = active_frame_.predicted_display_time;
         frame.xr_frame.predicted_display_period = active_frame_.predicted_display_period;
+        frame.xr_frame.wait_start_ns = active_frame_.wait_start_ns;
+        frame.xr_frame.wait_ns = active_frame_.wait_ns;
         frame.xr_frame.should_render = active_frame_.should_render;
         active_frame_serial_ = frame.xr_frame.serial;
         {

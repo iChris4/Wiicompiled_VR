@@ -14,6 +14,8 @@
 #include "vr/mkw_vr_policy.h"
 #include "vr/mkw_vr_instrumentation.h"
 #include "vr/openxr_diagnostics.h"
+#include "vr/display_phase_lock.h"
+#include "hle_stubs.h"
 #include <aurora/gfx.h>
 
 #include <algorithm>
@@ -23,12 +25,14 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #if defined(MKW_ENABLE_OPENXR)
 #include "vr/openxr_backend.h"
@@ -446,6 +450,8 @@ public:
 #endif
         if (has_extension("XR_FB_display_refresh_rate")) {
             runtime_->LoadFunction("xrGetDisplayRefreshRateFB", &get_display_refresh_rate_);
+            runtime_->LoadFunction("xrEnumerateDisplayRefreshRatesFB", &enumerate_display_refresh_rates_);
+            runtime_->LoadFunction("xrRequestDisplayRefreshRateFB", &request_display_refresh_rate_);
         }
         if (has_extension("XR_EXT_performance_settings")) {
             runtime_->LoadFunction("xrPerfSettingsSetPerformanceLevelEXT", &set_performance_level_);
@@ -609,8 +615,54 @@ public:
         frame_interpolation_fps_.store(NormalizeFrameInterpolationFps(target), std::memory_order_relaxed);
     }
 
+    void SetDisplayRefreshRate(uint32_t hz) noexcept {
+        if (RuntimeConfigFile::IsSupportedVrRefreshRate(hz)) {
+            requested_refresh_hz_.store(hz, std::memory_order_relaxed);
+        }
+    }
+
     OpenXRFrameTiming FrameTiming() const noexcept {
-        return {headset_hz_.load(std::memory_order_relaxed), rendered_fps_.load(std::memory_order_relaxed)};
+        return {headset_hz_.load(std::memory_order_relaxed), rendered_fps_.load(std::memory_order_relaxed),
+                locked_refreshes_.load(std::memory_order_relaxed)};
+    }
+
+    // The frame-log thread, every few seconds while the fpslog runs: the window's counts, then a fresh window.
+    void LogPacingWindow(double window_seconds) noexcept {
+        std::array<uint32_t, 4> shown{};
+        uint32_t total = 0;
+        for (size_t i = 0; i < shown.size(); ++i) {
+            shown[i] = shown_refreshes_[i].exchange(0, std::memory_order_relaxed);
+            total += shown[i];
+        }
+        const int64_t lead_sum = window_lead_ns_.exchange(0, std::memory_order_relaxed);
+        const uint32_t leads = window_leads_.exchange(0, std::memory_order_relaxed);
+        const int64_t lead_max = window_lead_max_ns_.exchange(0, std::memory_order_relaxed);
+        const int64_t lead_min = window_lead_min_ns_.exchange(INT64_MAX, std::memory_order_relaxed);
+        if (total == 0 || !running_.load(std::memory_order_acquire)) {
+            return;
+        }
+        const auto state = static_cast<DisplayPhaseLock::State>(lock_state_.load(std::memory_order_relaxed));
+        char line[440];
+        std::snprintf(line, sizeof(line),
+                      "OpenXR pacing over %.1f s at %.0f Hz: %u frames shown 1 refresh, %u shown 2, %u shown 3, %u "
+                      "shown 4 or more; ready %.2f ms before display on average (min %.2f, max %.2f); %s",
+                      window_seconds, static_cast<double>(headset_hz_.load(std::memory_order_relaxed)), shown[0],
+                      shown[1], shown[2], shown[3], leads ? static_cast<double>(lead_sum) / leads / 1.0e6 : 0.0,
+                      leads ? static_cast<double>(lead_min) / 1.0e6 : 0.0,
+                      static_cast<double>(lead_max) / 1.0e6,
+                      state == DisplayPhaseLock::State::Locked        ? "game frames locked to the display"
+                      : state == DisplayPhaseLock::State::Calibrating ? "finding the display's deadline"
+                                                                       : "game frames not locked to the display");
+        if (state == DisplayPhaseLock::State::Locked) {
+            const size_t used = std::strlen(line);
+            std::snprintf(line + used, sizeof(line) - used,
+                          " (%u refreshes each, target %.2f ms, phase error %.2f ms, shift %.1f us a retrace)",
+                          locked_refreshes_.load(std::memory_order_relaxed),
+                          static_cast<double>(display_lock_target_ns_.load(std::memory_order_relaxed)) / 1.0e6,
+                          static_cast<double>(lock_error_ns_.load(std::memory_order_relaxed)) / 1.0e6,
+                          static_cast<double>(lock_shift_ns_.load(std::memory_order_relaxed)) / 1.0e3);
+        }
+        RT_LOG(RT_TAG_RUNTIME) << line << std::endl;
     }
 
     bool FrameInterpolationAvailable() const noexcept {
@@ -897,10 +949,12 @@ private:
                 }
                 SetInterpolationActive(false);
                 interpolation_pacing_.Reset();
+                ReleaseDisplayLock();
                 rendered_fps_.store(0, std::memory_order_relaxed);
                 WaitForStopOrDelay(std::chrono::milliseconds(5));
                 continue;
             }
+            ApplyDisplayRefreshRate(session_run_serial);
 
             const MkwVRPolicySnapshot policy = MkwVRPolicyGetSnapshot();
             aurora_set_stereo_motion_logging(diagnostics::Enabled());
@@ -979,6 +1033,10 @@ private:
             // game frame. Interpolation keeps the frame-first order below: it renders for the
             // frame's own predicted display time.
             const bool render_first = !aurora_get_stereo_frame_interpolation();
+            if (!render_first) {
+                // Interpolation renders at the display's own rate: there is nothing to lock.
+                ReleaseDisplayLock();
+            }
             if (last_pacing_mode != static_cast<int>(render_first)) {
                 last_pacing_mode = static_cast<int>(render_first);
                 RT_LOG(RT_TAG_RUNTIME) << "OpenXR " << kGraphicsBackendName << " pacing: "
@@ -1148,6 +1206,7 @@ private:
         }
 
         SetInterpolationActive(false);
+        ReleaseDisplayLock();
         aurora_set_pipeline_cache_idle_store(false);
         aurora_set_stereo_panel_layer(false);
         running_.store(false, std::memory_order_release);
@@ -1298,6 +1357,7 @@ private:
             return false;
         }
         UpdateFrameTiming(frame.xr_frame);
+        SteerDisplayLock(frame.xr_frame);
         if (diagnostics::Enabled()) {
             NoteFrameDiagnostics(frame, immersive);
         }
@@ -1324,6 +1384,7 @@ private:
         }
         consecutive_skips = 0;
         ++timing_submissions_;
+        NoteShownRefreshes(frame.xr_frame);
         if (immersive && !immersive_submission_logged) {
             immersive_submission_logged = true;
             RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] first immersive packet consumed and submitted as "
@@ -1712,6 +1773,143 @@ private:
         virtual_screen_pose_valid_ = false;
     }
 
+    // [vr] refresh_rate, asked of the runtime once per session and again whenever the setting changes. 0 keeps the
+    // rate the session started at, or returns to it.
+    void ApplyDisplayRefreshRate(uint64_t session_run_serial) {
+        if (session_run_serial != refresh_session_serial_) {
+            refresh_session_serial_ = session_run_serial;
+            refresh_applied_ = kRefreshNotApplied;
+            refresh_changed_ = false;
+            session_start_hz_ = 0;
+            supported_refresh_rates_.clear();
+            if (get_display_refresh_rate_ != nullptr) {
+                (void)get_display_refresh_rate_(runtime_->Session(), &session_start_hz_);
+            }
+            uint32_t count = 0;
+            if (enumerate_display_refresh_rates_ != nullptr &&
+                XR_SUCCEEDED(enumerate_display_refresh_rates_(runtime_->Session(), 0, &count, nullptr)) && count > 0) {
+                supported_refresh_rates_.resize(count);
+                if (XR_FAILED(enumerate_display_refresh_rates_(runtime_->Session(), count, &count,
+                                                               supported_refresh_rates_.data()))) {
+                    count = 0;
+                }
+                supported_refresh_rates_.resize(count);
+            }
+            RT_LOG(RT_TAG_RUNTIME) << "OpenXR: display refresh rates "
+                                   << (supported_refresh_rates_.empty() ? std::string("not listed by the runtime")
+                                                                       : FormatRefreshRates())
+                                   << "; the session started at " << session_start_hz_ << " Hz" << std::endl;
+        }
+        const uint32_t wanted = requested_refresh_hz_.load(std::memory_order_relaxed);
+        if (wanted == refresh_applied_) {
+            return;
+        }
+        refresh_applied_ = wanted;
+        if (wanted == 0 && !refresh_changed_) {
+            return; // the headset's own rate, untouched
+        }
+        const float target = wanted == 0 ? session_start_hz_ : static_cast<float>(wanted);
+        if (request_display_refresh_rate_ == nullptr || target <= 0.0f) {
+            RT_LOG(RT_TAG_RUNTIME) << "OpenXR: this runtime cannot change the display refresh rate "
+                                      "(no XR_FB_display_refresh_rate); [vr] refresh_rate is ignored"
+                                   << std::endl;
+            return;
+        }
+        const auto match = std::find_if(supported_refresh_rates_.begin(), supported_refresh_rates_.end(),
+                                        [&](float hz) { return std::abs(hz - target) < 0.5f; });
+        if (match == supported_refresh_rates_.end()) {
+            RT_LOG(RT_TAG_RUNTIME) << "OpenXR: " << target << " Hz is not a display refresh rate this headset "
+                                   << "offers (" << FormatRefreshRates() << "); keeping the current one" << std::endl;
+            return;
+        }
+        const XrResult result = request_display_refresh_rate_(runtime_->Session(), *match);
+        if (XR_FAILED(result)) {
+            RT_LOG(RT_TAG_RUNTIME) << "OpenXR: xrRequestDisplayRefreshRateFB(" << *match << ") failed ("
+                                   << static_cast<int>(result) << ")" << std::endl;
+            return;
+        }
+        refresh_changed_ = wanted != 0;
+        RT_LOG(RT_TAG_RUNTIME) << "OpenXR: display refresh rate set to " << *match << " Hz"
+                               << (wanted == 0 ? " (the rate the session started at)" : "") << std::endl;
+    }
+
+    std::string FormatRefreshRates() const {
+        std::ostringstream out;
+        for (size_t i = 0; i < supported_refresh_rates_.size(); ++i) {
+            out << (i ? ", " : "") << supported_refresh_rates_[i];
+        }
+        out << " Hz";
+        return out.str();
+    }
+
+    // Render-first pacing, once the compositor frame for a rendered packet is begun: the lead from the eyes being
+    // ready (xrWaitFrame called) to the display time granted moves the game's VI timeline
+    // (vr/display_phase_lock.h). Without the display-time conversion there is no lead and no lock.
+    void SteerDisplayLock(const OpenXRFrame& xr_frame) noexcept {
+        const uint64_t display_ns = DisplayTimeNanos(xr_frame.predicted_display_time);
+        const int64_t lead = display_ns != 0 && xr_frame.wait_start_ns != 0
+                                 ? static_cast<int64_t>(display_ns) - xr_frame.wait_start_ns
+                                 : 0;
+        VI_HLE_SetRetracePhaseShift(
+            display_lock_.Update(lead, xr_frame.predicted_display_period, VI_HLE_RetraceIntervalNanos()));
+        const auto state = display_lock_.CurrentState();
+        const auto previous = static_cast<DisplayPhaseLock::State>(lock_state_.exchange(
+            static_cast<uint32_t>(state), std::memory_order_relaxed));
+        if (state != previous) {
+            if (state == DisplayPhaseLock::State::Calibrating) {
+                RT_LOG(RT_TAG_RUNTIME) << "OpenXR: " << display_lock_.RefreshesPerFrame()
+                                       << " refreshes a game frame; finding the display's deadline to lock to"
+                                       << std::endl;
+            } else if (state == DisplayPhaseLock::State::Locked) {
+                RT_LOG(RT_TAG_RUNTIME) << "OpenXR: game frames locked to the display, "
+                                       << display_lock_.RefreshesPerFrame() << " refreshes each, ready "
+                                       << static_cast<double>(display_lock_.TargetLeadNs()) / 1.0e6
+                                       << " ms before their display time" << std::endl;
+            } else {
+                RT_LOG(RT_TAG_RUNTIME) << "OpenXR: game frames no longer locked to the display" << std::endl;
+            }
+        }
+        locked_refreshes_.store(display_lock_.Locked() ? display_lock_.RefreshesPerFrame() : 0,
+                                std::memory_order_relaxed);
+        lock_error_ns_.store(display_lock_.PhaseErrorNs(), std::memory_order_relaxed);
+        lock_shift_ns_.store(display_lock_.ShiftNs(), std::memory_order_relaxed);
+        display_lock_target_ns_.store(display_lock_.TargetLeadNs(), std::memory_order_relaxed);
+        if (lead > 0) {
+            window_lead_ns_.fetch_add(lead, std::memory_order_relaxed);
+            window_leads_.fetch_add(1, std::memory_order_relaxed);
+            if (lead > window_lead_max_ns_.load(std::memory_order_relaxed)) {
+                window_lead_max_ns_.store(lead, std::memory_order_relaxed);
+            }
+            if (lead < window_lead_min_ns_.load(std::memory_order_relaxed)) {
+                window_lead_min_ns_.store(lead, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    // How many refreshes the previous submitted frame was shown for: the step between their display times.
+    void NoteShownRefreshes(const OpenXRFrame& xr_frame) noexcept {
+        const XrTime previous = last_submitted_display_time_;
+        last_submitted_display_time_ = xr_frame.predicted_display_time;
+        if (previous == 0 || xr_frame.predicted_display_period <= 0 || xr_frame.predicted_display_time <= previous) {
+            return;
+        }
+        const int64_t refreshes = (xr_frame.predicted_display_time - previous + xr_frame.predicted_display_period / 2) /
+                                  xr_frame.predicted_display_period;
+        shown_refreshes_[static_cast<size_t>(std::clamp<int64_t>(refreshes, 1, 4) - 1)].fetch_add(
+            1, std::memory_order_relaxed);
+    }
+
+    void ReleaseDisplayLock() noexcept {
+        VI_HLE_SetRetracePhaseShift(0);
+        display_lock_.Reset();
+        last_submitted_display_time_ = 0;
+        locked_refreshes_.store(0, std::memory_order_relaxed);
+        if (lock_state_.exchange(static_cast<uint32_t>(DisplayPhaseLock::State::Off), std::memory_order_relaxed) !=
+            static_cast<uint32_t>(DisplayPhaseLock::State::Off)) {
+            RT_LOG(RT_TAG_RUNTIME) << "OpenXR: game frames no longer locked to the display" << std::endl;
+        }
+    }
+
     void SetInterpolationActive(bool active) noexcept {
         std::lock_guard lock(interpolation_mutex_);
         aurora_set_stereo_frame_interpolation(active && !interpolation_stopping_);
@@ -1881,6 +2079,29 @@ private:
     std::chrono::steady_clock::time_point timing_start_ = std::chrono::steady_clock::now();
     uint32_t timing_submissions_ = 0;
     PFN_xrGetDisplayRefreshRateFB get_display_refresh_rate_ = nullptr;
+    PFN_xrEnumerateDisplayRefreshRatesFB enumerate_display_refresh_rates_ = nullptr;
+    PFN_xrRequestDisplayRefreshRateFB request_display_refresh_rate_ = nullptr;
+    // [vr] refresh_rate: wanted (any thread), and what this session was last asked (pacing thread).
+    static constexpr uint32_t kRefreshNotApplied = UINT32_MAX;
+    std::atomic_uint32_t requested_refresh_hz_{RuntimeConfigFile::VrRefreshRate()};
+    uint32_t refresh_applied_ = kRefreshNotApplied;
+    uint64_t refresh_session_serial_ = 0;
+    bool refresh_changed_ = false;
+    float session_start_hz_ = 0;
+    std::vector<float> supported_refresh_rates_;
+    // The game's VI timeline locked to the display (pacing thread), and what the fpslog and F10 read of it.
+    DisplayPhaseLock display_lock_;
+    XrTime last_submitted_display_time_ = 0;
+    std::atomic_uint32_t locked_refreshes_{0};
+    std::atomic_uint32_t lock_state_{0}; // DisplayPhaseLock::State
+    std::atomic<int64_t> lock_error_ns_{0};
+    std::atomic<int64_t> lock_shift_ns_{0};
+    std::atomic<int64_t> display_lock_target_ns_{0};
+    std::array<std::atomic_uint32_t, 4> shown_refreshes_{};
+    std::atomic<int64_t> window_lead_ns_{0};
+    std::atomic_uint32_t window_leads_{0};
+    std::atomic<int64_t> window_lead_max_ns_{0};
+    std::atomic<int64_t> window_lead_min_ns_{INT64_MAX};
     PFN_xrPerfSettingsSetPerformanceLevelEXT set_performance_level_ = nullptr;
 #if defined(_WIN32)
     using ConvertDisplayTime = XrResult (XRAPI_PTR*)(XrInstance, XrTime, LARGE_INTEGER*);
@@ -2022,6 +2243,22 @@ void OpenXRSetFrameInterpolationFps(uint32_t target) noexcept {
     OpenXRIntegration::Get().SetFrameInterpolationFps(target);
 #else
     (void)target;
+#endif
+}
+
+void OpenXRSetDisplayRefreshRate(uint32_t hz) noexcept {
+#if MKW_OPENXR_GRAPHICS_BACKEND
+    OpenXRIntegration::Get().SetDisplayRefreshRate(hz);
+#else
+    (void)hz;
+#endif
+}
+
+void OpenXRLogPacingWindow(double windowSeconds) noexcept {
+#if MKW_OPENXR_GRAPHICS_BACKEND
+    OpenXRIntegration::Get().LogPacingWindow(windowSeconds);
+#else
+    (void)windowSeconds;
 #endif
 }
 

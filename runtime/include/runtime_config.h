@@ -68,6 +68,7 @@ struct RuntimeUserConfig {
     std::optional<std::string> vrMirrorView;
     std::optional<std::string> vrControllerMode;
     std::optional<uint32_t> vrFrameInterpolationFps;
+    std::optional<uint32_t> vrRefreshRate;
     std::optional<bool> vrFirstPerson;
     std::optional<bool> vrFirstPersonToggleClick;
     std::optional<float> vrFirstPersonUnitsPerMeter;
@@ -400,6 +401,12 @@ inline bool IsSupportedFrameInterpolationFps(uint32_t value) {
     return value == 0 || value == 120 || value == 180;
 }
 
+// [vr] refresh_rate: 0 leaves the display at the rate the headset chose; anything else is asked of the runtime,
+// which takes it only if the headset offers it (72, 80, 90 and 120 Hz on a Quest 3).
+inline bool IsSupportedVrRefreshRate(uint32_t value) {
+    return value == 0 || (value >= 50 && value <= 240);
+}
+
 inline std::optional<std::filesystem::path> ExecutableDirectory() {
 #ifdef _WIN32
     std::wstring buffer(MAX_PATH, L'\0');
@@ -564,6 +571,10 @@ inline void EnsureConfigFile() {
               "controller_mode = \"wii_remote\"\n"
               "# VR interpolation: 0 = Off, 1 = Auto, or 72/90/120 FPS. Live.\n"
               "frame_interpolation_fps = 0\n"
+              "# Headset display refresh rate in Hz, 0 = the headset's own choice.\n"
+              "# At 120 Hz every 60 Hz game frame is shown for exactly two\n"
+              "# refreshes. Meta runtimes only (a Quest 3 offers 72, 80, 90, 120). Live.\n"
+              "refresh_rate = 0\n"
               "render_scale = " MKW_VR_RENDER_SCALE_DEFAULT_TEXT "\n"
               "world_units_per_meter = 500.0\n"
               "hud_distance_meters = 2.0\n"
@@ -909,6 +920,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         // Migrate the initial experimental checkbox to Auto.
         if (const auto legacy = FindConfigValue<bool>(document, "vr", "frame_interpolation"))
             config.vrFrameInterpolationFps = *legacy ? 1u : 0u;
+    }
+    if (auto value = FindConfigValue<uint32_t>(document, "vr", "refresh_rate");
+        value && IsSupportedVrRefreshRate(*value)) {
+        config.vrRefreshRate = *value;
     }
     if (auto value = FindConfigInt(document, "vr", "first_person_hidden_model");
         value && *value >= -1 && *value <= 31) {
@@ -1271,6 +1286,14 @@ inline bool SetVrFrameInterpolationFps(uint32_t value) {
     value = mkw::vr::NormalizeFrameInterpolationFps(value);
     Mutable().vrFrameInterpolationFps = value;
     return WriteSetting("vr", "frame_interpolation_fps", std::to_string(value));
+}
+
+inline bool SetVrRefreshRate(uint32_t value) {
+    if (!IsSupportedVrRefreshRate(value)) {
+        return false;
+    }
+    Mutable().vrRefreshRate = value;
+    return WriteSetting("vr", "refresh_rate", std::to_string(value));
 }
 
 inline bool SetVrFirstPersonRotation(std::string value) {
@@ -1811,6 +1834,10 @@ inline std::string VrControllerMode(std::string fallback = kVrControllerModeDefa
 
 inline uint32_t VrFrameInterpolationFps() {
     return mkw::vr::NormalizeFrameInterpolationFps(Get().vrFrameInterpolationFps.value_or(0));
+}
+
+inline uint32_t VrRefreshRate(uint32_t fallback = 0) {
+    return Get().vrRefreshRate.value_or(fallback);
 }
 
 inline bool DiagnosticsOpenXRLogging(bool fallback = false) {

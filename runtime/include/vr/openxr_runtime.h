@@ -91,6 +91,9 @@ struct OpenXRFrame {
     uint64_t serial = 0;
     XrTime predicted_display_time = 0;
     XrDuration predicted_display_period = 0;
+    // When xrWaitFrame was called, on the steady clock, and how long it blocked (vr/display_phase_lock.h).
+    int64_t wait_start_ns = 0;
+    int64_t wait_ns = 0;
     bool should_render = false;
     bool views_valid = false;
     XrViewStateFlags view_state_flags = 0;

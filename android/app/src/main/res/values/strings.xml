@@ -565,6 +565,9 @@
     <string name="vr_foveation_low">Low</string>
     <string name="vr_foveation_medium">Medium</string>
     <string name="vr_foveation_high">High</string>
+    <string name="vr_refresh_rate">Display refresh rate</string>
+    <string name="vr_refresh_rate_helper">At 120 Hz every game frame is shown for exactly two refreshes, so motion is even without interpolation. At 72 Hz one frame in five is shown twice. 120 Hz costs a little more power.</string>
+    <string name="vr_refresh_rate_default">Headset default</string>
     <string name="vr_interpolation">VR frame interpolation</string>
     <string name="vr_interpolation_helper">Experimental. Renders extra frames between game frames at the headset\'s rate. Needs GPU headroom and adds one game frame of latency.</string>
     <string name="vr_interpolation_off">Off</string>

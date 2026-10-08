@@ -258,6 +258,13 @@ class SettingsPage(
                 read = { INTERPOLATION_FPS.indexOf(vrInterpolationFps(it)) },
                 write = { c, index -> c.setInteger("vr", "frame_interpolation_fps", INTERPOLATION_FPS[index]) },
             )
+            choice(
+                R.string.vr_refresh_rate, R.string.vr_refresh_rate_helper,
+                listOf(activity.getString(R.string.vr_refresh_rate_default), "72 Hz", "80 Hz", "90 Hz", "120 Hz"),
+                read = { REFRESH_RATES.indexOf(it.integer("vr", "refresh_rate") ?: 0L) },
+                write = { c, index -> c.setInteger("vr", "refresh_rate", REFRESH_RATES[index]) },
+                custom = { "${it.integer("vr", "refresh_rate")} Hz" },
+            )
         }
         section(R.string.section_vr_screen) {
             // The immersive window is that screen and always carries the HUD.
@@ -801,6 +808,8 @@ class SettingsPage(
         val FOVEATION_DEFAULT = FOVEATION_LEVELS.indexOf("medium")
         val CONTROLLER_MODES = listOf("wii_remote", "gamepad", "none")
         val INTERPOLATION_FPS = listOf(0L, 1L, 72L, 90L, 120L)
+        // runtime_config.h [vr] refresh_rate; 0 is the headset's own rate.
+        val REFRESH_RATES = listOf(0L, 72L, 80L, 90L, 120L)
         val RESOLUTIONS = listOf(1.0, 1.5, 2.0, 3.0, 4.0)
         val SUPPORTED_RESOLUTIONS = listOf(0.0, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
         const val BLOOM_PATH = 0x10L

@@ -698,9 +698,12 @@ OpenXRFrameStatus OpenXRRuntime::WaitFrame(OpenXRFrame& frame) {
     XrFrameWaitInfo wait_info{XR_TYPE_FRAME_WAIT_INFO};
     XrFrameState state{XR_TYPE_FRAME_STATE};
     const diagnostics::Stopwatch wait_timer;
+    const auto wait_start = std::chrono::steady_clock::now();
     if (!Check(xrWaitFrame(m_session, &wait_info, &state), "xrWaitFrame")) {
         return OpenXRFrameStatus::Error;
     }
+    const int64_t waited_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - wait_start).count();
     diagnostics::OnWaitFrame(wait_timer, state.predictedDisplayTime, state.predictedDisplayPeriod);
 
     frame = {};
@@ -708,6 +711,9 @@ OpenXRFrameStatus OpenXRRuntime::WaitFrame(OpenXRFrame& frame) {
     frame.predicted_display_time = state.predictedDisplayTime;
     frame.predicted_display_period = state.predictedDisplayPeriod;
     frame.should_render = state.shouldRender == XR_TRUE;
+    frame.wait_start_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(wait_start.time_since_epoch()).count();
+    frame.wait_ns = waited_ns;
     m_active_frame_serial = frame.serial;
     m_active_frame_display_time = frame.predicted_display_time;
     m_frame_phase = FramePhase::Waited;

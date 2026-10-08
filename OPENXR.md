@@ -40,6 +40,7 @@ required = false
 mirror_view = "normal"
 controller_mode = "wii_remote"
 frame_interpolation_fps = 0
+refresh_rate = 0
 render_scale = 1.0
 world_units_per_meter = 500.0
 hud_distance_meters = 2.0
@@ -122,6 +123,16 @@ stereo frames. They do not change the headset's physical refresh setting. For VD
 Desktop set to 90 Hz, select Auto or 90. The menu shows both the detected headset rate and the
 rate of newly rendered VR frames, excluding repeated images. Menus and other virtual-screen
 scenes continue at the game's rate; assess interpolation during an immersive race.
+
+**F10 > VR > Display refresh rate** (`[vr] refresh_rate`, Hz; `0`, the default, keeps the rate
+the headset chose) asks the runtime for that refresh through `XR_FB_display_refresh_rate`, so
+only Meta runtimes (the Quest, Quest Link) take it; elsewhere the rate is set in the VR runtime.
+A Quest 3 offers 72, 80, 90 and 120 Hz; the session logs the list and every change, and an
+unoffered rate is logged and ignored. It applies immediately, and the Quest launcher's settings
+page has it too. Without interpolation, 72 Hz shows one game frame in five for two refreshes,
+which reads as a stutter; at 120 Hz every 60 Hz game frame is shown for exactly two. That
+only holds if the game keeps in step with the display (see the display lock below), and the
+headset's compositor then runs twice as often, a little more power for the same app GPU time.
 
 VR interpolation is independent of **Graphics > Race frame interpolation**. The simulation,
 physics, audio and VI remain at 60 Hz. Scene motion is delayed by one game frame (about 16.7 ms)
@@ -801,6 +812,36 @@ rendering. A 50 ms stall repeats the retained layer; cancellation also advances 
 cycle to refresh timing. Once rendering is submitted, the thread calls xrWaitFrame and
 xrBeginFrame, completes backend-specific copy/release work, and ends the frame using the
 packet's original render poses with the current compositor display time.
+
+**Display lock.** When the display's refresh is a whole multiple of the game's VI rate (120 Hz
+for a 60 Hz game), render-first pacing also keeps the game's VI timeline in step with the
+display (`runtime/include/vr/display_phase_lock.h`). The two clocks are independent (a
+retrace is 16.666 ms, two 120 Hz refreshes 16.667 ms), so left alone the moment a frame is
+ready drifts across the compositor's wake-ups, and while it sits near one, the millisecond or
+so the frame's work varies decides whether it makes that refresh or the next: frames are shown
+for one and three refreshes instead of two. The lock measures the lead from the eyes being ready
+(xrWaitFrame is called then) to the display time the runtime grants: the runtime gives the first
+refresh at least a minimum lead away, so the lead always lies within one display period above
+that minimum. On engaging, it sweeps the VI timeline once through a little more than a period
+(about 3 s, during which frames cross the deadline once) to find the minimum, then steers the
+circular mean of the lead to half a period above it, moving the VI timeline at most 100 us a
+retrace (`VI_HLE_SetRetracePhaseShift`). The time xrWaitFrame blocks is no signal: Meta's
+runtime returns at once to a frame this late. The guest only counts retraces, so the game
+itself is unchanged; its frames simply follow the display's clock instead of the host's.
+At 72 or 90 Hz, with interpolation on, or without a running session the lock is released.
+The log reports the sweep and `OpenXR: game frames locked to the display, 2 refreshes each`,
+F10 adds "each shown 2 refreshes" to the headset line, and with the Quest `fpslog` on a line
+every 5 s counts the frames shown for 1, 2, 3 and 4+ refreshes with the lead and the lock's
+target, phase error and shift. On a Quest 3 (Retro Rewind Grand Prix race, player idle, the lock switched
+live in 90-150 s windows), 120 Hz without the lock showed 95.9-97.8% of frames for two refreshes,
+with bursts of up to 40 in 5 s shown for one or three; locked, 99.8-100%, the rest single frames
+around hitches, and the compositor's own markers counted 720 new and 720 repeated refreshes in
+strict alternation over 12 s. The runtime's minimum lead came out between 17 and 19.4 ms at each
+calibration. 72 Hz shows one frame in five for two refreshes by construction. 120 Hz left the app's
+GPU time and the CPU load unchanged and added about 4 points of GPU load (the compositor).
+`mkw_display_phase_lock_tests` checks the lock against a simulated
+compositor: drift alone reproduces uneven frames, and locked from any starting phase every
+frame is shown for two refreshes, also with a runtime that wakes the app every second refresh.
 
 Android Vulkan renders into shared buffers and copies them into newly acquired XR images afterward.
 Both PC bindings acquire images from their non-retained swapchain pair before rendering; Aurora
