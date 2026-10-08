@@ -50,6 +50,7 @@ flat_screen = false
 immersive_window = false
 first_person = false
 first_person_toggle_click = true
+bullet_bill_camera = "inside"
 first_person_seat = "cockpit"
 cockpit_units_per_meter = 100.0
 first_person_units_per_meter = 50.0
@@ -58,6 +59,8 @@ first_person_head_forward_meters = 0.0
 first_person_head_right_meters = 0.0
 first_person_hide_driver = true
 first_person_hidden_model = 0
+body_ik = true
+body_ik_hands_only = false
 first_person_rotation = "yaw_pitch"
 steering_wheel = true
 native_steering_wheel = true
@@ -198,9 +201,9 @@ it is live and can be flipped from the F10 settings bar.
 immersive stereo: the whole race, 3D world and HUD alike, is the game's own picture on the quad, as
 in DolphinXR's Flat Screen mode. The first-person camera, hand steering, the lean-back angle, VR
 frame interpolation and `hud_virtual_screen` shape only the immersive race view, so none of them
-apply while it is on; the right-thumbstick first-person toggle is ignored rather than changing the saved
-setting. It is live, as **F10 → VR → Race view → Flat screen** (the headset panel's VR tab) and the
-Quest launcher's Settings page, and turning it on or off mid-race switches on the next frame through
+apply while it is on; the right-thumbstick camera switch is ignored. It is live, as
+**F10 → VR → Race view → Flat screen** (the headset panel's VR tab) and the Quest launcher's
+Settings page, and turning it on or off mid-race switches on the next frame through
 the presentation policy's safety generation.
 `immersive_window` (default off) is the third race view, between the two: the race keeps its
 immersive stereo view, head tracking and all, but is seen only through a window, with the room
@@ -231,8 +234,10 @@ copies the desktop image made and never performs them, so it keeps drawing in th
 and it leaves out whatever a later clear of the whole color and depth erases. The picture is the
 same with less GPU memory traffic, which a tiled mobile GPU pays for at every split (the "Eye replay
 plan" log line reports each new pass structure).
-`first_person` and the `first_person_*` values are the first-person camera described below. All
-four are live and are also exposed in the F10 settings bar.
+`first_person` (the camera each race starts on), `bullet_bill_camera` and the `first_person_*` values
+are the first-person camera described below, and `body_ik` and `body_ik_hands_only` the
+[character body](#character-body) drawn in its cockpit. All are live and are also exposed in the F10
+settings bar.
 `performance_level` is the level asked of the runtime through `XR_EXT_performance_settings` for
 its CPU and GPU domains: `boost`, `sustained_high`, `sustained_low`, `power_savings`, or
 `default` to leave the runtime's own choice. Standalone headsets clock their cores by this
@@ -279,7 +284,7 @@ Touch controllers. The port is served through KPAD like a Bluetooth remote
 | Left trigger | Z |
 | Left Y | Settings panel (not a Wii button) |
 | Either grip | Takes hold of the wheel (not a Wii button) |
-| Right stick click | First-person camera on / off (not a Wii button) |
+| Right stick click | This race's camera: game / first person (not a Wii button) |
 | Right controller motion and aim | Wii Remote accelerometer and pointer |
 | Left controller motion | Nunchuk accelerometer |
 
@@ -376,14 +381,14 @@ plays one shake instead. With `hand_tracking` off a bare hand presses nothing bu
 A/B → South/East, X/Y → West/North, index triggers → trigger axes, grips → shoulders, thumbsticks
 → sticks (clicks → stick buttons), left menu → Start. Every binding in the F10 controller menu
 applies. Left Y is GameCube Y here, so clicking both thumbsticks together opens the settings panel
-instead. The right thumbstick click on its own still toggles the first-person camera.
+instead. The right thumbstick click on its own still switches the race's camera.
 
 `"none"` makes the controllers nothing to the game, for playing with another controller (a desktop
 gamepad, a USB wheel or a Bluetooth Wii Remote). The virtual gamepad is unplugged, so it takes no
 port and the other controllers keep theirs; the game sees a switch to or from `"none"` as that
 controller disconnecting or connecting. The plugging follows the mode on the game thread, where the
 gamepad is already written, so the pacing thread never waits on SDL's joystick lock for it. The
-controllers still open the settings panel with left Y, point at it and toggle the first-person camera
+controllers still open the settings panel with left Y, point at it and switch the race's camera
 with a right thumbstick click; they press no game button, drive no Wii Remote, cannot take hold of
 the cockpit's wheel, and the game's rumble does not reach them.
 
@@ -462,9 +467,9 @@ the panel is closed or has no place yet, and render-first pacing.
 
 ## The first-person camera
 
-By default the headset sits where Mario Kart's own chase camera sits, and `world_units_per_meter`
-of 500 presents the race as a small diorama on a table. Turning on `first_person` moves the camera
-to the local driver's head instead, at one of two seats:
+With the game's camera the headset sits where Mario Kart's own chase camera sits, and
+`world_units_per_meter` of 500 presents the race as a small diorama on a table. First person moves
+the camera to the local driver's head instead, at one of two seats:
 
 - `first_person_seat = "cockpit"`, the default, sits you at the driver's own eyes, behind the
   steering wheel, at a life-size scale, so the wheel or handlebar is within reach of your hands.
@@ -490,16 +495,37 @@ to the local driver's head instead, at one of two seats:
 
 Both are a matter of taste rather than properties of the game, so the F10 bar exposes them.
 
-**Toggling it from a controller.** Clicking the right thumbstick turns first person on or off
-exactly as the F10 checkbox does, and the choice is saved the same way. It works on the VR
+**Camera modes.** After heurazy's
+[Wiicompiled VR PLUS](https://github.com/heurazy/Wiicompiled_VR-PLUS) fork, a race shows one of
+two cameras, the game's or first person. Each race shows the game's own camera through its intro
+(the course preview, `RaceManager`'s stage 0), so the flyover plays as the game made it, then
+starts on the default camera once the countdown begins: `first_person`, where `true` is first
+person (**F10 → Camera → Default camera**, also the Quest launcher's *Default camera*). During the
+race the camera can be switched for that race only, with the right thumbstick click below or
+**F10 → Camera → This race** (shown during a race, greyed out until the intro is over). That choice
+is kept in memory, never saved, and the next race starts on the default again; outside races and
+during the intro a switch is refused, so it cannot leak into the next race. Each switch logs
+`[mkw-vr] this race's camera: first person` (or `game camera`). `mkw_vr_camera_mode_tests` covers
+these rules.
+
+`bullet_bill_camera` decides what first person shows while you are a Bullet Bill: `"inside"`, the
+default, rides inside the bullet as described below, and `"game"` shows the game's own camera until
+the Bullet Bill ends, then first person again (**F10 → Camera → Bullet Bill**: *Ride inside* or
+*Game camera*; also in the Quest launcher). That override leaves the race's own choice alone, and F10
+notes it under *This race*; a click during it switches that choice, which shows once the Bullet Bill
+ends.
+
+**Switching from a controller.** Clicking the right thumbstick switches the race in progress between
+the game's camera and first person, as *This race* does, and is never saved. It works on the VR
 controllers in either presentation (the right controller gives a short tick), and on any other
 gamepad while VR is running. A click counts on release, and only if the left thumbstick stayed up
 and the settings panel stayed closed throughout, so clicking both thumbsticks to open the panel in
-gamepad mode never toggles the camera. A gamepad whose right thumbstick click is bound to a
+gamepad mode never switches the camera. A gamepad whose right thumbstick click is bound to a
 GameCube control on its port, as a button or in an input expression, keeps it for the game instead.
-Toggled in a menu, the change applies from the next race. `first_person_toggle_click = false`, or
-the F10 checkbox under the camera toggle, turns the click off. `mkw_vr_camera_toggle_tests` covers
-the click rule.
+A click in a menu or during the intro changes nothing and logs one
+`[mkw-vr] right thumbstick click ignored` line. `first_person_toggle_click = false`, or the F10
+checkbox under the camera choices, turns the click off. `mkw_vr_camera_toggle_tests` covers the
+click rule.
 
 The kart is selected through the game's local-screen-to-racer mapping, including online races
 where your racer is not slot zero. First person requires a locally controlled racer; spectating
@@ -545,12 +571,16 @@ nothing, and the log reports how many it has when the mode engages. The F10 bar 
 two toggles, "Hide driver" and "Hide driver and kart", alongside a button that restores every
 first-person default. Both settings touch your own kart
 only, so the other racers are untouched, and the original values are restored when first person
-stops or the race ends. This is the one place the first-person camera modifies the game rather than
-only reading it.
+stops or the race ends. This is the one place the first-person camera modifies the game's state
+rather than only reading it (the [character body](#character-body) rewrites only matrices it puts
+back before gameplay sees them). In the cockpit seat with `body_ik` on, the character body takes
+over the driver instead, and these two settings apply only to drivers it does not draw (Miis and
+unknown models); the F10 toggles and the launcher's row are greyed out then.
 
-In cockpit view, your Bullet Bill keeps its animated arms but hides the body, eyes and rear
-exhaust cone, which otherwise fills the view from inside. The runtime resolves the local racer's
-Killer model and registers its rigid body position arrays with the renderer for that frame.
+With `bullet_bill_camera = "inside"`, in cockpit view, your Bullet Bill keeps its animated arms but
+hides the body, eyes and rear exhaust cone, which otherwise fills the view from inside. The
+runtime resolves the local racer's Killer model and registers its rigid body position arrays
+with the renderer for that frame.
 Only draws at that Bullet Bill's own model-view transform are skipped; opponents sharing the
 model, arm joints, and the separate ground shadow remain visible. The requests are cleared after
 the frame and when cockpit view stops. This changes rendering only, without modifying game assets
@@ -767,7 +797,8 @@ shake); `debug.wiicompiled.inject <n>:flick` plays the same shake with or withou
 mesh where it offers one (`XR_EXT_hand_tracking` and `XR_FB_hand_tracking_mesh`, requested when
 hand steering or tracked hands are on at launch), otherwise procedural gloves that curl with the
 squeeze. A Quest 3 offers that mesh even without the app declaring hand tracking, and the log says
-which is drawn (`[mkw-vr] cockpit hands:`). Both close their fingers towards the palm: the mesh's joints point
+which is drawn (`[mkw-vr] cockpit hands:`); a hand the [character body](#character-body) draws
+gets neither. Both close their fingers towards the palm: the mesh's joints point
 -Z towards the fingertip and +Y out of the back of the hand, so flexion is negative about the
 joint's own X, on both hands. They and the
 separate VR wheel or handlebar travel with the stereo packet in metres in the seated frame, and each
@@ -790,6 +821,63 @@ geometry and the hand-off to the game, and `mkw_vr_hand_tracking_tests` the trac
 (grasp, bare latch, pinch gate, bare-hand buttons, flick and its shake); `gx_fifo_tests` covers the
 per-draw substitution and the overlay geometry, joint skinning included, and `cockpit_gpu_smoke`
 its depth test on a real GPU.
+
+## Character body
+
+Ported from heurazy's [Wiicompiled VR PLUS](https://github.com/heurazy/Wiicompiled_VR-PLUS)
+(GPL-3.0-or-later), whose `docs/BODY-IK.md` describes the original. It applies to the cockpit seat.
+
+With `body_ik = true` (the default; **F10 → Camera → Character body**, the headset panel's Camera
+tab and the Quest launcher's Settings > VR) your own character is drawn around you in the cockpit,
+from the game's own skeleton, mesh and textures: the torso sits in the seat, the arms reach for the
+tracked controllers, and the head is hidden so it never blocks the view. `body_ik_hands_only = true`
+(*Character hands only*) hides the body and arms and keeps only the character's hands, following
+the controllers. Both are live. Nothing is added to the game's data.
+
+It is drawn only while first person is what the race shows, with the cockpit seat, and not while
+you are a Bullet Bill. Standard rigs (both arms' `arm_*1`, `arm_*2` and `wrist_*1` bones, and a head
+bone) are supported. Miis, whose face is a separate model, and skeletons it does not recognise keep
+the previous behaviour: the driver is hidden as `first_person_hide_driver` says, and the VR gloves
+are drawn. King Boo, whose head and body cannot be separated, is always hands only.
+
+**How it is drawn.** One native function wraps `nw4r::g3d::ScnRoot::CalcView` (0x8006FA50,
+registered with `REGISTER_NATIVE_FUNCTION_AS`, which keeps the translated body for the wrapper to
+call). Before the view calculation it rewrites the local driver's world-matrix palette, and only
+that:
+
+- the seated torso is latched once per driver and model, in the kart's own frame, so it stays with
+  the kart and the game's drift, jump and trick animations cannot lift it into the view;
+- the legs keep their native driving and drift articulation relative to that seat, only while both
+  of the driver's animation layers play a driving pose (driving, drift, steering, reverse, wheelie
+  or waiting); tricks, mini-turbo bonuses and celebrations keep the seated legs;
+- each arm is solved with two-bone IK to its controller grip, its length fitted to the reach, its
+  sleeve at 65% of the model's thickness and its hand at half size, placed by one of 24 built-in
+  palm profiles, one per standard character, recorded in heurazy's calibration workshop (a
+  standard rig without a profile, such as a custom character, gets a generic wrist offset);
+- the head, and Toadette's separate hair, collapse at their pivot.
+
+It then re-runs the skinning for those matrices, calls the original `CalcView`, and restores the
+original palette and its attributes, so gameplay, physics, the other racers and network data never
+see them. Being a new native registration, it needs both games retranslated, as
+`Launcher/LocalBuild.ps1` does.
+
+**Hands.** The cockpit draws no VR glove or hand mesh for a hand the character draws, but still
+draws what that hand carries, the held item and its count. Which hands the character drew travels
+with the sealed guest frame (`AuroraCockpitItem::characterHands`, applied to
+`AuroraCockpitHand::characterHand` for the replayed frame), so a glove is hidden on exactly the
+frames whose character draws that hand. The arm follows the controller pose sampled for the game
+frame, while the held item stays on the controller pose of each displayed frame, so in fast motion
+(a throw swing) the item can lead the character's hand by about a frame. A bare tracked hand keeps
+the tracked-hand mesh, and its character arm stays seated.
+
+The seated skeleton is latched once per driver and model, at the first frame the body is drawn
+(normally the end of the race intro, in the waiting pose). A recenter or a settings change keeps it;
+a new race, a driver change or a new kart takes it again. If CalcView runs more than once in a guest
+frame, the pose is solved once and only the palette is set again around each call.
+
+`mkw_vr_body_ik_tests` covers the leg-animation gate, the seated limbs, the profile keys and all 24
+palm profiles, the reach fit, the IK solve, the wrist placement, segment thinning, alignment and
+the rig classification.
 
 ## Presentation policy
 
@@ -1386,6 +1474,8 @@ ends, including mid-frame flushes, so live setting changes cannot invalidate pen
   that race the driver's eye was never calibrated, so the fallback placed the wheel centre about
   13 cm above eye level. Bikes and Quacker, and the PC, are still unvalidated. Hand steering needs
   analog grips (Touch); the simple controller profile cannot grab.
+- The character body and the camera modes are not yet validated in a headset in this port, on the
+  PC or the Quest, and the body's CPU cost on the Quest is not yet measured.
 - The headset settings panel has no laser beam, only the cursor on the panel itself, and text fields
   cannot be typed into without a keyboard.
 - On the PC the immersive window renders the whole eye and only masks it, so it costs what a fully

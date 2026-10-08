@@ -4,10 +4,12 @@
 
 #include "vr/steering_wheel.h"
 #include "vr/mkw_vr_item.h"
+#include "vr/vr_controls.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -580,5 +582,30 @@ bool MkwVRReadSceneView(Mtx34& view) noexcept;
 // Guest-frame inventory snapshot, sampled at the race draw boundary. A
 // generation change invalidates any item retained by a prior race.
 HeldItem MkwVRFirstPersonGetHeldItem() noexcept;
+
+// Camera modes (vr_controls.h). Thread-safe.
+// What the race shows now: the game's camera outside races, through the intro
+// and, with bullet_bill_camera = "game", while the player is a Bullet Bill.
+CameraMode MkwVRGetCameraMode() noexcept;
+// The player's choice for the current race; through the intro, the camera the
+// race will start on.
+CameraMode MkwVRSelectedCameraMode() noexcept;
+// Switches the current race's camera, never saved; the next race starts on
+// [vr] first_person. Refused (false) outside races, during the intro and, for
+// first person, without a single local racer to sit in (split screen, the
+// attract demo, spectating). Call on the game thread: it reads the racer.
+bool MkwVRSetCameraMode(CameraMode mode) noexcept;
+// Whether a switch can show anything now (the same rules, from the last
+// readings); for feedback on other threads, such as the controllers' tick.
+bool MkwVRCameraSwitchAvailable() noexcept;
+// The race draw observer's count of local screens (RaceScene::GetScreenCount).
+void MkwVRFirstPersonObserveRaceScreens(uint32_t local_screens) noexcept;
+bool MkwVRInRace() noexcept;
+bool MkwVRRaceIntroActive() noexcept;
+
+// Character body (character_body_ik.inl): the game's character model draws
+// this hand (0 left, 1 right) for the current frame, so the cockpit draws no
+// VR hand there. Thread-safe.
+bool MkwVRCharacterHandActive(size_t hand) noexcept;
 
 } // namespace mkw::vr

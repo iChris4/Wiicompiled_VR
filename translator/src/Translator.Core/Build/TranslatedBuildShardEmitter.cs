@@ -183,8 +183,28 @@ public static partial class TranslatedBuildShardEmitter
                 WinnerPriority: 0u);
         }
         var rrTraits = new Dictionary<uint, Trait>(BuildRetroTraits(activeBase, baseTraits, retroEntries));
+        // A resolved mod profile can predate a native wrapper added to the
+        // runtime. Native registrations win at runtime even when the wrapper
+        // retains and calls the translated body. Mirror that priority here so
+        // neither static calls nor the indirect table select the old body.
+        foreach (var address in nativeOverrides.Winners)
+        {
+            if (baseTraits.TryGetValue(address, out var nativeTrait))
+                rrTraits[address] = nativeTrait;
+            else
+                rrTraits.Remove(address);
+        }
         foreach (var address in nativeOverrides.RawTranslatedOverrides.Keys)
             rrTraits[address] = baseTraits[address];
+        // Excluded native functions are absent from activeBase, so BuildRetroTraits
+        // cannot recognize their native winner. An older resolved Retro profile
+        // may still list the translated body; never emit it into the immutable
+        // indirect table when the runtime registers a native replacement.
+        foreach (var address in nativeOverrides.TranslationExclusions)
+        {
+            if (!nativeOverrides.RawTranslatedOverrides.ContainsKey(address))
+                rrTraits.Remove(address);
+        }
         var sensitiveTargets = FindProfileSensitiveTargets(baseTraits, rrTraits);
         var sensitiveCallers = activeBase
             .Where(record => record.DirectCalls.Any(sensitiveTargets.Contains))

@@ -85,4 +85,18 @@ LocalPlayerKartRead ReadLocalPlayerKart() noexcept {
     return read;
 }
 
+// The local kart is a Bullet Bill. Killer::Activate (0x8059B7B8) sets bit 27
+// of KartState+0xC, reached through accessor+4, and keeps it set throughout
+// the transformation.
+template <typename GuestMemory>
+bool LocalPlayerInBullet(const LocalPlayerKartRead& player) noexcept {
+    constexpr uint32_t kAccessorStateOffset = 0x4u;
+    constexpr uint32_t kStateFlagsOffset = 0xCu;
+    constexpr uint32_t kStateInBullet = 1u << 27;
+    uint32_t state = 0, flags = 0;
+    return player.failed_step == nullptr && player.accessor != 0 &&
+           GuestMemory::TryRead32(player.accessor + kAccessorStateOffset, state) && state != 0 &&
+           GuestMemory::TryRead32(state + kStateFlagsOffset, flags) && (flags & kStateInBullet) != 0;
+}
+
 } // namespace mkw::vr::detail

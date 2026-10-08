@@ -56,7 +56,10 @@ unsupported scenes appear as a head-locked virtual screen; a validated single-ca
 to immersive stereo rendering. VR is opt-in and falls back to the normal desktop renderer if the
 runtime or headset is unavailable. In first person you sit in the cockpit, where the steering wheel
 or handlebar turns with your steering, and hand steering by heurazy lets you grab it with the
-tracked controllers and turn it. On a Quest the hands can follow the headset's own hand tracking.
+tracked controllers and turn it. Your own character sits there with you, its arms following the
+controllers (character body by heurazy). Each race shows the game's camera through its intro, then
+your default camera; a right thumbstick click switches that race between the game's camera and
+first person. On a Quest the hands can follow the headset's own hand tracking.
 See [`OPENXR.md`](OPENXR.md) for setup, configuration, and the current limitations.
 
 **Music ducking.** 
@@ -269,7 +272,9 @@ All translated output is verified against real hardware behavior and most import
 - **[OpenXR](https://www.khronos.org/openxr/)** - the Khronos cross-platform API used by the
   experimental VR renderer.
 - **heurazy** - the VR cockpit's turning steering wheel and hand steering, ported from
-  **[mario-kart-wii-VR-port](https://github.com/heurazy/mario-kart-wii-VR-port)** (GPL-3.0).
+  **[mario-kart-wii-VR-port](https://github.com/heurazy/mario-kart-wii-VR-port)** (GPL-3.0), and
+  the cockpit's character body and the camera modes, ported from
+  **[Wiicompiled VR PLUS](https://github.com/heurazy/Wiicompiled_VR-PLUS)** (GPL-3.0).
 - **[Dolphin Emulator](https://github.com/dolphin-emu/dolphin)** - an invaluable reference for Wii
   hardware behavior during development, plus the source of the free DSP coefficient ROM and the
   unmodified default WiiConnect24 bootstrap tree bundled with the runtime.

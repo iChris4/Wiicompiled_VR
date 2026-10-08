@@ -79,6 +79,9 @@ struct RuntimeUserConfig {
     std::optional<int32_t> vrFirstPersonHiddenModel;
     std::optional<std::string> vrFirstPersonRotation;
     std::optional<std::string> vrFirstPersonSeat;
+    std::optional<std::string> vrBulletBillCamera;
+    std::optional<bool> vrBodyIk;
+    std::optional<bool> vrBodyIkHandsOnly;
     std::optional<float> vrCockpitUnitsPerMeter;
     std::optional<bool> vrSteeringWheel;
     std::optional<bool> vrNativeSteeringWheel;
@@ -251,6 +254,15 @@ inline constexpr bool kVrNativeSteeringWheelDefault = true;
 inline constexpr bool kVrPlaceholderSteeringWheelDefault = false;
 inline constexpr bool kVrHandSteeringDefault = true;
 inline constexpr const char* kVrCockpitItemHandDefault = "left";
+// In the cockpit seat the player's own character is drawn around the view,
+// its arms following the tracked controllers and its head hidden (character
+// body IK, by heurazy). hands_only keeps just the character's hands. Off, the
+// driver is hidden as first_person_hide_driver says and gloves are drawn.
+inline constexpr bool kVrBodyIkDefault = true;
+inline constexpr bool kVrBodyIkHandsOnlyDefault = false;
+// While the player is a Bullet Bill, first person either rides inside the
+// bullet ("inside") or shows the game's own camera until it ends ("game").
+inline constexpr const char* kVrBulletBillCameraDefault = "inside";
 // A quick swing of the item hand forward or back throws the item that way.
 inline constexpr bool kVrCockpitItemThrowDefault = true;
 // The game hides karts and objects its own camera cannot see, which a head
@@ -604,13 +616,18 @@ inline void EnsureConfigFile() {
               "# On the Quest, both eyes of a race frame are drawn in one render pass\n"
               "# (Vulkan multiview) instead of one after the other. Changeable live.\n"
               "# multiview = true\n"
-              "# Put the camera at the Player 1 driver's head instead of behind\n"
-              "# the kart, with the horizon kept level. Changeable live from the\n"
-              "# F10 menu, and only during a single-screen race.\n"
+              "# The camera each race starts with once its intro is over: true puts\n"
+              "# it at the Player 1 driver's head instead of behind the kart. The\n"
+              "# intro always shows the game's own camera. Only during a\n"
+              "# single-screen race.\n"
               "first_person = false\n"
               "# Clicking the right thumbstick, on the VR controllers or on any\n"
-              "# gamepad while VR runs, toggles first_person as the F10 checkbox does.\n"
+              "# gamepad while VR runs, switches the current race between first\n"
+              "# person and the game's camera; the next race starts as above.\n"
               "first_person_toggle_click = true\n"
+              "# While you are a Bullet Bill in first person: \"inside\" rides in\n"
+              "# the bullet, \"game\" shows the game's camera until it ends.\n"
+              "bullet_bill_camera = \"inside\"\n"
               "# Where the head sits: \"cockpit\" puts it at the driver's own eyes,\n"
               "# behind the steering wheel, at a life-size scale that allows for\n"
               "# the character's height, so the wheel is within reach.\n"
@@ -632,6 +649,12 @@ inline void EnsureConfigFile() {
               "# 0 is the driver, which is the usual choice. -1 hides every\n"
               "# model of your kart, the vehicle included.\n"
               "first_person_hidden_model = 0\n"
+              "# Character body (by heurazy): in the cockpit seat your character is\n"
+              "# drawn around you, its arms following the controllers and its head\n"
+              "# hidden; it replaces the two settings above. body_ik_hands_only\n"
+              "# keeps just its hands. Miis and unknown characters keep gloves.\n"
+              "body_ik = true\n"
+              "body_ik_hands_only = false\n"
               "# Where the view's orientation comes from: \"yaw\" levels the\n"
               "# horizon, \"yaw_pitch\" adds the kart's climb but no roll, and\n"
               "# \"full\" takes the kart's whole orientation so the view banks.\n"
@@ -868,6 +891,12 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.vrMultiview = FindConfigValue<bool>(document, "vr", "multiview");
     config.vrFirstPerson = FindConfigValue<bool>(document, "vr", "first_person");
     config.vrFirstPersonToggleClick = FindConfigValue<bool>(document, "vr", "first_person_toggle_click");
+    if (auto value = FindConfigValue<std::string>(document, "vr", "bullet_bill_camera");
+        value && (*value == "inside" || *value == "game")) {
+        config.vrBulletBillCamera = *value;
+    }
+    config.vrBodyIk = FindConfigValue<bool>(document, "vr", "body_ik");
+    config.vrBodyIkHandsOnly = FindConfigValue<bool>(document, "vr", "body_ik_hands_only");
     if (auto value = FindConfigFloat(document, "vr", "first_person_units_per_meter");
         value && *value >= 1.0f && *value <= 10000.0f) {
         config.vrFirstPersonUnitsPerMeter = *value;
@@ -1215,6 +1244,22 @@ inline bool SetVrFirstPerson(bool value) {
 inline bool SetVrFirstPersonToggleClick(bool value) {
     Mutable().vrFirstPersonToggleClick = value;
     return WriteSetting("vr", "first_person_toggle_click", value ? "true" : "false");
+}
+
+inline bool SetVrBulletBillCamera(const std::string& value) {
+    if (value != "inside" && value != "game") return false;
+    Mutable().vrBulletBillCamera = value;
+    return WriteSetting("vr", "bullet_bill_camera", "\"" + value + "\"");
+}
+
+inline bool SetVrBodyIk(bool value) {
+    Mutable().vrBodyIk = value;
+    return WriteSetting("vr", "body_ik", value ? "true" : "false");
+}
+
+inline bool SetVrBodyIkHandsOnly(bool value) {
+    Mutable().vrBodyIkHandsOnly = value;
+    return WriteSetting("vr", "body_ik_hands_only", value ? "true" : "false");
 }
 
 inline bool SetVrFirstPersonUnitsPerMeter(float value) {
@@ -1789,6 +1834,18 @@ inline bool VrFirstPerson(bool fallback = false) {
 
 inline bool VrFirstPersonToggleClick(bool fallback = true) {
     return Get().vrFirstPersonToggleClick.value_or(fallback);
+}
+
+inline std::string VrBulletBillCamera() {
+    return Get().vrBulletBillCamera.value_or(kVrBulletBillCameraDefault);
+}
+
+inline bool VrBodyIk(bool fallback = kVrBodyIkDefault) {
+    return Get().vrBodyIk.value_or(fallback);
+}
+
+inline bool VrBodyIkHandsOnly(bool fallback = kVrBodyIkHandsOnlyDefault) {
+    return Get().vrBodyIkHandsOnly.value_or(fallback);
 }
 
 inline float VrFirstPersonUnitsPerMeter(float fallback = kVrFirstPersonUnitsPerMeterDefault) {

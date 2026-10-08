@@ -6,19 +6,25 @@
 
 #include "gx_native_wheel.h"
 #include "hle/dvd_vr_asset.h"
+#include "hle_stubs.h"
 #include "gx_model_visibility.h"
 #include "memory.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "vr/body_hand_profiles.h"
+#include "vr/body_ik.h"
 #include "vr/cockpit_stabilizer.h"
 #include "vr/bullet_bill_model.h"
+#include "vr/mkw_vr_instrumentation.h"
 #include "vr/mkw_vr_policy.h"
 #include "vr/mkw_vr_player.h"
 #include "vr/native_wheel_mesh.h"
 #include "vr/openxr_driving.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -27,6 +33,11 @@
 extern "C" void func_805A6C58(CpuContext* context);
 extern "C" void func_8056A470(CpuContext* context);
 extern "C" void func_8056A580(CpuContext* context);
+// nw4r::g3d::ScnRoot::CalcView, wrapped by the character body
+// (character_body_ik.inl), and the skinning pass ScnMdlSimple's posture
+// calculation runs (see kScnMdlSkinByteCodeOffset).
+extern "C" void func_8006FA50(CpuContext* context);
+extern "C" void func_80067F70(CpuContext* context);
 
 namespace mkw::vr {
 namespace {
@@ -181,6 +192,60 @@ constexpr uint32_t kScnMdlWorldMtxArrayOffset = 0xECu;
 // ResVtxPosData: data offset +8, component count +0x14 (1 = XYZ), type +0x18,
 // fraction bits +0x1C, stride +0x1D, count +0x1E, bounds min +0x20, max +0x2C.
 constexpr uint32_t kMdl0Magic = 0x4D444C30u;
+
+// The character body (character_body_ik.inl), ported from heurazy's
+// Wiicompiled_VR-PLUS fork (GPL-3.0-or-later).
+//
+// nw4r::g3d::ScnMdlSimple::ScnMdlSmpl_CalcPosture (0x80070EC0) skins a model by
+// calling 0x80067F70 with the world matrix array (+0xEC), its attribute words
+// (+0xF0), the address of a copy of the ResMdl handle (+0xE8) and the skinning
+// byte code (+0x10C), skipping the call when the byte code is null.
+constexpr uint32_t kScnMdlResMdlOffset = 0xE8u;
+constexpr uint32_t kScnMdlWorldMtxAttribOffset = 0xF0u;
+constexpr uint32_t kScnMdlSkinByteCodeOffset = 0x10Cu;
+// MDL0 section offsets follow the header: revisions 8 and 9 have 11 sections
+// (ResMdlInfo at +0x40), revision 11 has 14 and its name at +0x48 (ResMdlInfo
+// at +0x4C). Section 1 (+0x14) is the bone dictionary. ResMdlInfo+0x24 is the
+// offset of the matrix-to-node table, whose first word counts the world
+// matrices. ResNodeData: name offset +0x8, mtxId +0x10 (kResNodeMtxIdOffset),
+// parent offset +0x5C, all relative to the node.
+constexpr uint32_t kMdl0RevisionOffset = 0x8u;
+constexpr uint32_t kMdl0BoneDictionaryOffset = 0x14u;
+constexpr uint32_t kMdl0VertexPositionsOffset = 0x18u;
+constexpr uint32_t kMdl0Rev11NameOffset = 0x48u;
+constexpr uint32_t kMdl0Rev11InfoOffset = 0x4Cu;
+constexpr uint32_t kMdl0InfoOffset = 0x40u;
+constexpr uint32_t kResMdlInfoMtxTableOffset = 0x24u;
+constexpr uint32_t kResNodeNameOffset = 0x8u;
+constexpr uint32_t kResNodeParentOffset = 0x5Cu;
+constexpr uint32_t kResNodeBytes = 0xD0u;
+// heurazy's DriverController reads: a Mii driver keeps its separate face model
+// at +0x100, and the u16s at +0xF4 and +0xFA are the animation IDs of the
+// driver's two animation layers (body_ik::IsDrivingLegAnimation).
+constexpr uint32_t kDriverMiiFaceOffset = 0x100u;
+constexpr uint32_t kDriverAnimationOffset = 0xF4u;
+constexpr uint32_t kDriverSecondAnimationOffset = 0xFAu;
+// Kart::KartMove (mkw decompilation): mDriftState is the s16 at +0xFC. The s16
+// at +0x10C is the mini-turbo countdown (Movement::Boost at +0x108 holds it at
+// +4, per heurazy).
+constexpr uint32_t kMovementDriftStateOffset = 0xFCu;
+constexpr uint32_t kMovementMiniTurboOffset = 0x10Cu;
+// KartState's flag bitfield (mkw decompilation: RKBitField<160> from +0x4,
+// flag n in word n/32, bit n%32, as kKartStateInBullet below). Flag 54 (word
+// +0x8, bit 22) is set while a trick animates the kart: heurazy reads it
+// through Movement+0x258, the KartJump, whose accessor is the kart's own.
+constexpr uint32_t kKartStateTrickFlagsOffset = 0x8u;
+constexpr uint32_t kKartStateTrickAnimating = 1u << 22;
+
+// System::RaceManager::spInstance (mkw decompilation symbols: StaticR .bss+0x50,
+// next to RaceConfig's at 0x809BD728). RaceManager::stage, the u32 at +0x28:
+// 0 is the course preview (vr_controls.h RaceIntroOver).
+constexpr uint32_t kRaceManagerInstanceAddress = 0x809BD730u;
+constexpr uint32_t kRaceManagerStageOffset = 0x28u;
+// Frames the stage may stay unreadable before the intro is let go anyway, so a
+// wrong address cannot keep first person away for the whole race.
+constexpr uint32_t kRaceStageUnreadableFrames = 300;
+
 // Frames of published wheel copies that no draw took before the separate VR
 // wheel stands in; it steps aside again as soon as a draw takes one.
 constexpr uint32_t kNativeWheelUnmatchedFrames = 30;
@@ -313,7 +378,28 @@ struct ModelVisibilityState {
 };
 
 struct FirstPersonState {
+    // First person may run at all (not Flat Screen); race_camera says whether
+    // the race in progress shows it.
     bool enabled = false;
+    // Camera modes (vr_controls.h).
+    RaceCameraChoice race_camera{};
+    // [vr] first_person: the camera a race starts on once its intro is over.
+    bool default_first_person = false;
+    // [vr] bullet_bill_camera = "game".
+    bool bullet_game_camera = false;
+    bool bullet_active = false;
+    // Last Update's verdict, to notice first person starting again.
+    bool first_person_active = false;
+    uint32_t stage_unread_frames = 0;
+    // Whether a switch to first person can show anything in this race: one
+    // local screen (the race draw observer reports it) and a local racer the
+    // seat can be read from, last seen at the intro's end, in first person, or
+    // when a switch was asked for.
+    uint32_t local_screens = 1;
+    bool local_racer_seen = false;
+    // Character body (character_body_ik.inl).
+    bool body_ik = RuntimeConfigFile::kVrBodyIkDefault;
+    bool body_ik_hands_only = RuntimeConfigFile::kVrBodyIkHandsOnlyDefault;
     FirstPersonHeadOffsets offsets{};
     float units_per_meter = RuntimeConfigFile::kVrFirstPersonUnitsPerMeterDefault;
     FirstPersonRotation rotation = FirstPersonRotation::YawOnly;
@@ -389,6 +475,13 @@ std::mutex g_mutex;
 FirstPersonState g_state;
 ModelVisibilityState g_visibility;
 std::atomic_bool g_recenter_requested{false};
+// Character body (character_body_ik.inl): bit 0/1 the left/right hand is the
+// character's own this frame, bit 2 the body is drawn. Read by the pacing
+// thread without the lock.
+std::atomic<unsigned> g_character_hands{0};
+bool CanShowCharacterBodyLocked() noexcept;
+void ResetCharacterBodyLocked() noexcept;
+void InvalidateCharacterPoseLocked() noexcept;
 
 // Walks to the player's ModelsVisibility, or zero when the race is not up.
 uint32_t ResolveModelsVisibility(uint32_t accessor) noexcept {
@@ -480,9 +573,11 @@ void RestoreModelVisibilityLocked() noexcept {
 }
 
 // Applied at the draw boundary: the kart update has set these for the frame and
-// nothing has drawn yet.
+// nothing has drawn yet. The character body is the driver, so it keeps every
+// model drawn; the decision has to be made before ScnRoot gathers its draw
+// lists, as a driver hidden by then stays hidden for the frame.
 void ApplyModelVisibilityLocked() noexcept {
-    if (!g_visibility.hide_driver) {
+    if (!g_visibility.hide_driver || CanShowCharacterBodyLocked()) {
         RestoreModelVisibilityLocked();
         return;
     }
@@ -644,8 +739,14 @@ bool ReadEyeBounds(uint32_t driver, detail::Vec3& minimum, detail::Vec3& maximum
 // The seated eye in the vehicle's own frame, in its units. Measured once from
 // the driver's head bone while the kart drives straight and undamaged, then
 // frozen until the driver/race changes or a recenter; the bind pose serves
-// until the first calibration completes.
-bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye) noexcept {
+// until the first calibration completes. `observe` false only reads: the
+// character body asks for the frame's seat before the seal, which samples it.
+bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye, bool observe = true) noexcept {
+    const auto SampleEye = [observe](const std::array<float, 3>& measured, bool safe) {
+        if (observe) {
+            g_state.seated_eye.Observe(measured, safe, true);
+        }
+    };
     const uint32_t driver = LocalDriver(kart.accessor);
     if (g_state.seated_driver != driver) {
         g_state.seated_driver = driver;
@@ -662,7 +763,7 @@ bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye) noexcept
     if (driver == 0 || !ReadGuestPointer(driver + kDriverBonesOffset, bones) ||
         !Memory::Contains(bones, kDriverBoneCount * kDriverBoneRecordBytes) ||
         !ReadGuestMtx34(driver + kDriverPlacementOffset, placement)) {
-        g_state.seated_eye.Observe({}, false, true);
+        SampleEye({}, false);
         if (driver != 0 && g_state.seated_eye.valid) {
             eye = g_state.seated_eye.value;
             return true;
@@ -714,7 +815,7 @@ bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye) noexcept
                 if (measured_eye) {
                     observed = true;
                     const bool calibrating = !g_state.seated_eye.valid || g_state.seated_eye.recalibrating;
-                    g_state.seated_eye.Observe(measured, safe, true);
+                    SampleEye(measured, safe);
                     if (calibrating && g_state.seated_eye.valid && !g_state.seated_eye.recalibrating) {
                         g_state.cockpit_forward.reset();
                         g_state.cockpit_height.reset();
@@ -725,10 +826,10 @@ bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye) noexcept
                                                << std::endl;
                     }
                 } else {
-                    g_state.seated_eye.Observe({}, false, true);
+                    SampleEye({}, false);
                 }
             } else {
-                g_state.seated_eye.Observe({}, false, true);
+                SampleEye({}, false);
             }
             if (g_state.seated_eye.valid) {
                 eye = g_state.seated_eye.value;
@@ -752,7 +853,7 @@ bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye) noexcept
     } catch (const Memory::AccessViolation&) {
     }
     if (!observed) {
-        g_state.seated_eye.Observe({}, false, true);
+        SampleEye({}, false);
     }
     if (driver != 0 && g_state.seated_eye.valid) {
         eye = g_state.seated_eye.value;
@@ -1070,7 +1171,7 @@ void LatchCockpitLocked(uint64_t guest_frame_index) noexcept {
 
 // At the seal, from the scene camera the frame was drawn with.
 bool ComputeCockpitAnchorLocked(const Mtx34& view_from_world, const KartPoseRead& kart, const Mtx34& pose,
-                                FirstPersonAnchor& out, const char*& failed_step) noexcept {
+                                FirstPersonAnchor& out, const char*& failed_step, bool observe_eye = true) noexcept {
     const auto& latch = g_state.cockpit;
     if (!latch.valid || latch.body != kart.body) {
         failed_step = "cockpit seat (the vehicle was not read at the race draw boundary)";
@@ -1078,7 +1179,7 @@ bool ComputeCockpitAnchorLocked(const Mtx34& view_from_world, const KartPoseRead
     }
     const float base_units = g_state.cockpit_units_per_meter;
     std::array<float, 3> eye{0.0f, 1.1f * base_units, 0.0f};
-    if (!ReadDriverEye(kart, eye)) {
+    if (!ReadDriverEye(kart, eye, observe_eye)) {
         eye = {0.0f, 1.1f * base_units, 0.0f};
         // KartDriverDispParams: the character's seat height and depth here.
         uint32_t settings = 0, seat = 0;
@@ -1349,15 +1450,23 @@ void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
                                                                : FirstPersonRotation::YawOnly;
     // Flat Screen mode shows the race on the menu screen through the game's own
     // camera, where a hidden driver would only be missing from the kart.
-    MkwVRFirstPersonConfigure(RuntimeConfigFile::VrFirstPerson(false) &&
-                                  !RuntimeConfigFile::VrFlatScreen(),
-                              offsets, units_per_meter, rotation);
+    // Otherwise each race decides, from its intro and [vr] first_person
+    // (vr_controls.h RaceCameraChoice).
+    MkwVRFirstPersonConfigure(!RuntimeConfigFile::VrFlatScreen(), offsets, units_per_meter, rotation);
     MkwVRPolicySetFirstPersonUnitsPerMeter(units_per_meter);
     const bool cockpit = RuntimeConfigFile::VrFirstPersonSeat() != "custom";
     const float cockpit_units = RuntimeConfigFile::VrCockpitUnitsPerMeter();
     {
         // Same lock the guest thread applies these under.
         std::lock_guard lock(g_mutex);
+        g_state.default_first_person = RuntimeConfigFile::VrFirstPerson(false);
+        g_state.bullet_game_camera = RuntimeConfigFile::VrBulletBillCamera() == "game";
+        g_state.body_ik = RuntimeConfigFile::VrBodyIk();
+        g_state.body_ik_hands_only = RuntimeConfigFile::VrBodyIkHandsOnly();
+        // The next CalcView poses the body under the new settings; the seated
+        // skeleton stays latched (re-latching here would take whatever pose
+        // the driver happens to be in).
+        InvalidateCharacterPoseLocked();
         g_visibility.hide_driver = RuntimeConfigFile::VrFirstPersonHideDriver();
         g_visibility.hidden_model = RuntimeConfigFile::VrFirstPersonHiddenModel();
         const FirstPersonSeat seat = cockpit ? FirstPersonSeat::Cockpit : FirstPersonSeat::Custom;
@@ -1388,6 +1497,13 @@ void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
 void MkwVRFirstPersonReset() noexcept {
     std::lock_guard lock(g_mutex);
     RestoreModelVisibilityLocked();
+    // Race entry and exit: the next race starts from its intro again.
+    g_state.race_camera.Reset();
+    g_state.bullet_active = false;
+    g_state.first_person_active = false;
+    g_state.stage_unread_frames = 0;
+    g_state.local_racer_seen = false;
+    ResetCharacterBodyLocked();
     g_visibility.logged = false;
     g_visibility.logged_models = false;
     g_visibility.logged_range = false;
@@ -1428,14 +1544,70 @@ bool MkwVRReadSceneView(Mtx34& view) noexcept {
 
 void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_address) noexcept {
     std::lock_guard lock(g_mutex);
+    // The character body's ScnRoot::CalcView wrapper latches the frame before
+    // the race draw observer gets here. A second call for the same frame must
+    // not run the comfort filters again or drop the wheel copies, hidden arrays
+    // and item already prepared for it.
+    if (g_state.armed && g_state.armed_frame == guest_frame_index &&
+        g_state.camera_address == race_camera_address) {
+        return;
+    }
     g_state.held_item = {};
     g_state.held_item.race_generation = g_state.race_generation;
     DropHiddenModelsLocked();
     if (g_recenter_requested.exchange(false, std::memory_order_acq_rel)) {
+        // The character body's seated skeleton is kart-local and its wrists
+        // controller-relative, so a recenter leaves both as they are.
         g_state.seated_eye.Recalibrate();
     }
     g_state.camera_address = race_camera_address;
-    if (!g_state.enabled) {
+
+    // The race's intro shows the game's own camera; the configured default
+    // takes over once RaceManager leaves the course preview.
+    if (g_state.race_camera.IntroPending()) {
+        uint32_t manager = 0, stage = 0;
+        bool stage_valid = ReadGuestPointer(kRaceManagerInstanceAddress, manager) &&
+                           Memory::TryRead32(manager + kRaceManagerStageOffset, stage);
+        if (!stage_valid && ++g_state.stage_unread_frames >= kRaceStageUnreadableFrames) {
+            RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] race stage unreadable at 0x" << std::hex
+                                   << kRaceManagerInstanceAddress << "+0x" << kRaceManagerStageOffset << std::dec
+                                   << " for " << kRaceStageUnreadableFrames
+                                   << " frames; ending the race intro without it" << std::endl;
+            stage_valid = true;
+            stage = 1;
+        }
+        if (g_state.race_camera.Observe(stage_valid, stage, g_state.default_first_person)) {
+            g_state.local_racer_seen = detail::ReadLocalPlayerKart<Memory>().failed_step == nullptr;
+            RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] race intro over (stage " << stage << "): camera = "
+                                   << (g_state.race_camera.Selected() == CameraMode::FirstPerson ? "first person"
+                                                                                                 : "game")
+                                   << (g_state.local_screens == 1 && g_state.local_racer_seen
+                                           ? ""
+                                           : " (first person cannot show: no single local racer)")
+                                   << std::endl;
+        }
+    } else {
+        g_state.race_camera.Observe(false, 0, g_state.default_first_person);
+    }
+    // The player and the Bullet Bill state are only needed for first person.
+    const bool wants_first_person =
+        g_state.enabled && g_state.race_camera.Effective(false) == CameraMode::FirstPerson;
+    detail::LocalPlayerKartRead player{};
+    player.failed_step = "first person not selected";
+    bool bullet = false;
+    if (wants_first_person) {
+        player = detail::ReadLocalPlayerKart<Memory>();
+        bullet = detail::LocalPlayerInBullet<Memory>(player);
+    }
+    if (wants_first_person && bullet != g_state.bullet_active && g_state.bullet_game_camera) {
+        RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] Bullet Bill: "
+                               << (bullet ? "game camera until it ends" : "back to first person") << std::endl;
+    }
+    g_state.bullet_active = bullet;
+    if (!wants_first_person || g_state.race_camera.Effective(g_state.bullet_game_camera && bullet) !=
+                                   CameraMode::FirstPerson) {
+        g_state.first_person_active = false;
+        g_character_hands.store(0, std::memory_order_release);
         g_state.anchor = {};
         g_state.hold_frames = 0;
         g_state.armed = false;
@@ -1444,10 +1616,18 @@ void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_add
         RestoreModelVisibilityLocked();
         return;
     }
-    const auto player = detail::ReadLocalPlayerKart<Memory>();
+    if (!g_state.first_person_active) {
+        // First person starting (the intro over, a click, a Bullet Bill gone):
+        // the comfort filter starts afresh instead of from where it stopped.
+        g_state.first_person_active = true;
+        g_state.stabilizer = {};
+        g_state.stabilized_frame = 0;
+    }
+    g_state.local_racer_seen = player.failed_step == nullptr;
     if (player.failed_step != nullptr || player.accessor != g_state.player_kart.accessor) {
         // Do not carry a held anchor or hidden models across an ownership
         // change, including entering spectator mode or an online roster reset.
+        ResetCharacterBodyLocked();
         RestoreModelVisibilityLocked();
         g_state.anchor = {};
         g_state.hold_frames = 0;
@@ -1569,5 +1749,60 @@ HeldItem MkwVRFirstPersonGetHeldItem() noexcept {
     std::lock_guard lock(g_mutex);
     return g_state.held_item;
 }
+
+CameraMode MkwVRGetCameraMode() noexcept {
+    std::lock_guard lock(g_mutex);
+    if (!g_state.enabled || !g_state.race_camera.InRace()) {
+        return CameraMode::Game;
+    }
+    return g_state.race_camera.Effective(g_state.bullet_game_camera && g_state.bullet_active);
+}
+
+CameraMode MkwVRSelectedCameraMode() noexcept {
+    std::lock_guard lock(g_mutex);
+    // Through the intro, the camera the race will start on.
+    if (g_state.race_camera.IntroPending()) {
+        return g_state.default_first_person ? CameraMode::FirstPerson : CameraMode::Game;
+    }
+    return g_state.race_camera.Selected();
+}
+
+bool MkwVRSetCameraMode(CameraMode mode) noexcept {
+    std::lock_guard lock(g_mutex);
+    if (mode == CameraMode::FirstPerson && g_state.race_camera.InRace() && !g_state.race_camera.IntroPending()) {
+        // Asked for on the game thread: look again rather than trust a reading
+        // from the intro's end.
+        g_state.local_racer_seen = detail::ReadLocalPlayerKart<Memory>().failed_step == nullptr;
+        if (g_state.local_screens != 1 || !g_state.local_racer_seen) {
+            return false;
+        }
+    }
+    return g_state.race_camera.Select(mode);
+}
+
+bool MkwVRCameraSwitchAvailable() noexcept {
+    std::lock_guard lock(g_mutex);
+    return g_state.enabled && g_state.race_camera.InRace() && !g_state.race_camera.IntroPending() &&
+           g_state.local_screens == 1 && g_state.local_racer_seen;
+}
+
+void MkwVRFirstPersonObserveRaceScreens(uint32_t local_screens) noexcept {
+    std::lock_guard lock(g_mutex);
+    g_state.local_screens = local_screens;
+}
+
+bool MkwVRInRace() noexcept {
+    std::lock_guard lock(g_mutex);
+    return g_state.race_camera.InRace();
+}
+
+bool MkwVRRaceIntroActive() noexcept {
+    std::lock_guard lock(g_mutex);
+    return g_state.race_camera.InRace() && g_state.race_camera.IntroPending();
+}
+
+// The character body: CharacterBodyCalcView and the rig it poses.
+#include "character_body_ik.inl"
+REGISTER_NATIVE_FUNCTION_AS(0x8006FA50, CharacterBodyCalcView, "nw4r::g3d::ScnRoot::CalcView character body IK");
 
 } // namespace mkw::vr

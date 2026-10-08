@@ -178,6 +178,47 @@ void TestUnavailableGuestData() {
     Check(Resolve().failed_step != nullptr, "an unreadable local accessor fails");
 }
 
+// KartState+0xC bit 27, reached through accessor+4, marks a Bullet Bill.
+void TestBulletBill() {
+    const auto in_bullet = [](const mkw::vr::detail::LocalPlayerKartRead& player) {
+        return mkw::vr::detail::LocalPlayerInBullet<GuestMemory>(player);
+    };
+    constexpr uint32_t kState = 0x81400000u;
+    MakeRace(5);
+    const auto local = Resolve();
+    GuestMemory::Write32(local.accessor + 4, kState);
+    GuestMemory::Write32(kState + 0xC, 0);
+    Check(!in_bullet(local), "a normal kart is not a Bullet Bill");
+    GuestMemory::Write32(kState + 0xC, 1u << 27);
+    Check(in_bullet(local), "the local kart's Bullet Bill flag is read");
+    GuestMemory::Write32(kState + 0xC, 0xFFFFFFFFu);
+    Check(in_bullet(local), "other state flags do not hide the Bullet Bill");
+    GuestMemory::Write32(kState + 0xC, ~(1u << 27));
+    Check(!in_bullet(local), "other state flags are not a Bullet Bill");
+    GuestMemory::Write32(kState + 0xC, 0);
+    Check(!in_bullet(local), "the Bullet Bill ends when its flag clears");
+
+    GuestMemory::Write32(kState + 0xC, 1u << 27);
+    auto failed = local;
+    failed.failed_step = "local kart accessor";
+    Check(!in_bullet(failed), "a failed kart read is never a Bullet Bill");
+    // Physical address 0 is MEM1, so low addresses read back: the null guards
+    // must not depend on a fault. Address 0x4 holds a Bullet Bill's state and
+    // 0xC a set flag, which a read through a null pointer would find.
+    auto no_accessor = local;
+    no_accessor.accessor = 0;
+    GuestMemory::Write32(0x4u, kState);
+    Check(!in_bullet(no_accessor), "a missing accessor is never a Bullet Bill");
+    GuestMemory::fault_address = kState + 0xC;
+    Check(!in_bullet(local), "an unreadable state is never a Bullet Bill");
+    GuestMemory::fault_address = 0;
+    GuestMemory::Write32(local.accessor + 4, 0);
+    GuestMemory::Write32(0xCu, 1u << 27);
+    Check(!in_bullet(local), "a null state pointer is never a Bullet Bill");
+    GuestMemory::bytes.erase(local.accessor + 4);
+    Check(!in_bullet(local), "an unreadable accessor is never a Bullet Bill");
+}
+
 } // namespace
 
 int main() {
@@ -187,5 +228,6 @@ int main() {
     TestNoOpponentFallback();
     TestInvalidMapping();
     TestUnavailableGuestData();
+    TestBulletBill();
     return g_failures == 0 ? 0 : 1;
 }

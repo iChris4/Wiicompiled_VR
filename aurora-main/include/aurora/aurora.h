@@ -131,6 +131,10 @@ typedef struct {
   // The hand-tracking joints below are valid: the hand is drawn from them
   // instead of curling from squeeze at seatFromGrip.
   bool jointsValid;
+  // The game's own character model draws this hand (character body), so no
+  // hand is drawn here; anything the hand carries still is. Aurora sets it for
+  // each replayed frame from that frame's AuroraCockpitItem.characterHands.
+  bool characterHand;
   float squeeze;
   float seatFromGrip[12];
   // XR_EXT_hand_tracking joints in XR_HAND_JOINT_* order, each a row-major 3x4
@@ -154,13 +158,17 @@ typedef struct {
 } AuroraCockpit;
 
 // Inventory from the same guest frame as the scene. hand: 0 left, 1 right,
-// 2 off. A zero-initialised value has no item.
+// 2 off. A zero-initialised value has no item. characterHands: the hands the
+// game's character model drew in that frame (bit 0 left, bit 1 right; the
+// character body), which the cockpit then does not draw (AuroraCockpitHand
+// characterHand is set from it for the replayed frame).
 typedef struct {
   uint64_t raceGeneration;
   uint8_t id;
   uint8_t count;
   uint8_t hand;
   bool valid;
+  uint8_t characterHands;
 } AuroraCockpitItem;
 
 typedef struct {

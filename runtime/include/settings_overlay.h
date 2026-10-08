@@ -16,8 +16,9 @@ void AdvancePresentedFrame() noexcept;
 // converted with the world scale currently in effect, so switching the
 // first-person camera on or off has to repeat it.
 void RefreshVrHudVirtualScreen() noexcept;
-// Flips the first-person camera exactly as its F10 checkbox does, on the game
-// thread at the next frame. Callable from any thread (the VR controllers'
+// Switches the race in progress between first person and the game's camera,
+// as F10 > Camera > This race does, on the game thread at the next frame; the
+// default camera is unchanged. Callable from any thread (the VR controllers'
 // right-thumbstick click).
 void RequestFirstPersonToggle() noexcept;
 // Put host controllers back to a neutral state before the process ends.

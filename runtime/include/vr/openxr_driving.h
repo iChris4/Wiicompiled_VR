@@ -47,9 +47,21 @@ struct DrivingHand {
     hand_tracking::Source source = hand_tracking::Source::None;
     float grasp = 0.0f;
     bool pinch = false;
+    // seat_from_grip is a located controller grip this frame, whether or not
+    // the cockpit draws the hand: what the character body's arm reaches for.
+    // A bare or hand-driven hand has none.
+    bool grip_valid = false;
 };
 
 struct DrivingSnapshot {
+    // When the pacing thread published it (steady clock, ns), so the guest can
+    // tell a fresh pose from one left over after the cockpit stopped updating.
+    uint64_t published_ns = 0;
+    // FirstPersonAnchor::vehicle_identity the poses were mapped for.
+    uint64_t vehicle_identity = 0;
+    // The headset in the seated frame, for the character body's lean.
+    bool head_tracked = false;
+    std::array<float, 12> seat_from_head{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
     // The first-person cockpit is engaged and the controllers are mapped into it.
     bool cockpit_active = false;
     // Hand steering is on: a squeezed grip near the wheel takes hold of it.

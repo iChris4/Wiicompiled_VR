@@ -471,7 +471,7 @@
     <string name="about_app_name">WiiCompiled OpenXR VR</string>
     <string name="about_app_summary">Mario Kart Wii recompiled to native code, with an OpenXR renderer, running on this headset. No game code and no game data come with it: each game is built from the disc you own.</string>
     <string name="about_credit_vr">Meta Quest port and the OpenXR VR renderer by iChris4.</string>
-    <string name="about_credit_hand_steering">The cockpit\'s turning steering wheel and hand steering by heurazy, from mario-kart-wii-VR-port (GPL v3).</string>
+    <string name="about_credit_hand_steering">The cockpit\'s turning steering wheel and hand steering by heurazy, from mario-kart-wii-VR-port (GPL v3), and the cockpit\'s character body and the camera modes, from heurazy\'s Wiicompiled VR PLUS (GPL v3).</string>
     <string name="about_credit_wiicompiled">WiiCompiled, the static recompilation this is built on, by patchzyy and the static recompilation community.</string>
     <string name="about_credit_retro_rewind">Retro Rewind by ZPL and team, the mod distribution this app can download and play.</string>
     <string name="about_credit_wheel_wizard">Wheel Wizard by Patchzy and WantToBeeMe, the PC launcher this panel is modelled on.</string>
@@ -487,7 +487,7 @@
     <string name="about_licence_text">GNU General Public License v3. Not affiliated with, endorsed by, or associated with Nintendo. Mario Kart Wii is a trademark of Nintendo.</string>
     <string name="about_kit">Game kit</string>
     <string name="about_credit_title_vr">Meta Quest and VR</string>
-    <string name="about_credit_title_hand_steering">Steering wheel and hand steering</string>
+    <string name="about_credit_title_hand_steering">Cockpit, character body and camera modes</string>
     <string name="about_credit_title_wiicompiled">WiiCompiled</string>
     <string name="about_credit_title_retro_rewind">Retro Rewind</string>
     <string name="about_credit_title_wheel_wizard">Wheel Wizard</string>
@@ -515,17 +515,21 @@
     <string name="vr_race_view_immersive">Immersive</string>
     <string name="vr_race_view_window">Immersive window</string>
     <string name="vr_race_view_flat">Flat screen</string>
-    <string name="vr_camera">Camera</string>
-    <string name="vr_camera_helper">Ride behind the kart like the game, or sit in the driver\'s seat.</string>
-    <string name="vr_camera_chase">Chase camera</string>
+    <string name="vr_camera">Default camera</string>
+    <string name="vr_camera_helper">The camera each race starts on once its intro, which always shows the game\'s camera, is over: ride behind the kart like the game, or sit in the driver\'s seat. Clicking the right thumbstick switches the race in progress; the next race starts on this one again.</string>
+    <string name="vr_camera_chase">Game camera</string>
     <string name="vr_camera_first_person">First person</string>
+    <string name="vr_bullet_bill">Bullet Bill</string>
+    <string name="vr_bullet_bill_helper">While you are a Bullet Bill in first person: ride inside the bullet, or watch through the game\'s camera until it ends.</string>
+    <string name="vr_bullet_bill_inside">Ride inside</string>
+    <string name="vr_bullet_bill_game">Game camera</string>
     <string name="vr_rotation">Follow kart rotation</string>
     <string name="vr_rotation_helper">In first person, follow turning only (the comfortable choice), turning and climbing, or all kart rotation including banking.</string>
     <string name="vr_rotation_yaw">Turning only</string>
     <string name="vr_rotation_yaw_pitch">Turning + pitch</string>
     <string name="vr_rotation_full">Full rotation</string>
     <string name="vr_hide">Hide in first person</string>
-    <string name="vr_hide_helper">Your driver sits where your eyes are. Other racers are never hidden.</string>
+    <string name="vr_hide_helper">Your driver sits where your eyes are. Other racers are never hidden. In the cockpit the character body replaces this; Miis and unknown characters still use it.</string>
     <string name="vr_hide_nothing">Nothing</string>
     <string name="vr_hide_driver">Driver</string>
     <string name="vr_hide_driver_and_kart">Driver and kart</string>
@@ -533,6 +537,10 @@
     <string name="vr_seat_helper">The cockpit puts you at the driver\'s eyes, life-size, with the steering wheel or handlebar turning within reach. Custom uses the head offsets from the in-headset settings.</string>
     <string name="vr_seat_cockpit">Cockpit</string>
     <string name="vr_seat_custom">Custom</string>
+    <string name="vr_body_ik">Character body</string>
+    <string name="vr_body_ik_helper">In the cockpit, your own character is drawn around you: its body sits in the seat, its arms follow the controllers and its head is hidden. Its hands replace the VR gloves, still holding your item. Not while you are a Bullet Bill. Miis and unknown characters keep the gloves and the driver hiding above; King Boo shows only his hands. Character body by heurazy.</string>
+    <string name="vr_body_ik_hands_only">Character hands only</string>
+    <string name="vr_body_ik_hands_only_helper">Hides the character\'s body and arms and keeps only its own hands, following the controllers.</string>
     <string name="vr_placeholder_wheel">Placeholder wheel or handlebar</string>
     <string name="vr_placeholder_wheel_helper">In the cockpit, draws a separate VR steering wheel (karts) or handlebar (bikes) whenever the vehicle\'s own is not the one turning, as in the race\'s opening pan. Off, you only see the vehicle\'s own.</string>
     <string name="vr_hand_steering">Hand steering</string>
@@ -545,7 +553,7 @@
     <string name="vr_cockpit_item_throw">Throw the item by swinging</string>
     <string name="vr_cockpit_item_throw_helper">With that hand off the wheel, swing it quickly forward to throw the item ahead of the kart, or back to throw it behind, as the stick and item button would. Swinging while you hold the item button throws the item you are trailing.</string>
     <string name="vr_hand_tracking">Tracked hands</string>
-    <string name="vr_hand_tracking_helper">The cockpit hands follow your own. Holding the controllers, the fingers follow their touch sensors; put one down and the cameras track that hand at once. Put the controllers down to drive with bare hands: close a hand on the wheel to hold it, which also holds the gas; pinch with a free hand to use an item; flick your hands up for a trick; pinch with your left palm facing you to pause. In menus, a right pinch is A. Choose Automatic drift. Needs hand tracking on in the headset\'s settings.</string>
+    <string name="vr_hand_tracking_helper">The cockpit hands follow your own. Holding the controllers, the fingers follow their touch sensors; put one down and the cameras track that hand at once. Put the controllers down to drive with bare hands: close a hand on the wheel to hold it, which also holds the gas; pinch with a free hand to use an item; flick your hands up for a trick; pinch with your left palm facing you to pause. In menus, a right pinch is A. Choose Automatic drift. With Character body on, a hand holding a controller in the cockpit is your character\'s own, so the fingers follow only bare hands. Needs hand tracking on in the headset\'s settings.</string>
     <string name="vr_lean_back">Lean back angle</string>
     <string name="vr_lean_back_helper">Tilts the race view back for playing reclined. 0 applies no tilt.</string>
 

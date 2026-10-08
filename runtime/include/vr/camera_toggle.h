@@ -2,9 +2,9 @@
 
 #pragma once
 
-// The right thumbstick click that toggles the first-person camera, on the VR
-// controllers and on any gamepad while VR runs (F10 > VR >
-// first_person_toggle_click). Kept free of OpenXR and SDL so it is tested
+// The right thumbstick click that switches the race in progress between first
+// person and the game's camera, on the VR controllers and on any gamepad while
+// VR runs (F10 > VR > first_person_toggle_click). Kept free of OpenXR and SDL so it is tested
 // headlessly (tests/vr_camera_toggle_tests.cpp).
 
 namespace mkw::vr {

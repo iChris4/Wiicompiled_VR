@@ -140,6 +140,16 @@ void PublishObservedCamera(uint64_t frame, uint32_t address) noexcept {
 
 } // namespace
 
+void MkwVRFirstPersonUpdateForCurrentFrame() noexcept {
+    const uint64_t frame = GuestFrame();
+    // The same frame index and camera the ScnMgrRace::Draw observer below
+    // passes, so its own Update call for the frame finds it already latched.
+    const uint32_t camera = FirstCamera(frame);
+    if (camera != 0) {
+        MkwVRFirstPersonUpdate(frame, camera);
+    }
+}
+
 void MkwVRInstrumentationInitialize() noexcept {
     MkwVRPolicySetAvailableBindings(
         MkwVRBindingSceneState | MkwVRBindingRaceCamera |
@@ -183,6 +193,7 @@ extern "C" void MkwVRObserveTranslatedFunctionEntry(uint32_t address,
         const uint32_t screen_count = RaceScreenCount();
         LogRaceEvidenceIfChanged(frame, screen_count, camera_count);
         PublishRaceScene(frame, screen_count);
+        MkwVRFirstPersonObserveRaceScreens(screen_count);
         // Every kart and camera has been updated for this frame and none of
         // the frame's draws have been issued yet, so the values behind these
         // pointers are exactly the ones those draws will use.

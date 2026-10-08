@@ -1074,15 +1074,20 @@ void OpenXRInput::Sync(XrTime predicted_display_time, const OpenXRPointerScreen&
         OpenXRSetSettingsPanelOpen(open);
     }
 
-    // A clean right-thumbstick click toggles the first-person camera. It fires
-    // on release, so the two-thumbstick panel chord never toggles it, and
-    // never while the panel has the controllers.
+    // A clean right-thumbstick click switches the race in progress between
+    // first person and the game's camera. It fires on release, so the
+    // two-thumbstick panel chord never switches it, and never while the panel
+    // has the controllers. The tick answers only a click that can switch: not
+    // in menus, during the race's intro, in Flat Screen or without a single
+    // local racer.
     if (m_first_person_click.Update(hands[1].thumbstick_click, hands[0].thumbstick_click,
                                     panel.open || panel.withheld) &&
         RuntimeConfigFile::VrFirstPersonToggleClick()) {
         settings_overlay::RequestFirstPersonToggle();
-        constexpr XrDuration kToggleTickNs = 20'000'000;
-        ApplyHaptic(1, 0.35f, kToggleTickNs);
+        if (MkwVRCameraSwitchAvailable()) {
+            constexpr XrDuration kToggleTickNs = 20'000'000;
+            ApplyHaptic(1, 0.35f, kToggleTickNs);
+        }
     }
 
     // The cockpit's wheel before the game reads the controllers: a held wheel
@@ -1416,6 +1421,7 @@ void OpenXRInput::UpdateDriving(XrTime display_time, const driving::SeatFrame& s
 
     DrivingSnapshot snapshot{};
     snapshot.cockpit_active = true;
+    snapshot.vehicle_identity = anchor.vehicle_identity;
     snapshot.hand_steering = hand_steering;
     snapshot.bike = anchor.bike;
     // A separate wheel only when asked for and the vehicle's own is not the one
@@ -1450,6 +1456,18 @@ void OpenXRInput::UpdateDriving(XrTime display_time, const driving::SeatFrame& s
 
     constexpr XrSpaceLocationFlags kPoseValid =
         XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    // The headset in the seated frame, which the character body leans with;
+    // nothing else reads it, so it is only located for the body.
+    XrSpaceLocation head_location{XR_TYPE_SPACE_LOCATION};
+    if (RuntimeConfigFile::VrBodyIk() &&
+        XR_SUCCEEDED(xrLocateSpace(m_runtime->ViewSpace(), m_runtime->AppSpace(), display_time, &head_location)) &&
+        (head_location.locationFlags & kPoseValid) == kPoseValid) {
+        const auto& pose = head_location.pose;
+        snapshot.head_tracked = true;
+        snapshot.seat_from_head = driving::SeatFromApp(seat, {pose.position.x, pose.position.y, pose.position.z},
+                                                       {pose.orientation.x, pose.orientation.y,
+                                                        pose.orientation.z, pose.orientation.w});
+    }
     const bool hand_tracking_on = RuntimeConfigFile::VrHandTracking();
     // The wheel's own tracking grace (SteeringWheel::Update clamps it the same way).
     const float grace = driving::IsFinite(tuning.trackingGrace) ? std::clamp(tuning.trackingGrace, 0.05f, 0.5f)
@@ -1496,6 +1514,9 @@ void OpenXRInput::UpdateDriving(XrTime display_time, const driving::SeatFrame& s
         const auto item_hand = RuntimeConfigFile::VrCockpitItemHand();
         const bool displays_item = item_hand == (hand == 0 ? "left" : "right");
         out.tracked = (hand_steering || displays_item) && (tracked || joints);
+        // Shown or not, a located controller grip is what the character
+        // body's arm reaches for.
+        out.grip_valid = tracked;
         out.held = false;
         out.squeeze = squeeze;
         out.seat_from_grip = seat_from_grip;

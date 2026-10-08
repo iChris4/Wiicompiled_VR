@@ -155,7 +155,23 @@ constexpr std::array<const char*, 4> kVrFoveationLabels{"Off", "Low", "Medium", 
 static_assert(kVrFoveationLabels.size() == RuntimeConfigFile::kVrFoveationLevels.size());
 int g_vrFoveation = static_cast<int>(RuntimeConfigFile::VrFoveationLevelIndex(RuntimeConfigFile::VrFoveation()));
 #endif
+// [vr] first_person: the camera each race starts on once its intro is over. The
+// camera of the race in progress is mkw_vr_first_person.cpp's and never saved.
 bool g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson(false);
+// Menu labels for the race cameras, index-matched to mkw::vr::CameraMode.
+constexpr std::array<const char*, 2> kVrCameraModeLabels{"Game camera", "First person"};
+static_assert(static_cast<int>(mkw::vr::CameraMode::Game) == 0);
+static_assert(static_cast<int>(mkw::vr::CameraMode::FirstPerson) == 1);
+// [vr] bullet_bill_camera spellings and menu labels, index-matched; an
+// unrecognised value reads as the default, "inside", as in the runtime.
+constexpr std::array<const char*, 2> kVrBulletBillCameraNames{"inside", "game"};
+constexpr std::array<const char*, 2> kVrBulletBillCameraLabels{"Ride inside", "Game camera"};
+int VrBulletBillCameraIndex(std::string_view value) {
+    return value == kVrBulletBillCameraNames[1] ? 1 : 0;
+}
+int g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::VrBulletBillCamera());
+bool g_vrBodyIk = RuntimeConfigFile::VrBodyIk();
+bool g_vrBodyIkHandsOnly = RuntimeConfigFile::VrBodyIkHandsOnly();
 bool g_vrFirstPersonToggleClick = RuntimeConfigFile::VrFirstPersonToggleClick();
 // Set from any thread by the right-thumbstick click, applied on the game thread.
 std::atomic<bool> g_firstPersonToggleRequested{false};
@@ -1276,6 +1292,8 @@ void DrawVrSteeringWheelSettings() {
                         "hand on the wheel to hold it, which also holds the gas; pinch with a free hand "
                         "to use an item; flick your hands up for a trick; pinch with your left palm "
                         "facing you to pause. In menus, a right pinch is A. Choose Automatic drift. "
+                        "With Character body on, a hand holding a controller in the cockpit is your "
+                        "character's own, so the fingers follow only bare hands. "
                         "Needs hand tracking on in the headset's settings."
                       : "The cockpit hands follow your own, from the controllers' touch sensors or, "
                         "with the controllers put down, the headset's cameras. This session started "
@@ -1654,6 +1672,11 @@ void DrawVrSettings() {
     }
 }
 
+// For the log lines of a race camera change.
+const char* CameraModeLogName(mkw::vr::CameraMode mode) {
+    return mode == mkw::vr::CameraMode::FirstPerson ? "first person" : "game camera";
+}
+
 // The first-person camera and its cockpit's steering wheel: the F10 bar's Camera menu and the
 // headset panel's Camera tab.
 void DrawVrCameraSettings() {
@@ -1662,21 +1685,72 @@ void DrawVrCameraSettings() {
         ImGui::TextDisabled("Race view (under VR) is Flat screen: these apply to the immersive views.");
     }
     ImGui::BeginDisabled(g_vrFlatScreen);
-    if (ImGui::Checkbox("First-person camera", &g_vrFirstPerson)) {
+    int defaultCamera = g_vrFirstPerson ? 1 : 0;
+    if (ImGui::Combo("Default camera", &defaultCamera, kVrCameraModeLabels.data(),
+                     static_cast<int>(kVrCameraModeLabels.size()))) {
+        g_vrFirstPerson = defaultCamera == static_cast<int>(mkw::vr::CameraMode::FirstPerson);
         RuntimeConfigFile::SetVrFirstPerson(g_vrFirstPerson);
         mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Also toggled by clicking the right thumbstick, on the VR controllers or on a gamepad.");
+        ImGui::SetTooltip(
+            "Each race shows the game's own camera during its intro, then starts on this one. "
+            "First person moves the camera to the Player 1 driver's head instead of riding "
+            "behind the kart. Applies during a single-screen race; menus and split-screen are "
+            "unaffected.");
     }
-    if (ImGui::Checkbox("Right thumbstick click toggles it", &g_vrFirstPersonToggleClick)) {
+    // The race in progress: switched here or by the click below, never saved, and
+    // only once the intro is over, which is why it is shown greyed out until then.
+    if (mkw::vr::MkwVRInRace()) {
+        const bool intro = mkw::vr::MkwVRRaceIntroActive();
+        // Split screen, the attract demo and spectating have no single local
+        // racer to sit in, and Flat Screen shows no first person at all.
+        const bool switchable = mkw::vr::MkwVRCameraSwitchAvailable();
+        const mkw::vr::CameraMode selected = mkw::vr::MkwVRSelectedCameraMode();
+        int raceCamera = static_cast<int>(selected);
+        ImGui::BeginDisabled(intro || !switchable);
+        if (ImGui::Combo(intro            ? "This race (after the intro)###VrRaceCamera"
+                         : g_vrFlatScreen ? "This race (not in Flat Screen)###VrRaceCamera"
+                         : !switchable    ? "This race (needs a single local racer)###VrRaceCamera"
+                                          : "This race###VrRaceCamera",
+                         &raceCamera, kVrCameraModeLabels.data(),
+                         static_cast<int>(kVrCameraModeLabels.size()))) {
+            const auto mode = static_cast<mkw::vr::CameraMode>(raceCamera);
+            if (mkw::vr::MkwVRSetCameraMode(mode)) {
+                RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] this race's camera: " << CameraModeLogName(mode)
+                                       << " (settings)" << std::endl;
+            }
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip(
+                "The camera of the race in progress, until it ends; it is not saved, and the next "
+                "race starts on the default camera again. The intro always shows the game's camera.");
+        }
+        if (!g_vrFlatScreen && !intro && selected == mkw::vr::CameraMode::FirstPerson && g_vrBulletBillCamera == 1 &&
+            mkw::vr::MkwVRGetCameraMode() == mkw::vr::CameraMode::Game) {
+            ImGui::TextDisabled("Game camera while you are a Bullet Bill.");
+        }
+    }
+    if (ImGui::Checkbox("Right thumbstick click switches camera", &g_vrFirstPersonToggleClick)) {
         RuntimeConfigFile::SetVrFirstPersonToggleClick(g_vrFirstPersonToggleClick);
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Moves the camera to the Player 1 driver's head and keeps the horizon level, "
-            "instead of riding behind the kart. Applies during a single-screen race; menus "
-            "and split-screen are unaffected.");
+            "Clicking the right thumbstick, on the VR controllers or on a gamepad, switches this "
+            "race's camera between the game's and first person once the intro is over. The next "
+            "race starts on the default camera again.");
+    }
+    if (ImGui::Combo("Bullet Bill", &g_vrBulletBillCamera, kVrBulletBillCameraLabels.data(),
+                     static_cast<int>(kVrBulletBillCameraLabels.size()))) {
+        RuntimeConfigFile::SetVrBulletBillCamera(
+            kVrBulletBillCameraNames[static_cast<size_t>(g_vrBulletBillCamera)]);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "While you are a Bullet Bill in first person: Ride inside keeps the view inside the "
+            "bullet, Game camera shows the game's own camera until it ends.");
     }
     constexpr std::array<const char*, 2> kSeatLabels{"Cockpit", "Custom"};
     if (ImGui::Combo("Seat", &g_vrFirstPersonSeat, kSeatLabels.data(), static_cast<int>(kSeatLabels.size()))) {
@@ -1751,8 +1825,45 @@ void DrawVrCameraSettings() {
             "kart's whole orientation, banking included. The headset always adds free look "
             "on top.");
     }
+    // The character body belongs to the cockpit seat, like the steering wheel.
+    const bool cockpitSeat = g_vrFirstPersonSeat == 0;
+    ImGui::BeginDisabled(!cockpitSeat);
+    if (ImGui::Checkbox("Character body (by heurazy)", &g_vrBodyIk)) {
+        RuntimeConfigFile::SetVrBodyIk(g_vrBodyIk);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "In the cockpit seat, your own character is drawn around you: its body sits in the "
+            "seat, its arms follow the controllers and its head is hidden, so it never blocks the "
+            "view. Its hands replace the VR gloves; the item you hold is still shown. Not while "
+            "you are a Bullet Bill. Miis and unknown characters keep the driver hiding below and "
+            "the gloves; King Boo shows only his hands. Character body IK by heurazy.");
+    }
+    ImGui::BeginDisabled(!g_vrBodyIk);
+    if (ImGui::Checkbox("Character hands only", &g_vrBodyIkHandsOnly)) {
+        RuntimeConfigFile::SetVrBodyIkHandsOnly(g_vrBodyIkHandsOnly);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "Hides the character's body and arms and keeps only its own hands, following the "
+            "controllers.");
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
     // Two presentations of one setting: which models go, or none at all.
     // Ticking either replaces the other, and unticking both shows everything.
+    // In the cockpit the character body takes the driver over instead.
+    const bool bodyReplacesHiding = g_vrBodyIk && cockpitSeat;
+    const auto hidingTooltip = [bodyReplacesHiding](const char* text) {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", bodyReplacesHiding
+                                        ? "The character body replaces this in the cockpit seat. Miis "
+                                          "and unknown characters, which it does not draw, still use it."
+                                        : text);
+        }
+    };
     const auto applyHiding = [](bool enabled, int model) {
         g_vrFirstPersonHideDriver = enabled;
         if (enabled) {
@@ -1764,20 +1875,17 @@ void DrawVrCameraSettings() {
     };
     bool hideDriver = g_vrFirstPersonHideDriver && g_vrFirstPersonHiddenModel >= 0;
     bool hideDriverAndKart = g_vrFirstPersonHideDriver && g_vrFirstPersonHiddenModel < 0;
+    ImGui::BeginDisabled(bodyReplacesHiding);
     if (ImGui::Checkbox("Hide driver", &hideDriver)) {
         applyHiding(hideDriver, RuntimeConfigFile::kVrFirstPersonHiddenModelDefault);
     }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Removes your character and leaves the kart around you. Their head would "
-            "otherwise be where your eyes are. Other racers are unaffected.");
-    }
+    hidingTooltip("Removes your character and leaves the kart around you. Their head would "
+                  "otherwise be where your eyes are. Other racers are unaffected.");
     if (ImGui::Checkbox("Hide driver and kart", &hideDriverAndKart)) {
         applyHiding(hideDriverAndKart, -1);
     }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Removes the vehicle as well, leaving nothing of your own kart.");
-    }
+    hidingTooltip("Removes the vehicle as well, leaving nothing of your own kart.");
+    ImGui::EndDisabled();
     DrawVrSteeringWheelSettings();
     ImGui::Separator();
     ImGui::Text("Object culling");
@@ -1830,23 +1938,40 @@ void DrawVrCameraSettings() {
         RuntimeConfigFile::SetVrFirstPersonHeadRightMeters(g_vrFirstPersonHeadRight);
         RuntimeConfigFile::SetVrFirstPersonHideDriver(g_vrFirstPersonHideDriver);
         RuntimeConfigFile::SetVrFirstPersonHiddenModel(g_vrFirstPersonHiddenModel);
+        g_vrBodyIk = RuntimeConfigFile::kVrBodyIkDefault;
+        g_vrBodyIkHandsOnly = RuntimeConfigFile::kVrBodyIkHandsOnlyDefault;
+        g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::kVrBulletBillCameraDefault);
+        RuntimeConfigFile::SetVrBodyIk(g_vrBodyIk);
+        RuntimeConfigFile::SetVrBodyIkHandsOnly(g_vrBodyIkHandsOnly);
+        RuntimeConfigFile::SetVrBulletBillCamera(RuntimeConfigFile::kVrBulletBillCameraDefault);
         mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
         ApplyVrHudVirtualScreen();
     }
     ImGui::EndDisabled();
 }
 
-// The right-thumbstick click: flips the first-person camera exactly as its
-// checkbox does, so it does nothing in Flat Screen mode either (it does in the
-// immersive window, which is still the stereo race view). Game thread.
+// The right-thumbstick click: switches the race in progress between the game's
+// camera and first person, as the "This race" choice does, never saving it; the
+// next race starts on the default camera. It does nothing in Flat Screen mode
+// (it does in the immersive window, which is still the stereo race view), and
+// is refused outside races and during the intro, with one log line per click.
+// Game thread.
 void ToggleFirstPersonCamera() {
     if (g_vrFlatScreen) {
         return;
     }
-    g_vrFirstPerson = !g_vrFirstPerson;
-    RuntimeConfigFile::SetVrFirstPerson(g_vrFirstPerson);
-    mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
-    RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] first-person camera " << (g_vrFirstPerson ? "on" : "off")
+    // From the player's choice, not what is shown: a game-camera Bullet Bill
+    // shows the game's camera over a first-person choice.
+    const mkw::vr::CameraMode mode = mkw::vr::NextCameraMode(mkw::vr::MkwVRSelectedCameraMode());
+    if (!mkw::vr::MkwVRSetCameraMode(mode)) {
+        RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] right thumbstick click ignored: "
+                               << (!mkw::vr::MkwVRInRace()        ? "not in a race"
+                                   : mkw::vr::MkwVRRaceIntroActive() ? "the race intro is not over"
+                                                                     : "no single local racer to sit in")
+                               << std::endl;
+        return;
+    }
+    RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] this race's camera: " << CameraModeLogName(mode)
                            << " (right thumbstick click)" << std::endl;
 }
 

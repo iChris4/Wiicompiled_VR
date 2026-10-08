@@ -61,7 +61,7 @@ struct OpenXRPointerScreen {
 // None: the virtual joystick is unplugged, so the controllers hold no port and
 // another controller (a desktop gamepad, a Bluetooth remote) plays in their
 // place. The game sees them idle, the way it does while the settings panel has
-// them; they still open the panel and toggle the first-person camera.
+// them; they still open the panel and switch the race's camera.
 //
 // Both are bound for the Oculus Touch profile; khr/simple_controller gets
 // select/menu and the poses so an unknown runtime still offers something.
@@ -87,8 +87,9 @@ struct OpenXRPointerScreen {
 // gesture, so the manifest's hand-tracking permission changes nothing for
 // players who leave it off.
 //
-// A right-thumbstick click on its own toggles the first-person camera, as its
-// F10 checkbox does (first_person_toggle_click).
+// A right-thumbstick click on its own switches the race in progress between
+// first person and the game's camera, as F10 > Camera > This race does
+// (first_person_toggle_click).
 //
 // Left Y (both thumbsticks clicked together as a gamepad) opens the in-headset
 // settings panel (openxr_settings_panel.h). While it is open, and until every

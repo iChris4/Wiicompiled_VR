@@ -83,5 +83,34 @@ int main() {
     Require(VrRaceViewOf(Parse("[vr]\nimmersive_window = true\n")) == VrRaceView::ImmersiveWindow);
     Require(VrRaceViewOf(Parse("[vr]\nflat_screen = true\nimmersive_window = true\n")) == VrRaceView::FlatScreen);
     Require(VrRaceViewOf(Parse("[vr]\nflat_screen = false\nimmersive_window = false\n")) == VrRaceView::Immersive);
+
+    // [vr] body_ik and body_ik_hands_only: the player's own character in the
+    // cockpit seat, or only its hands. The getters read the user's file, so
+    // their fallback is checked the way they apply it.
+    Require(RuntimeConfigFile::kVrBodyIkDefault);
+    Require(!RuntimeConfigFile::kVrBodyIkHandsOnlyDefault);
+    Require(Parse("[vr]\nbody_ik = true\n").vrBodyIk == true);
+    Require(Parse("[vr]\nbody_ik = false\n").vrBodyIk == false);
+    Require(!Parse("[vr]\n").vrBodyIk.has_value());
+    Require(!Parse("[vr]\nbody_ik = 1\n").vrBodyIk.has_value());
+    Require(Parse("[vr]\n").vrBodyIk.value_or(RuntimeConfigFile::kVrBodyIkDefault));
+    Require(Parse("[vr]\nbody_ik_hands_only = true\n").vrBodyIkHandsOnly == true);
+    Require(Parse("[vr]\nbody_ik_hands_only = false\n").vrBodyIkHandsOnly == false);
+    Require(!Parse("[vr]\n").vrBodyIkHandsOnly.has_value());
+    Require(!Parse("[vr]\nbody_ik_hands_only = \"yes\"\n").vrBodyIkHandsOnly.has_value());
+    Require(!Parse("[vr]\n").vrBodyIkHandsOnly.value_or(RuntimeConfigFile::kVrBodyIkHandsOnlyDefault));
+
+    // [vr] bullet_bill_camera: ride inside the bullet, or show the game's camera.
+    Require(std::string_view(RuntimeConfigFile::kVrBulletBillCameraDefault) == "inside");
+    for (std::string_view camera : {"inside", "game"}) {
+        Require(Parse("[vr]\nbullet_bill_camera = \"" + std::string(camera) + "\"\n").vrBulletBillCamera ==
+                std::string(camera));
+    }
+    Require(!Parse("[vr]\n").vrBulletBillCamera.has_value());
+    Require(!Parse("[vr]\nbullet_bill_camera = \"chase\"\n").vrBulletBillCamera.has_value());
+    Require(!Parse("[vr]\nbullet_bill_camera = \"Game\"\n").vrBulletBillCamera.has_value());
+    Require(!Parse("[vr]\nbullet_bill_camera = 1\n").vrBulletBillCamera.has_value());
+    Require(Parse("[vr]\nbullet_bill_camera = \"chase\"\n")
+                .vrBulletBillCamera.value_or(RuntimeConfigFile::kVrBulletBillCameraDefault) == "inside");
     return 0;
 }

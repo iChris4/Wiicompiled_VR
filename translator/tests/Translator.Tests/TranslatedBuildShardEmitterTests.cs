@@ -10,6 +10,61 @@ namespace Translator.Tests;
 public sealed class TranslatedBuildShardEmitterTests
 {
     [Fact]
+    public void NativeWrapperWinsOverAnOlderResolvedRetroProfile()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"translator-native-wrapper-{Guid.NewGuid():N}");
+        var functions = Path.Combine(root, "functions");
+        var native = Path.Combine(root, "runtime", "src");
+        var output = Path.Combine(root, "out");
+        Directory.CreateDirectory(functions);
+        Directory.CreateDirectory(native);
+        try
+        {
+            const string source = """
+                #include "abi_bridge.h"
+                extern "C" void func_80001000(CpuContext*) {}
+                // RECOMP_REGISTRATION base 0x80001000 func_80001000 preserves=true fpr_mask=0x00000000
+                """;
+            Write(Path.Combine(functions, "func_80001000.cpp"), source);
+            var unchanged = source.Replace("80001000", "80002000");
+            Write(Path.Combine(functions, "func_80002000.cpp"), unchanged);
+            Write(Path.Combine(native, "wrapper.cpp"),
+                "REGISTER_NATIVE_FUNCTION_AS(0x80001000, NativeWrapper, \"VR wrapper\");\n");
+            var metadata = Path.Combine(root, "base_output.json");
+            BaseTranslationOutputMetadataFile.WriteIfChangedAtomic(metadata,
+                BaseTranslationOutputMetadata.Create([
+                    Metadata("func_80001000.cpp", 0x80001000u, source),
+                    Metadata("func_80002000.cpp", 0x80002000u, unchanged)
+                ], TranslationQualityMetadata.Clean, "identity"));
+            // The resolved Retro Rewind profile predates the wrapper and still
+            // names the translated body as the winner at 0x80001000.
+            var resolved = Path.Combine(root, "resolved.json");
+            Write(resolved, """
+                {"Entries":[
+                  {"Address":2147487744,"Symbol":"func_80001000","Name":"func_80001000","Kind":"base","Priority":0,"DirectCallAvailable":true,"PreservesNonvolatileFprs":true,"NonvolatileFprWriteMask":0,"MustRemainDynamicallyDispatchable":false}
+                ]}
+                """);
+            TranslatedBuildShardEmitter.Emit(new TranslatedBuildShardOptions(
+                metadata, functions, output, native, resolved,
+                BaseShardCount: 1, ModShardCount: 1, RegistrationShardCount: 1));
+            foreach (var directory in new[] { "base_dispatch", "retro_rewind_dispatch" })
+            {
+                var dispatch = Directory.GetFiles(Path.Combine(output, directory), "*.cpp")
+                    .Select(File.ReadAllText).Aggregate(string.Concat);
+                Assert.DoesNotContain("{0x80001000u, &func_80001000", dispatch);
+            }
+            // Retain the original body: the native extension calls it first.
+            var bodies = Directory.GetFiles(Path.Combine(output, "base_common"), "*.cpp")
+                .Select(File.ReadAllText).Aggregate(string.Concat);
+            Assert.Contains("void func_80001000", bodies);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void RemainingWeightPartitionDoesNotCreateOversizedTailBin()
     {
         var weights = Enumerable.Repeat(300L, 10).ToArray();
@@ -93,7 +148,8 @@ public sealed class TranslatedBuildShardEmitterTests
             Write(resolvedPath, """
                 {"Entries":[
                   {"Address":2147487744,"Symbol":"func_80001000","Name":"func_80001000","Kind":"base","Priority":0,"DirectCallAvailable":true,"PreservesNonvolatileFprs":true,"NonvolatileFprWriteMask":0,"MustRemainDynamicallyDispatchable":false},
-                  {"Address":2147491840,"Symbol":"rr_80002000","Name":"rr_80002000","Kind":"rr","Priority":100,"DirectCallAvailable":true,"PreservesNonvolatileFprs":false,"NonvolatileFprWriteMask":16384,"MustRemainDynamicallyDispatchable":true}
+                  {"Address":2147491840,"Symbol":"rr_80002000","Name":"rr_80002000","Kind":"rr","Priority":100,"DirectCallAvailable":true,"PreservesNonvolatileFprs":false,"NonvolatileFprWriteMask":16384,"MustRemainDynamicallyDispatchable":true},
+                  {"Address":2147500032,"Symbol":"func_80004000","Name":"func_80004000","Kind":"base","Priority":0,"DirectCallAvailable":true,"PreservesNonvolatileFprs":true,"NonvolatileFprWriteMask":0,"MustRemainDynamicallyDispatchable":false}
                 ]}
                 """);
 
@@ -129,6 +185,9 @@ public sealed class TranslatedBuildShardEmitterTests
             var retroDispatchText = File.ReadAllText(retroDispatch);
             Assert.Contains("{0x80002000u, &rr_80002000, 0x00004000u, false}", retroDispatchText);
             Assert.DoesNotContain("{0x80002000u, &func_80002000", retroDispatchText);
+            // The resolved profile still lists the base body at 0x80004000, but
+            // the runtime's native registration replaces it in both products.
+            Assert.DoesNotContain("0x80004000u", retroDispatchText);
 
             // A function claimed by a native registration is excluded from the
             // translated graph entirely rather than emitted and then overridden.

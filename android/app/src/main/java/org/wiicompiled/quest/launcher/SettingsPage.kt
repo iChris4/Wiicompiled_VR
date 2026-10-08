@@ -118,9 +118,13 @@ class SettingsPage(
         val immersive = { c: TomlConfig -> !(c.bool("vr", "flat_screen") ?: false) }
         // The immersive window is still the stereo race view, seen through the race HUD's screen.
         val window = { c: TomlConfig -> immersive(c) && (c.bool("vr", "immersive_window") ?: false) }
-        val firstPerson = { c: TomlConfig -> immersive(c) && (c.bool("vr", "first_person") ?: false) }
-        // The steering wheel and hand steering belong to the cockpit seat.
+        // first_person is only the camera a race starts on: a click switches any race into first
+        // person, so its rows apply whichever default is chosen.
+        val firstPerson = immersive
+        // The steering wheel, hand steering and the character body belong to the cockpit seat.
         val cockpit = { c: TomlConfig -> firstPerson(c) && stringIndex(c, "vr", "first_person_seat", SEATS) == 0 }
+        // runtime_config.h's kVrBodyIkDefault is on; in the cockpit it replaces the driver hiding.
+        val characterBody = { c: TomlConfig -> cockpit(c) && (c.bool("vr", "body_ik") ?: true) }
         section(R.string.section_vr_camera) {
             // One setting in two keys, read as runtime_config.h's VrRaceView reads them: Flat
             // Screen mode wins over the immersive window.
@@ -139,12 +143,20 @@ class SettingsPage(
                     c.setBool("vr", "immersive_window", index == 1)
                 },
             )
+            // The default camera: each race shows the game's camera through its intro, then this one.
             choice(
                 R.string.vr_camera, R.string.vr_camera_helper,
                 listOf(R.string.vr_camera_chase, R.string.vr_camera_first_person),
                 read = { if (it.bool("vr", "first_person") == true) 1 else 0 },
                 write = { c, index -> c.setBool("vr", "first_person", index == 1) },
                 enabledIf = immersive,
+            )
+            choice(
+                R.string.vr_bullet_bill, R.string.vr_bullet_bill_helper,
+                listOf(R.string.vr_bullet_bill_inside, R.string.vr_bullet_bill_game),
+                read = { stringIndex(it, "vr", "bullet_bill_camera", BULLET_BILL_CAMERAS) },
+                write = { c, index -> c.setString("vr", "bullet_bill_camera", BULLET_BILL_CAMERAS[index]) },
+                enabledIf = firstPerson,
             )
             choice(
                 R.string.vr_rotation, R.string.vr_rotation_helper,
@@ -173,7 +185,8 @@ class SettingsPage(
                         c.setInteger("vr", "first_person_hidden_model", if (index == 1) 0L else -1L)
                     }
                 },
-                enabledIf = firstPerson,
+                // As in the in-headset settings, greyed out while the character body takes over.
+                enabledIf = { c -> firstPerson(c) && !characterBody(c) },
             )
             choice(
                 R.string.vr_seat, R.string.vr_seat_helper,
@@ -181,6 +194,20 @@ class SettingsPage(
                 read = { stringIndex(it, "vr", "first_person_seat", SEATS) },
                 write = { c, index -> c.setString("vr", "first_person_seat", SEATS[index]) },
                 enabledIf = firstPerson,
+            )
+            // heurazy's character body: runtime_config.h's kVrBodyIkDefault is on and
+            // kVrBodyIkHandsOnlyDefault off.
+            toggle(
+                R.string.vr_body_ik, R.string.vr_body_ik_helper,
+                read = { it.bool("vr", "body_ik") ?: true },
+                write = { c, value -> c.setBool("vr", "body_ik", value) },
+                enabledIf = cockpit,
+            )
+            toggle(
+                R.string.vr_body_ik_hands_only, R.string.vr_body_ik_hands_only_helper,
+                read = { it.bool("vr", "body_ik_hands_only") ?: false },
+                write = { c, value -> c.setBool("vr", "body_ik_hands_only", value) },
+                enabledIf = characterBody,
             )
             // runtime_config.h's kVrPlaceholderSteeringWheelDefault is off.
             toggle(
@@ -800,6 +827,8 @@ class SettingsPage(
         val ROTATION_DEFAULT = ROTATIONS.indexOf("yaw_pitch")
         // The runtime's default ("cockpit") first.
         val SEATS = listOf("cockpit", "custom")
+        // The runtime's default ("inside") first.
+        val BULLET_BILL_CAMERAS = listOf("inside", "game")
         val ITEM_HANDS = listOf("left", "right", "off")
         // The runtime's default ("boost") first: an absent key reads as index 0.
         val PERFORMANCE_LEVELS = listOf("boost", "sustained_high", "sustained_low", "power_savings", "default")

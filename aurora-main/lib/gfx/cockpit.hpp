@@ -245,7 +245,10 @@ inline void build_geometry(const AuroraCockpit& cockpit, std::vector<Vertex>& ve
   }
   std::array<std::shared_ptr<const HandMesh>,2> current;
   { std::lock_guard lock(meshMutex);current=meshes; }
-  for(int side=0;side<2;++side) if(cockpit.hands[side].tracked) {
+  // A hand the game's character model draws (the character body) gets none
+  // here; what it carries is drawn all the same (append_item_badge,
+  // cockpit_item::render).
+  for(int side=0;side<2;++side) if(cockpit.hands[side].tracked && !cockpit.hands[side].characterHand) {
     const auto& hand=cockpit.hands[side];
     const bool joints=hand.jointsValid && joints_finite(hand);
     if(current[side]) joints ? tracked_hand(vertices,hand,*current[side]) : runtime_hand(vertices,hand,*current[side]);
@@ -286,6 +289,13 @@ inline void append_item_badge(const AuroraCockpit& cockpit,const AuroraCockpitIt
 }
 inline std::vector<Vertex> geometry(const AuroraCockpit& cockpit) {
   std::vector<Vertex> result;build_geometry(cockpit,result);return result;
+}
+// A located hand that may carry the held item. With the character body drawing
+// the hands, the item can be all the overlay draws, and cockpit_item::render
+// keeps its models uploading ahead of the first roulette as it did with the
+// hand drawn here.
+inline bool carries_hand(const AuroraCockpit& cockpit) {
+  return cockpit.hands[0].tracked || cockpit.hands[1].tracked;
 }
 inline std::atomic<uint64_t> meshRevision{1};
 inline std::vector<Vertex> frameVertices;
@@ -407,7 +417,7 @@ inline void render(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,uint
   const bool reversedDepth=sceneDepth.constant>0;
   ensure_pipelines(target,reversedDepth,false);
   const wgpu::Buffer* buffer=upload_eye_vertices(frame,eye,sceneDepth);
-  if(!buffer) return;
+  if(!buffer && !carries_hand(frame.cockpit)) return;
   const wgpu::RenderPassColorAttachment attachment{.view=target.colorView,.resolveTarget=target.resolveView,
     .loadOp=wgpu::LoadOp::Load,.storeOp=wgpu::StoreOp::Store};
   const wgpu::RenderPassDepthStencilAttachment depth{.view=target.depthView,.depthLoadOp=wgpu::LoadOp::Load,
@@ -420,7 +430,9 @@ inline void render(wgpu::CommandEncoder& cmd,const StereoReplayFrame& frame,uint
   pass.SetScissorRect(0,0,target.size.width,target.size.height);
   // Mark only depth-visible samples; later virtual-screen draws test for zero.
   pass.SetStencilReference(1);
-  pass.SetPipeline(pipeline);pass.SetVertexBuffer(0,*buffer);pass.Draw(static_cast<uint32_t>(frameVertices.size()));
+  if(buffer) {
+    pass.SetPipeline(pipeline);pass.SetVertexBuffer(0,*buffer);pass.Draw(static_cast<uint32_t>(frameVertices.size()));
+  }
   cockpit_item::render(pass,frame,eye,sceneDepth.z,sceneDepth.constant);
   pass.SetStencilReference(0);
   if(!existingPass) pass.End();
@@ -436,7 +448,8 @@ inline void render_multiview(wgpu::CommandEncoder& cmd,const StereoReplayFrame& 
   if(!multiviewPipeline) return;
   const wgpu::Buffer* left=upload_eye_vertices(frame,0,sceneDepth);
   const wgpu::Buffer* right=upload_eye_vertices(frame,1,sceneDepth);
-  if(!left||!right) return;
+  const bool hasGeometry=left&&right;
+  if(!hasGeometry && !carries_hand(frame.cockpit)) return;
 #if defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
   const bool stencil=target.depthFormat==wgpu::TextureFormat::Depth24PlusStencil8;
   const wgpu::RenderPassColorAttachment attachment{.view=frame.multiviewColorView,
@@ -452,13 +465,15 @@ inline void render_multiview(wgpu::CommandEncoder& cmd,const StereoReplayFrame& 
   pass.SetViewport(0,0,float(target.size.width),float(target.size.height),0,1);
   pass.SetScissorRect(0,0,target.size.width,target.size.height);
   pass.SetStencilReference(1);
-  pass.SetPipeline(multiviewPipeline);pass.SetVertexBuffer(0,*left);pass.SetVertexBuffer(1,*right);
-  pass.Draw(static_cast<uint32_t>(frameVertices.size()));
+  if(hasGeometry) {
+    pass.SetPipeline(multiviewPipeline);pass.SetVertexBuffer(0,*left);pass.SetVertexBuffer(1,*right);
+    pass.Draw(static_cast<uint32_t>(frameVertices.size()));
+  }
   cockpit_item::render_multiview(pass,frame,sceneDepth.z,sceneDepth.constant);
   pass.SetStencilReference(0);
   if(!existingPass) pass.End();
 #else
-  (void)cmd;(void)existingPass;
+  (void)cmd;(void)existingPass;(void)hasGeometry;
 #endif
 }
 } // namespace aurora::gfx::cockpit

@@ -402,4 +402,111 @@ TEST_F(CockpitGeometry, NonFiniteJointsFallBackToTheGrip) {
       EXPECT_EQ(broken[i].position[axis], grip[i].position[axis]);
 }
 
+// The character body draws the hand with the game's own model: the overlay
+// draws none there, whichever way it would have drawn it, but keeps the other
+// hand and the wheel.
+TEST_F(CockpitGeometry, CharacterHandDrawsNoHand) {
+  using namespace aurora::gfx::cockpit;
+  AuroraCockpit cockpit{};
+  cockpit.nativeWheel = true;
+  cockpit.hands[1].tracked = true;
+  cockpit.hands[1].squeeze = 1.0f;
+  set_identity(cockpit.hands[1].seatFromGrip, {0.2f, -0.3f, -0.4f});
+  ASSERT_FALSE(geometry(cockpit).empty()) << "a tracked hand draws its glove";
+  cockpit.hands[1].characterHand = true;
+  EXPECT_TRUE(geometry(cockpit).empty()) << "no glove where the character's hand is";
+
+  // Nor the runtime mesh, from the grip or from tracked joints, nor the joint skeleton.
+  const auto mesh = jointed_mesh();
+  set_tracked_joints(cockpit.hands[1], *mesh, rigid_motion());
+  EXPECT_TRUE(geometry(cockpit).empty()) << "no joint skeleton";
+  {
+    std::lock_guard lock(meshMutex);
+    meshes[1] = mesh;
+  }
+  EXPECT_TRUE(geometry(cockpit).empty()) << "no tracked runtime mesh";
+  cockpit.hands[1].jointsValid = false;
+  EXPECT_TRUE(geometry(cockpit).empty()) << "no runtime mesh at the grip";
+  cockpit.hands[1].characterHand = false;
+  EXPECT_EQ(geometry(cockpit).size(), mesh->vertices.size()) << "the same hand drawn by the overlay";
+
+  // The other hand is still the overlay's.
+  cockpit.hands[1].characterHand = true;
+  cockpit.hands[0].tracked = true;
+  set_identity(cockpit.hands[0].seatFromGrip, {-0.2f, -0.3f, -0.4f});
+  const auto left = geometry(cockpit);
+  ASSERT_FALSE(left.empty());
+  for (const auto& vertex : left) {
+    EXPECT_LT(vertex.position[0], 0.0f) << "only the left glove";
+  }
+}
+
+TEST_F(CockpitGeometry, CharacterHandsKeepTheSyntheticWheel) {
+  AuroraCockpit wheel{};
+  const auto expected = aurora::gfx::cockpit::geometry(wheel);
+  ASSERT_FALSE(expected.empty());
+  AuroraCockpit cockpit{};
+  for (int side = 0; side < 2; ++side) {
+    cockpit.hands[side].tracked = true;
+    cockpit.hands[side].held = true;
+    cockpit.hands[side].characterHand = true;
+    set_identity(cockpit.hands[side].seatFromGrip, {side == 0 ? -0.18f : 0.18f, -0.3f, -0.42f});
+  }
+  const auto vertices = aurora::gfx::cockpit::geometry(cockpit);
+  ASSERT_EQ(vertices.size(), expected.size()) << "the wheel and nothing else";
+  for (size_t i = 0; i < vertices.size(); ++i)
+    for (int axis = 0; axis < 3; ++axis)
+      EXPECT_EQ(vertices[i].position[axis], expected[i].position[axis]);
+}
+
+// What the hand carries stays: the held item's count badge is drawn on a hand
+// the character draws, just as on one the overlay draws.
+TEST_F(CockpitGeometry, CharacterHandKeepsTheItemCountBadge) {
+  using namespace aurora::gfx;
+  // A stand-in for the triple shells' model (item id 16 shares model 0); the
+  // badge only asks whether the model exists.
+  auto archive = std::make_shared<cockpit_item::data::Archive>();
+  auto& model = archive->models[cockpit_item::data::model_index(16)];
+  model.parts.emplace_back();
+  model.minimum = {-1.0f, 0.0f, -1.0f};
+  model.maximum = {1.0f, 1.0f, 1.0f};
+  archive->loaded = 1;
+  std::shared_ptr<const cockpit_item::data::Archive> previous;
+  {
+    std::lock_guard lock(cockpit_item::archiveMutex);
+    previous = cockpit_item::archive;
+    cockpit_item::archive = archive;
+  }
+  AuroraCockpit cockpit{};
+  cockpit.nativeWheel = true;
+  cockpit.hands[0].tracked = true;
+  set_identity(cockpit.hands[0].seatFromGrip, {-0.2f, -0.3f, -0.4f});
+  AuroraCockpitItem item{};
+  item.valid = true;
+  item.id = 16;
+  item.count = 2;
+  item.hand = 0;
+  const auto build = [&] {
+    std::vector<cockpit::Vertex> vertices;
+    cockpit::build_geometry(cockpit, vertices);
+    const size_t hand = vertices.size();
+    cockpit::append_item_badge(cockpit, item, vertices);
+    return std::pair{hand, vertices.size() - hand};
+  };
+  const auto drawn = build();
+  cockpit.hands[0].characterHand = true;
+  const auto character = build();
+  {
+    std::lock_guard lock(cockpit_item::archiveMutex);
+    cockpit_item::archive = previous;
+  }
+  EXPECT_GT(drawn.first, 0u) << "the overlay's glove";
+  EXPECT_EQ(character.first, 0u) << "no glove on the character's hand";
+  EXPECT_GT(drawn.second, 0u) << "a count badge";
+  EXPECT_EQ(character.second, drawn.second) << "the same badge on the character's hand";
+  EXPECT_TRUE(cockpit::carries_hand(cockpit)) << "the overlay still draws for the item's hand";
+  cockpit.hands[0].tracked = false;
+  EXPECT_FALSE(cockpit::carries_hand(cockpit));
+}
+
 } // namespace

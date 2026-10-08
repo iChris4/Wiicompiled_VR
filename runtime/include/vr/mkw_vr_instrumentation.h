@@ -12,6 +12,12 @@ namespace mkw::vr {
 // is harmless to call repeatedly and does not enable presentation by itself.
 void MkwVRInstrumentationInitialize() noexcept;
 
+// Latches the first-person state for the current guest frame with the frame's
+// race camera, exactly as the ScnMgrRace::Draw observer does, for a caller
+// that runs earlier in the frame (the character body's ScnRoot::CalcView
+// wrapper). Does nothing before RaceCamera::Update has run this frame.
+void MkwVRFirstPersonUpdateForCurrentFrame() noexcept;
+
 } // namespace mkw::vr
 
 // Called only from translator-generated PAL RMCP01 function entries. It is a

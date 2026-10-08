@@ -166,6 +166,16 @@ set_source_files_properties(${MKW_PPC_SEMANTIC_RUNTIME_SOURCES} PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON
     SKIP_PRECOMPILE_HEADERS ON
     COMPILE_OPTIONS "${MKW_TRANSLATED_PPC_FP_OPTIONS}")
+# The first-person cockpit and the character body it includes
+# (character_body_ik.inl) reject NaN/Inf guest matrices and tracked poses
+# before posing anything with them. -ffinite-math-only, part of the runtime's
+# -ffast-math, folds such a check away once the value has been through any
+# arithmetic, so this one file opts back out of that assumption (see
+# frame_interpolation.cpp in CMakeLists.txt for the same reason).
+set_source_files_properties("${MKW_RUNTIME_SOURCE_DIR}/src/vr/mkw_vr_first_person.cpp" PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON
+    SKIP_PRECOMPILE_HEADERS ON
+    COMPILE_OPTIONS "-fno-finite-math-only")
 if(MKW_PLATFORM_ANDROID)
     # The Quest app ships the runtime prebuilt and builds only the game from the player's disc
     # (android/app/src/main/cpp/CMakeLists.txt, the game kit). These two are generated from that

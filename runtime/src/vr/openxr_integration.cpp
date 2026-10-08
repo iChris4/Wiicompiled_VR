@@ -1444,6 +1444,10 @@ private:
             const auto& from = driving.hands[hand];
             target.tracked = from.tracked;
             target.held = from.held;
+            // Whether the character body draws this hand travels with the
+            // sealed frame (AuroraCockpitItem.characterHands, vi.cpp), which
+            // Aurora applies to the frame it replays.
+            target.characterHand = false;
             target.squeeze = from.squeeze;
             std::copy(from.seat_from_grip.begin(), from.seat_from_grip.end(), target.seatFromGrip);
             target.jointsValid = from.joints_valid && joints != nullptr && joints->valid[hand];

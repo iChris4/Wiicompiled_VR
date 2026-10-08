@@ -71,14 +71,15 @@ The runtime's Riivolution patch handling is a port of Dolphin's
 (both marked `SPDX-License-Identifier: GPL-2.0-or-later`).
 Source: <https://github.com/dolphin-emu/dolphin>
 
-### heurazy's mario-kart-wii-VR-port - GPL-3.0-or-later
+### heurazy's mario-kart-wii-VR-port and Wiicompiled VR PLUS - GPL-3.0-or-later
 
-- Source: <https://github.com/heurazy/mario-kart-wii-VR-port>
+- Source: <https://github.com/heurazy/mario-kart-wii-VR-port> and
+  <https://github.com/heurazy/Wiicompiled_VR-PLUS>
 - Author: heurazy
 - License: GNU General Public License v3.0 or later, the same license as WiiCompiled.
 
-The VR cockpit's steering wheel and hand steering are ported from this project: the grab-and-turn
-model (`runtime/include/vr/steering_wheel.h`), the native wheel vertex rotation
+The VR cockpit's steering wheel and hand steering are ported from mario-kart-wii-VR-port: the
+grab-and-turn model (`runtime/include/vr/steering_wheel.h`), the native wheel vertex rotation
 (`runtime/include/vr/native_wheel_mesh.h`), the level seat (`runtime/include/vr/cockpit_stabilizer.h`),
 the runtime hand-mesh loader (`runtime/include/vr/openxr_hand_mesh.h`), the per-draw substitution
 (`aurora-main/include/aurora/native_wheel_match.hpp`, `aurora-main/lib/gx/native_wheel.hpp`), the
@@ -87,6 +88,14 @@ wheel geometry and guest reads in `runtime/src/vr/mkw_vr_first_person.cpp` and
 `runtime/include/vr/mkw_vr_first_person.h`. The USB wheel and pedal support is ported from it too
 (`runtime/include/physical_wheel.h`, `runtime/src/physical_wheel.cpp` and their test). The files
 carry that attribution in their headers.
+
+The cockpit's character body and the camera modes are ported from heurazy's later fork of this
+project, Wiicompiled VR PLUS (<https://github.com/heurazy/Wiicompiled_VR-PLUS>, also
+GPL-3.0-or-later): the body IK math and rig classification (`runtime/include/vr/body_ik.h`), the 24
+palm profiles from its calibration workshop (`runtime/include/vr/body_hand_profiles.h`), the
+`ScnRoot::CalcView` wrapper that poses the driver (`runtime/src/vr/character_body_ik.inl`), the
+camera modes (`runtime/include/vr/vr_controls.h`), the Bullet Bill flag read
+(`runtime/include/vr/mkw_vr_player.h`) and their tests.
 
 ### pugixml - MIT
 

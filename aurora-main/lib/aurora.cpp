@@ -995,6 +995,11 @@ gfx::StereoReplayFrame make_stereo_replay_frame(const AuroraStereoFrame& input, 
   gfx::StereoReplayFrame replay{};
   replay.cockpit = input.cockpit;
   replay.cockpitItem = sceneAnchor.cockpitItem;
+  // The hands the character body drew in this sealed frame, not in whichever
+  // guest frame is current when the packet was built.
+  for (uint32_t side = 0; side < 2; ++side) {
+    replay.cockpit.hands[side].characterHand = ((sceneAnchor.cockpitItem.characterHands >> side) & 1u) != 0;
+  }
   replay.window = input.mode == AURORA_STEREO_FRAME_IMMERSIVE_REPLAY && input.window;
   // The sealed guest frame owns its scale. The packet may have been sampled
   // just before a change of scale (a character swap, a lightning strike), so
