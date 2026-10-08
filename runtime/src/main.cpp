@@ -105,8 +105,6 @@ void ServiceGuestTimingDuringAuroraFrameWait() {
 }
 
 void GxThreadFrameLog(char* buffer, uint32_t bufferSize, double windowSeconds, uint32_t frames) {
-    // The headset's side of the same window: how many refreshes each frame was shown for.
-    mkw::vr::OpenXRLogPacingWindow(windowSeconds);
     if (!GxThread::Enabled()) {
         return;
     }

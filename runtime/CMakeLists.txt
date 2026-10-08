@@ -396,11 +396,6 @@ target_include_directories(mkw_frame_interpolation_pacing_tests PRIVATE "${CMAKE
 target_link_libraries(mkw_frame_interpolation_pacing_tests PRIVATE mkw::toml11)
 target_compile_features(mkw_frame_interpolation_pacing_tests PRIVATE cxx_std_20)
 add_test(NAME mkw_frame_interpolation_pacing_tests COMMAND mkw_frame_interpolation_pacing_tests)
-# The VI timeline locked to a 120 Hz display (vr/display_phase_lock.h), against a simulated compositor.
-add_executable(mkw_display_phase_lock_tests tests/display_phase_lock_tests.cpp)
-target_include_directories(mkw_display_phase_lock_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_display_phase_lock_tests PRIVATE cxx_std_20)
-add_test(NAME mkw_display_phase_lock_tests COMMAND mkw_display_phase_lock_tests)
 # [vr] settings the headset renderer reads: single_pass_eyes and the Quest's foveation.
 add_executable(mkw_vr_config_tests tests/vr_config_tests.cpp)
 target_include_directories(mkw_vr_config_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")

@@ -1533,10 +1533,10 @@ void DrawVrSettings() {
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "The headset's refresh rate. At 120 Hz every 60 Hz game frame is shown for exactly two refreshes, "
-            "and the game is kept in step with the display, so motion is even without interpolation; at 72 Hz "
-            "one frame in five is shown twice. 120 Hz costs the headset a little more power. Meta runtimes "
-            "only (the Quest, Quest Link); elsewhere set the rate in your VR runtime. Applies immediately.");
+            "The headset's refresh rate. With VR frame interpolation every refresh gets a new image, so a "
+            "higher rate is smoother and costs the GPU more. Without it the 60 Hz game frames are repeated: "
+            "at 72 Hz one frame in five is shown twice, at 120 Hz every frame twice. Meta runtimes only "
+            "(the Quest, Quest Link); elsewhere set the rate in your VR runtime. Applies immediately.");
     }
     if (ImGui::Combo("VR frame interpolation (experimental)", &g_vrFrameInterpolationMode,
                      kVrInterpolationLabels.data(), static_cast<int>(kVrInterpolationLabels.size()))) {
@@ -1553,13 +1553,7 @@ void DrawVrSettings() {
     }
     const auto xrTiming = mkw::vr::OpenXRGetFrameTiming();
     if (mkw::vr::OpenXRIsRunning()) {
-        if (xrTiming.locked_refreshes != 0) {
-            ImGui::TextDisabled("Headset: %.1f Hz | New VR frames: %.1f FPS | each shown %u refreshes",
-                                xrTiming.headset_hz, xrTiming.rendered_fps, xrTiming.locked_refreshes);
-        } else {
-            ImGui::TextDisabled("Headset: %.1f Hz | New VR frames: %.1f FPS", xrTiming.headset_hz,
-                                xrTiming.rendered_fps);
-        }
+        ImGui::TextDisabled("Headset: %.1f Hz | New VR frames: %.1f FPS", xrTiming.headset_hz, xrTiming.rendered_fps);
         if (g_vrFrameInterpolationMode != 0 && !mkw::vr::OpenXRFrameInterpolationAvailable()) {
             ImGui::TextWrapped("The OpenXR runtime does not provide the clock conversion needed for interpolation.");
         }

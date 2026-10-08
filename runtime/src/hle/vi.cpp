@@ -149,11 +149,6 @@ struct ViState {
 
 std::mutex g_viMutex;
 ViState g_vi;
-// VI_HLE_SetRetracePhaseShift: added to each retrace's stamp, so the timeline moves by it every frame. A copy of
-// the interval for the VR pacing thread, which must not take g_viMutex.
-std::atomic<int64_t> g_retracePhaseShiftNs{0};
-std::atomic<int64_t> g_retraceIntervalNs{16'666'000};
-constexpr int64_t kMaxRetracePhaseShiftNs = 200'000;
 
 
 // Guest-side state addresses used by the SDK's VI globals.
@@ -268,8 +263,6 @@ void EnsureInitializedLocked() {
     }
     g_vi.initialized = true;
     g_vi.retraceInterval = IntervalForFormat(g_vi.tvFormat);
-    g_retraceIntervalNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(g_vi.retraceInterval).count(),
-                              std::memory_order_relaxed);
     g_vi.lastRetrace = Clock::now();
     WriteGuestStateLocked();
 }
@@ -320,9 +313,6 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
             g_vi.xfbWidth = g_vi.pendingXfbWidth;
             g_vi.xfbHeight = g_vi.pendingXfbHeight;
             g_vi.retraceInterval = g_vi.pendingRetraceInterval;
-            g_retraceIntervalNs.store(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(g_vi.retraceInterval).count(),
-                std::memory_order_relaxed);
             
             // Clear flush armed flag
             g_vi.flushArmed = false;
@@ -333,11 +323,7 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
         g_vi.fieldOdd = !g_vi.fieldOdd;
         g_vi.currentFrameBuffer = g_vi.nextFrameBuffer;
         currentFb = g_vi.currentFrameBuffer;
-        // Locked to a headset display (VI_HLE_SetRetracePhaseShift), the timeline follows the display's clock by a
-        // few microseconds a frame; the guest only ever counts retraces.
-        g_vi.lastRetrace = retraceStamp + std::chrono::nanoseconds(std::clamp(
-                                              g_retracePhaseShiftNs.load(std::memory_order_relaxed),
-                                              -kMaxRetracePhaseShiftNs, kMaxRetracePhaseShiftNs));
+        g_vi.lastRetrace = retraceStamp;
         retraceValue = g_vi.retraceCount;
         preCb = g_vi.preRetraceCallback;
         postCb = g_vi.postRetraceCallback;
@@ -455,14 +441,6 @@ void VI_HLE_ForceRetrace(CpuContext* ctx) {
 
 bool VI_HLE_IsAdvancingRetrace() {
     return s_inAdvanceRetrace.load(std::memory_order_acquire);
-}
-
-void VI_HLE_SetRetracePhaseShift(int64_t nanosecondsPerRetrace) {
-    g_retracePhaseShiftNs.store(nanosecondsPerRetrace, std::memory_order_relaxed);
-}
-
-int64_t VI_HLE_RetraceIntervalNanos() {
-    return g_retraceIntervalNs.load(std::memory_order_relaxed);
 }
 
 // Advance every retrace whose interval has already elapsed. Safe to call from

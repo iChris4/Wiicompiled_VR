@@ -98,9 +98,6 @@ OpenXREyeResolution OpenXRGetEyeResolution(float scale) noexcept;
 void OpenXRSetFrameInterpolationFps(uint32_t target) noexcept;
 // [vr] refresh_rate, applied live: 0 is the rate the session started at.
 void OpenXRSetDisplayRefreshRate(uint32_t hz) noexcept;
-// Logs one line about the window's frame pacing (how many refreshes each frame was shown, the display lock),
-// for the Quest fpslog; nothing while no headset frames were submitted.
-void OpenXRLogPacingWindow(double windowSeconds) noexcept;
 bool OpenXRFrameInterpolationAvailable() noexcept;
 
 // This session started with XR_EXT_hand_tracking, so [vr] hand_tracking applies
@@ -109,9 +106,6 @@ bool OpenXRHandTrackingAvailable() noexcept;
 struct OpenXRFrameTiming {
     float headset_hz = 0;
     float rendered_fps = 0; // Newly rendered pairs; excludes retained-layer repeats.
-    // Refreshes each game frame is shown for while the game is locked to the display (vr/display_phase_lock.h),
-    // else 0.
-    uint32_t locked_refreshes = 0;
 };
 OpenXRFrameTiming OpenXRGetFrameTiming() noexcept;
 

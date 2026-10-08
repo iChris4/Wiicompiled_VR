@@ -17,11 +17,6 @@ void VI_HLE_WaitForNextRetracePoll();
 // for the GXCopyDisp producer path and false for retrace-context presents.
 void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace);
 bool VI_HLE_IsAdvancingRetrace();
-// The VR pacing thread's lock of the VI timeline to the headset display (vr/display_phase_lock.h): a shift added
-// to every retrace until it is replaced, at most 200 us either way; 0 releases it. The interval is the current
-// one, in nanoseconds.
-void VI_HLE_SetRetracePhaseShift(int64_t nanosecondsPerRetrace);
-int64_t VI_HLE_RetraceIntervalNanos();
 void VI_HLE_SetXfbReady(uint32_t xfbAddr); // Called by GXCopyDisp to signal EFB→XFB copy
 void Audio_HLE_Tick(CpuContext* ctx, uint32_t deltaMicros);
 void Audio_HLE_Poll(CpuContext* ctx);
