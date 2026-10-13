@@ -10,6 +10,13 @@ struct UniformReplayLayout {
   uint32_t positionOffset = 0;
   uint32_t normalOffset = 0;
   uint32_t positionMatrixMask = 0;
+  // The position-memory matrices of positionMatrixMask that only a texgen reads, never the vertex
+  // position. NW4R's projection mapping (Rainbow Road's road, Coconut Mall's glass) casts a texture
+  // from the camera through GX_PNMTX0, which the compacted layout stages apart from the current
+  // matrix. The eyes leave these as recorded: through the eye's view, the texture would be cast
+  // from the headset and follow the head. Interpolation still treats them as position matrices.
+  // In the absolute layout one staged matrix serves both readers, so nothing is marked there.
+  uint32_t texgenMatrixMask = 0;
   uint8_t positionMatrixCount = 0;
   uint8_t normalMatrixCount = 0;
   bool perspective = false;

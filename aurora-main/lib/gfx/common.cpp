@@ -1508,8 +1508,11 @@ static void write_stereo_uniform(std::span<uint8_t> uniform, const gx::UniformRe
     const auto& viewFromScene = mirrored ? eye.viewFromSceneMirrored : eye.viewFromScene;
     std::memcpy(uniform.data() + layout.projectionOffset, &projection, sizeof(projection));
 
+    // A matrix only a texgen reads keeps the recorded camera, so a texture the game projects
+    // from it stays put on the surface while the head turns (gx::UniformReplayLayout).
+    const uint32_t eyeMatrixMask = layout.positionMatrixMask & ~layout.texgenMatrixMask;
     for (uint32_t matrix = 0; matrix < layout.positionMatrixCount; ++matrix) {
-      if ((layout.positionMatrixMask & (1u << matrix)) == 0) {
+      if ((eyeMatrixMask & (1u << matrix)) == 0) {
         continue;
       }
       const size_t offset = layout.positionOffset + matrix * sizeof(Mat3x4<float>);

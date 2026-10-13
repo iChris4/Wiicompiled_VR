@@ -906,6 +906,19 @@ The runtime deliberately fails safe instead of guessing which Mario Kart camera 
 Aurora records the original GX frame once and replays it for both OpenXR eyes. Perspective GX draws
 receive asymmetric headset projections, while the game's 2D layer goes on a fixed virtual screen
 (see below). Menus and unsafe whole scenes use the virtual-screen path.
+
+An eye folds its view into a perspective draw's position and normal matrices, not into the matrix
+a texture-coordinate generator reads. NW4R's projection mapping casts a texture from the camera:
+its texgen takes the vertex position through `GX_PNMTX0`, the same view-space matrix the vertex
+uses, and then the camera's projection as its post-transform matrix (`G3DState`'s scene-dependent
+texture matrices, 0x80063870). Rainbow Road's road reflection, Coconut Mall's glass and Moonview
+Highway use it, 84 draws over the disc. Aurora stages that texgen's copy apart from the current
+position matrix, and the eyes leave it as recorded. When the eye's view was folded in, the texture
+was cast from the headset and stayed still in view as the head turned. Now it stays where the game
+camera casts it, and both eyes see it on the surface. The game's camera is used even in first
+person, as for env-camera mapping, whose `GX_TEXMTX` matrix replay never changes. A draw with
+per-vertex matrix indices shares one staged matrix between both readers and keeps the old
+behaviour; none of the 84 has them.
 Head pose is sampled by the OpenXR pacing thread, while Aurora's frame worker consumes a
 short-lived immutable stereo packet. Each sealed GX frame and immersive packet carry the same
 policy-generation tag; a mismatch is rendered in mono and the acquired XR frame is canceled, so an

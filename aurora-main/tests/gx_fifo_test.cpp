@@ -90,6 +90,51 @@ TEST_F(GXFifoTest, UniformRetainsViewportWindowForVrReplay) {
   EXPECT_EQ(ranges.replayLayout.projectionOffset, 80u);
 }
 
+// NW4R's projection mapping (Rainbow Road's road, Coconut Mall's glass) casts a texture from the camera: a 3x4
+// texgen from the position through GX_PNMTX0, the camera projection in its post matrix. An eye that folded its
+// view into that matrix cast the texture from the headset, so it stayed still in view as the head turned.
+TEST_F(GXFifoTest, ProjectionTexgenMatrixKeepsTheRecordedCamera) {
+  // The matrix-index register holds a raw row, so a texgen can name a position matrix as g3d does.
+  const auto layout_for = [](u32 texgenMatrix, bool indexedPositions) {
+    aurora::gx::ShaderConfig shader{};
+    shader.numTexGens = 1;
+    shader.dualTexEnabled = true;
+    shader.tcgs[0] = {.type = GX_TG_MTX3x4, .src = GX_TG_POS, .mtx = static_cast<GXTexMtx>(texgenMatrix), .postMtx = GX_PTTEXMTX1};
+    shader.tevStageCount = 1;
+    shader.tevStages[0].texCoordId = GX_TEXCOORD0;
+    shader.tevStages[0].texMapId = GX_TEXMAP0;
+    shader.tevStages[0].colorPass.d = GX_CC_TEXC;
+    shader.tevStages[0].alphaPass.d = GX_CA_TEXA;
+    if (indexedPositions) {
+      shader.attrs[GX_VA_PNMTXIDX].attrType = GX_DIRECT;
+    }
+    const auto info = aurora::gx::build_shader_info(shader);
+    aurora::gfx::testing::reset_uniform_allocations();
+    return aurora::gx::build_uniform(info, 0, aurora::gx::BindGroupRanges{},
+                                     aurora::gx::FrameInterpolationDrawIdentity{}, true)
+        .replayLayout;
+  };
+
+  // The vertex position reads the current matrix, staged first; the texgen reads its own copy of GX_PNMTX0. Both
+  // are position matrices to interpolation, and only the texgen's copy stays off the eye's view.
+  const auto projected = layout_for(GX_PNMTX0, false);
+  ASSERT_EQ(projected.positionMatrixCount, 2u);
+  EXPECT_EQ(projected.positionMatrixMask, 0b11u);
+  EXPECT_EQ(projected.texgenMatrixMask, 0b10u);
+
+  // Env-camera mapping reads a texture matrix, which the eyes never transform anyway.
+  const auto environment = layout_for(GX_TEXMTX0, false);
+  ASSERT_EQ(environment.positionMatrixCount, 2u);
+  EXPECT_EQ(environment.positionMatrixMask, 0b01u);
+  EXPECT_EQ(environment.texgenMatrixMask, 0u);
+
+  // With per-vertex matrix indices the position and the texgen read the same staged GX_PNMTX0, which has to stay
+  // on the eye's view or the vertices would lose head tracking.
+  const auto skinned = layout_for(GX_PNMTX0, true);
+  EXPECT_NE(skinned.positionMatrixMask & 1u, 0u);
+  EXPECT_EQ(skinned.texgenMatrixMask, 0u);
+}
+
 TEST(GXLighting, SpotCoefficientsAndPositionGetterMatchRevolutionSdk) {
   GXLightObj light{};
   GXInitLightSpot(&light, 60.0f, GX_SP_SHARP);
