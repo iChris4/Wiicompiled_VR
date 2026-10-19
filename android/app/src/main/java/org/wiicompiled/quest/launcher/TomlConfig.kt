@@ -9,9 +9,13 @@ import java.util.Locale
  * `key = value` at a time so every comment, unknown key and path the runtime,
  * the in-headset settings panel or the player put there survives.
  *
- * Edits follow RuntimeConfigFile::WriteSetting (runtime/include/runtime_config.h)
- * line for line: a present key is replaced where it stands, a missing key goes
- * after its section's last non-blank line, and a missing section is appended.
+ * Edits keep to the line rules RuntimeConfigFile::WriteSetting used before it
+ * moved to re-emitting the whole document through toml11 (UpdateSettingText in
+ * runtime/include/runtime_config.h, upstream v0.2.34): a present key is replaced
+ * where it stands, a missing key goes after its section's last non-blank line,
+ * and a missing section is appended. The runtime's writer keeps keys, order and
+ * the comments attached to them but may lay the file out differently; either
+ * side reads what the other wrote.
  * The typed readers accept only what the runtime's toml11 lookups accept, so a
  * value the game would ignore reads as absent here too and shows its default.
  */

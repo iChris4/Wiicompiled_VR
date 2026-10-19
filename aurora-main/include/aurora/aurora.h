@@ -294,12 +294,20 @@ typedef struct {
   int32_t d3d12AdapterLuidHigh;
 } AuroraConfig;
 
+typedef enum {
+  AURORA_INITIALIZATION_SUCCESS = 0,
+  AURORA_INITIALIZATION_GRAPHICS_UNAVAILABLE = 1,
+} AuroraInitializationStatus;
+
 typedef struct {
   AuroraBackend backend;
   const char* userPath;
   const char* cachePath;
   SDL_Window* window;
   AuroraWindowSize windowSize;
+  AuroraInitializationStatus initializationStatus;
+  // On failure, owned by SDL on the calling thread. Copy before another SDL call.
+  const char* initializationError;
 } AuroraInfo;
 
 AuroraInfo aurora_initialize(int argc, char* argv[], const AuroraConfig* config);
@@ -418,6 +426,21 @@ void aurora_set_pause_on_focus_lost(bool value);
 void aurora_set_background_input(bool value);
 void aurora_set_display_mode(AuroraDisplayMode mode);
 AuroraDisplayMode aurora_get_display_mode();
+
+typedef enum {
+  AURORA_METALFX_DISABLED,
+  AURORA_METALFX_UNSUPPORTED,
+  AURORA_METALFX_NOT_UPSCALING,
+  AURORA_METALFX_ACTIVE,
+  AURORA_METALFX_ERROR,
+} AuroraMetalFXStatus;
+
+// Changes are consumed at the next sealed frame boundary. MetalFX only applies
+// when both source dimensions are smaller than the aspect-fitted output.
+void aurora_set_metalfx_spatial(bool enabled);
+bool aurora_get_metalfx_spatial();
+bool aurora_is_metalfx_spatial_supported();
+AuroraMetalFXStatus aurora_get_metalfx_status();
 
 AuroraBackend aurora_get_backend();
 const AuroraBackend* aurora_get_available_backends(size_t* count);

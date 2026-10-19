@@ -1,5 +1,6 @@
 #include "fifo.hpp"
 #include "command_processor.hpp"
+#include "../gfx/common.hpp"
 #include "../internal.hpp"
 
 #include <chrono>
@@ -81,8 +82,23 @@ void drain() {
   if (detail::sBufferSize == 0) {
     return;
   }
-  process(detail::sBufferData, detail::sBufferSize, true);
+  process_all(detail::sBufferData, detail::sBufferSize, true);
   detail::sBufferSize = 0;
+}
+
+void process_all(const uint8_t* data, uint32_t size, bool bigEndian) {
+  uint32_t consumed = 0;
+  bool retried = false;
+  while (consumed < size) {
+    const auto count = process(data + consumed, size - consumed, bigEndian);
+    if (count == 0 && retried)
+      throw gfx::StagingCapacityError("FIFO draw does not fit after capacity submission");
+    consumed += count;
+    if (consumed == size) break;
+    // process returned with its renderer lock released. No recursive drain.
+    gfx::split_staging_batch();
+    retried = true;
+  }
 }
 
 const uint8_t* get_buffer_data() { return detail::sBufferData; }

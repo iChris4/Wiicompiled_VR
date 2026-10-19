@@ -1,16 +1,40 @@
-﻿cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.25)
+
+# Dawn's pinned macOS artifacts target 12.0. Set the same floor before project()
+# initializes the Apple toolchain so direct developer CMake invocations cannot
+# accidentally inherit the running SDK's deployment version. This cache entry
+# is harmless on non-Apple platforms and remains overridable by a caller.
+if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING
+        "Minimum macOS version supported by WiiCompiled" FORCE)
+endif()
 project(mkw_recompiled)
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$" OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "WiiCompiled requires a 64-bit Clang toolchain")
 endif()
 
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    list(LENGTH CMAKE_OSX_ARCHITECTURES MKW_OSX_ARCHITECTURE_COUNT)
+    if(MKW_OSX_ARCHITECTURE_COUNT GREATER 1)
+        message(FATAL_ERROR
+            "WiiCompiled supports one macOS architecture per build directory; "
+            "configure separate arm64 and x86_64 build directories")
+    endif()
+    list(GET CMAKE_OSX_ARCHITECTURES 0 _mkw_osx_arch)
+    set(CMAKE_SYSTEM_PROCESSOR "${_mkw_osx_arch}" CACHE STRING "Target processor architecture" FORCE)
+    set(CMAKE_SYSTEM_PROCESSOR "${_mkw_osx_arch}")
+endif()
+
 if(WIN32 AND MINGW AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
     set(MKW_PLATFORM_WINDOWS TRUE)
-elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|ARM64)$")
-    # The first native macOS target is Apple Silicon. Intel and universal
-    # binaries remain future compatibility work; do not silently claim them.
+elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|arm64|ARM64)$")
     set(MKW_PLATFORM_MACOS TRUE)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
+        set(MKW_PLATFORM_MACOS_X86_64 TRUE)
+    else()
+        set(MKW_PLATFORM_MACOS_ARM64 TRUE)
+    endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|aarch64|arm64|ARM64)$")
     set(MKW_PLATFORM_LINUX TRUE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
@@ -21,13 +45,41 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR MATCHES "
     set(MKW_PLATFORM_ANDROID TRUE)
 else()
     message(FATAL_ERROR
-        "WiiCompiled supports 64-bit LLVM-MinGW Clang on Windows, native Linux x86_64/aarch64, Apple Clang on macOS arm64, or the Android NDK on arm64-v8a")
+        "WiiCompiled supports 64-bit LLVM-MinGW Clang on Windows, native Linux x86_64/aarch64, Apple Clang on macOS x86_64/arm64, or the Android NDK on arm64-v8a")
 endif()
+
+if(MKW_PLATFORM_WINDOWS)
+    # CMake and Ninja write response files with Windows quoting, but clang tokenizes them with
+    # POSIX rules by default, where a bare apostrophe in a path opens a quoted span.
+    add_link_options(--rsp-quoting=windows)
+endif()
+
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     message(FATAL_ERROR "WiiCompiled only supports Release builds")
 endif()
 
 option(MKW_BUILD_PRODUCTS "Build translated WiiCompiled product targets" ON)
+option(MKW_BUILD_PSQ_TESTS "Build focused PSQ ISA tests" OFF)
+set(MKW_X86_CPU_PROFILE "v3" CACHE STRING
+    "Minimum x86-64 CPU profile for translated products (v2 or v3)")
+set_property(CACHE MKW_X86_CPU_PROFILE PROPERTY STRINGS v2 v3)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$" AND
+   NOT MKW_X86_CPU_PROFILE MATCHES "^(v2|v3)$")
+    message(FATAL_ERROR "MKW_X86_CPU_PROFILE must be v2 or v3 (got '${MKW_X86_CPU_PROFILE}')")
+endif()
+
+set(MKW_SETUP_VERSION "" CACHE STRING "WiiCompiled version recorded in the runtime log")
+
+option(MKW_PLATFORM_TESTS_ONLY "Build host-platform tests without graphics dependencies or game assets" OFF)
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/HostLibraries.cmake")
+if(MKW_PLATFORM_TESTS_ONLY)
+    if(MKW_BUILD_PRODUCTS)
+        message(FATAL_ERROR "MKW_PLATFORM_TESTS_ONLY requires MKW_BUILD_PRODUCTS=OFF")
+    endif()
+    add_compile_definitions(NOMINMAX)
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/PlatformTests.cmake")
+    return()
+endif()
 
 # Preprocessor definitions that belong to this project's own code (the runtime,
 # the translated shards and the product glue) and to nothing else. They are
@@ -48,6 +100,8 @@ set(MKW_NATIVE_PREBUILT_DIR "" CACHE PATH
 # package can be harvested from it.
 set(MKW_NATIVE_PREBUILT_EXPORT_DIR "" CACHE PATH
     "Maintainer-only: write a description of the configured aurora build here")
+option(MKW_USE_PREBUILT_RUNTIME
+    "Link the native prebuilt package's runtime archive when it matches this workspace" ON)
 
 # The two Crypto++ configuration macros are load-bearing for ABI: they shape the
 # structs and inline code the headers generate, so a first-party TU including
@@ -64,20 +118,6 @@ add_library(mkw::pugixml ALIAS mkw_pugixml)
 target_include_directories(mkw_pugixml PUBLIC third_party/pugixml)
 target_compile_features(mkw_pugixml PUBLIC cxx_std_17)
 set_target_properties(mkw_pugixml PROPERTIES UNITY_BUILD OFF)
-
-# Linux guest-fiber scheduling (runtime/src/host_context.cpp) needs a symmetric
-# stackful-coroutine primitive to stand in for Win32 Fibers. libco's co_switch() transfers
-# directly to any other created coroutine, matching SwitchToFiber's semantics exactly (unlike
-# asymmetric resume/yield coroutine libraries, which would need every call site restructured).
-# Vendored from upstream (higan-emu/libco @ e18e09d, 2019-10-16, ISC license; valgrind.h is
-# separately BSD-style licensed, see third_party/libco/LICENSE). Windows keeps native Fibers
-# and macOS uses the project's x18-safe AArch64 assembly backend, so this target is Linux-only.
-if(MKW_PLATFORM_LINUX OR MKW_PLATFORM_ANDROID)
-    add_library(mkw_libco STATIC third_party/libco/libco.c)
-    add_library(mkw::libco ALIAS mkw_libco)
-    target_include_directories(mkw_libco PUBLIC third_party/libco)
-    set_target_properties(mkw_libco PROPERTIES UNITY_BUILD OFF)
-endif()
 
 # Runtime configuration is real TOML, parsed by toml11 rather than a project-
 # specific line parser. Keep it header-only and vendored so disconnected release
@@ -128,6 +168,44 @@ if(NOT MKW_NATIVE_PREBUILT_DIR)
     set_target_properties(mkw_cryptopp PROPERTIES UNITY_BUILD OFF)
 endif()
 
+# TLS for non-Windows guest network HLE (runtime/src/hle/net/network_ssl.cpp) - the Windows path
+# uses Schannel (a Windows-only OS API), which has no equivalent on Linux/Android, so this project
+# needs its own TLS library there. mbed TLS was chosen over OpenSSL specifically because it cross-
+# compiles cleanly for Android with nothing beyond a plain C toolchain (no perl/asm build-script
+# dependency the way OpenSSL's build has), matching how this project already prefers toolchain-
+# simple libraries (see Crypto++ above, similarly stripped of ASM/SIMD for portability).
+# The from-source build fetches a pinned upstream tarball with a checked SHA-256.
+# The Linux native prebuilt package instead ships its compiled archives and headers.
+# Bump both values in cmake/MbedTLSPin.cmake when updating; the hash comes from
+# upstream's signed `mbedtls-<version>-sha256sum.txt` release asset.
+#
+# The alias exists on every platform so the link lines in cmake/PublicProducts.cmake stay
+# platform-independent, but it is only populated where network_ssl.cpp actually compiles the mbed
+# TLS path (`#ifndef _WIN32`). Windows keeps Schannel and must not fetch anything: its builds run
+# with FETCHCONTENT_FULLY_DISCONNECTED=ON against the offline dependency set prepared by
+# Launcher/Prepare-Dependencies.ps1, so an unconditional fetch would fail a clean configure there
+# and would also add a dependency Windows never links.
+add_library(mkw_mbedtls INTERFACE)
+add_library(mkw::mbedtls ALIAS mkw_mbedtls)
+if(NOT MKW_PLATFORM_WINDOWS)
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/MbedTLSPin.cmake")
+    if(NOT MKW_NATIVE_PREBUILT_DIR)
+        include(FetchContent)
+        FetchContent_Declare(mkw_mbedtls_upstream
+            URL "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MKW_MBEDTLS_VERSION}/mbedtls-${MKW_MBEDTLS_VERSION}.tar.bz2"
+            URL_HASH SHA256=${MKW_MBEDTLS_SHA256}
+            DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+        )
+        # Subproject mode already disables testing and codegen; it still enables programs.
+        set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+        set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+        set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+        set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(mkw_mbedtls_upstream)
+        target_link_libraries(mkw_mbedtls INTERFACE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto)
+    endif()
+endif()
+
 set(MKW_TRANSLATED_COMPILE_JOBS 0 CACHE STRING
     "Cap on concurrently compiling translated shard TUs via a Ninja job pool (0 = uncapped). \
 Scheduling only - never affects output bytes, so it is deliberately outside the canonical flag fingerprint.")
@@ -157,6 +235,30 @@ set(MKW_AURORA_DIR "${CMAKE_CURRENT_LIST_DIR}/../aurora-main")
 # The translator's explicit float casts are PPC single-precision rounding points.
 # Fast-math may erase them and change guest-visible integer conversions.
 set(MKW_TRANSLATED_PPC_FP_OPTIONS -fno-fast-math -ffp-contract=off)
+
+set(MKW_PPC_SEMANTIC_RUNTIME_SOURCES
+    "${CMAKE_CURRENT_LIST_DIR}/src/ppc_helpers.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/src/fpu_helpers.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/src/ppc_quantized.cpp"
+    # Native reimplementations of the game's culling math (VR object culling).
+    "${CMAKE_CURRENT_LIST_DIR}/src/vr/mkw_vr_culling.cpp")
+set_source_files_properties(${MKW_PPC_SEMANTIC_RUNTIME_SOURCES} PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON
+    SKIP_PRECOMPILE_HEADERS ON
+    COMPILE_OPTIONS "${MKW_TRANSLATED_PPC_FP_OPTIONS}")
+# The first-person cockpit and the character body it includes
+# (character_body_ik.inl) reject NaN/Inf guest matrices and tracked poses
+# before posing anything with them. -ffinite-math-only, part of the runtime's
+# -ffast-math, folds such a check away once the value has been through any
+# arithmetic, so this one file opts back out of that assumption (see
+# frame_interpolation.cpp below for the same reason).
+set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/src/vr/mkw_vr_first_person.cpp" PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON
+    SKIP_PRECOMPILE_HEADERS ON
+    COMPILE_OPTIONS "-fno-finite-math-only")
+# Match the optimization policy of the translated callers as well as their FP policy.
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/ppc_quantized.cpp" APPEND PROPERTY
+    COMPILE_OPTIONS -O2 -fno-slp-vectorize)
 
 # ----------------------------------------------------------------------
 # Third-party: aurora-main (provides SDL3 + GPU backends)
@@ -268,20 +370,16 @@ else()
             TARGET_DIRECTORY aurora_gx
             PROPERTIES COMPILE_OPTIONS "-fno-finite-math-only")
     endif()
-
-    if(MKW_NATIVE_PREBUILT_EXPORT_DIR)
-        include("${CMAKE_CURRENT_LIST_DIR}/cmake/NativePrebuiltExport.cmake")
-    endif()
 endif()
 
 # Everything from here down is this project's own code, so this is where the
 # project definitions enter the directory scope. A directory-scoped definition
 # seeds the COMPILE_DEFINITIONS of targets as they are created, which means:
 #   * aurora-main and its third-party tree were added above -> unaffected;
-#   * mkw_runtime_common, the translated shard libraries and the products in
-#     cmake/PublicProducts.cmake are all created below (that file is include()d,
-#     not add_subdirectory()d, so it shares this directory scope) -> they pick
-#     the definitions up exactly as before.
+#   * the runtime library, the translated shard libraries and the products in
+#     cmake/RuntimeLibrary.cmake and cmake/PublicProducts.cmake are all created
+#     below (those files are include()d, not add_subdirectory()d, so they share
+#     this directory scope) -> they pick the definitions up exactly as before.
 if(MKW_PROJECT_COMPILE_DEFINITIONS)
     add_compile_definitions(${MKW_PROJECT_COMPILE_DEFINITIONS})
 endif()
@@ -353,12 +451,14 @@ set_source_files_properties(src/vr/openxr_vulkan_win32.cpp PROPERTIES SKIP_UNITY
 set_source_files_properties(src/vr/openxr_vulkan_direct.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 if(MKW_PLATFORM_MACOS)
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory.cpp")
-    # HostContext's Apple Silicon backend is implemented in a small assembly
-    # companion. It must be part of the product runtime as well as the
-    # standalone context test; otherwise the final executable is missing
-    # mkw_co_init/mkw_co_switch at link time.
-    enable_language(ASM)
-    list(APPEND SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/platform/macos/co_switch.S")
+    if(MKW_PLATFORM_MACOS_ARM64)
+        # HostContext's Apple Silicon backend is implemented in a small assembly
+        # companion. It must be part of the product runtime as well as the
+        # standalone context test; otherwise the final executable is missing
+        # mkw_co_init/mkw_co_switch at link time.
+        enable_language(ASM)
+        list(APPEND SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/platform/macos/co_switch.S")
+    endif()
 else()
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory_macos.cpp")
 endif()
@@ -367,17 +467,10 @@ set(MKW_BASE_PRODUCT_SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/product/base_product.
 set(MKW_RETRO_REWIND_PRODUCT_SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/product/retro_rewind_product.cpp")
 # The host ISA guard is the one translation unit that must not receive the
 # x86-64-v3 flags, so it gets its own object library instead of riding along in
-# mkw_runtime_common. See cmake/PublicProducts.cmake and the file's own header.
+# the runtime library. See cmake/PublicProducts.cmake and the file's own header.
 set(MKW_CPU_BASELINE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/host_cpu_baseline.cpp")
 list(REMOVE_ITEM SOURCES ${MKW_BASE_PRODUCT_SOURCE} ${MKW_RETRO_REWIND_PRODUCT_SOURCE}
      ${MKW_CPU_BASELINE_SOURCE} ${MKW_PLATFORM_SOURCE})
-
-# This deliberately small library contains host services that are safe to
-# validate before guest memory and fiber work makes a full runtime build viable.
-add_library(mkw_platform STATIC "${MKW_PLATFORM_SOURCE}")
-target_include_directories(mkw_platform PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_platform PUBLIC cxx_std_17)
-set_target_properties(mkw_platform PROPERTIES UNITY_BUILD OFF)
 
 # Keep these independent from Aurora's BUILD_TESTING option: they validate the
 # project's host-platform contracts, not Aurora's third-party test suite.
@@ -390,201 +483,25 @@ endif()
 option(MKW_BUILD_TESTS "Build the runtime host-contract test executables" ${MKW_BUILD_TESTS_DEFAULT})
 unset(MKW_BUILD_TESTS_DEFAULT)
 if(MKW_BUILD_TESTS)
-enable_testing()
-add_executable(mkw_frame_interpolation_pacing_tests tests/frame_interpolation_pacing_tests.cpp)
-target_include_directories(mkw_frame_interpolation_pacing_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_link_libraries(mkw_frame_interpolation_pacing_tests PRIVATE mkw::toml11)
-target_compile_features(mkw_frame_interpolation_pacing_tests PRIVATE cxx_std_20)
-add_test(NAME mkw_frame_interpolation_pacing_tests COMMAND mkw_frame_interpolation_pacing_tests)
-# [vr] settings the headset renderer reads: single_pass_eyes and the Quest's foveation.
-add_executable(mkw_vr_config_tests tests/vr_config_tests.cpp)
-target_include_directories(mkw_vr_config_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_link_libraries(mkw_vr_config_tests PRIVATE mkw::toml11)
-target_compile_features(mkw_vr_config_tests PRIVATE cxx_std_20)
-add_test(NAME mkw_vr_config_tests COMMAND mkw_vr_config_tests)
-add_executable(mkw_platform_paths_tests "${CMAKE_CURRENT_LIST_DIR}/tests/platform_paths_tests.cpp")
-target_link_libraries(mkw_platform_paths_tests PRIVATE mkw_platform)
-target_compile_features(mkw_platform_paths_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_platform_paths_tests COMMAND mkw_platform_paths_tests)
-
-# The first-person VR camera's transform is deliberately header-only and free of
-# guest access so it can be checked here, without a headset or a running game.
-add_executable(mkw_vr_first_person_tests "${CMAKE_CURRENT_LIST_DIR}/tests/vr_first_person_tests.cpp")
-target_include_directories(mkw_vr_first_person_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_vr_first_person_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_vr_first_person_tests COMMAND mkw_vr_first_person_tests)
-
-# The first-person cockpit (seated eye, wheel and handlebar geometry, level seat,
-# native wheel vertices) and hand steering (grab, turn, hand-off to the game),
-# ported from heurazy's mario-kart-wii-VR-port, tracked hands (grasp, bare-hand
-# buttons, flick), throwing the held item, the character body IK and the race
-# camera modes (from heurazy's Wiicompiled_VR-PLUS). All header-only.
-foreach(test_name mkw_steering_wheel_tests mkw_vr_cockpit_tests mkw_vr_bullet_bill_tests mkw_vr_hand_steering_tests mkw_vr_camera_toggle_tests
-                  mkw_vr_hand_tracking_tests mkw_vr_culling_tests mkw_vr_item_throw_tests mkw_vr_body_ik_tests
-                  mkw_vr_camera_mode_tests)
-    string(REGEX REPLACE "^mkw_" "" test_source "${test_name}")
-    add_executable(${test_name} "${CMAKE_CURRENT_LIST_DIR}/tests/${test_source}.cpp")
-    target_include_directories(${test_name} PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-    target_compile_features(${test_name} PRIVATE cxx_std_17)
-    add_test(NAME ${test_name} COMMAND ${test_name})
-endforeach()
-# The body IK ships in mkw_vr_first_person.cpp, compiled with the runtime's
-# -ffast-math but -fno-finite-math-only (cmake/PublicProducts.cmake), so that
-# its NaN guards on computed values survive; they are tested under the same
-# flags.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(mkw_vr_body_ik_tests PRIVATE -ffast-math -fno-finite-math-only)
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/PlatformTests.cmake")
+    # The VR camera, input, policy and OpenXR contracts; they need the vendored
+    # toml11 and the OpenXR loader target configured above.
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/VrTests.cmake")
 endif()
 
-# The USB wheel's calibration and GameCube pad mapping (physical_wheel.h),
-# ported from heurazy's mario-kart-wii-VR-port. Header-only; needs dolphin/pad.h.
-add_executable(mkw_physical_wheel_tests "${CMAKE_CURRENT_LIST_DIR}/tests/physical_wheel_tests.cpp")
-target_include_directories(mkw_physical_wheel_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include"
-                                                           "${CMAKE_CURRENT_LIST_DIR}/../aurora-main/include")
-target_compile_definitions(mkw_physical_wheel_tests PRIVATE TARGET_PC)
-target_compile_features(mkw_physical_wheel_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_physical_wheel_tests COMMAND mkw_physical_wheel_tests)
+set(MKW_RUNTIME_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/RuntimeLibrary.cmake")
 
-# The VR controllers' Wii Remote presentation (accelerometer frame, pointer
-# raycast, debounce, button profile) is header-only for the same reason.
-add_executable(mkw_vr_wii_remote_tests "${CMAKE_CURRENT_LIST_DIR}/tests/vr_wii_remote_tests.cpp")
-target_include_directories(mkw_vr_wii_remote_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_vr_wii_remote_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_vr_wii_remote_tests COMMAND mkw_vr_wii_remote_tests)
-
-# The in-headset settings panel's controller chord, release latch, selection,
-# scrolling and canvas mapping, plus the thread bridge they publish through.
-add_executable(mkw_vr_settings_panel_tests tests/vr_settings_panel_tests.cpp src/vr/openxr_settings_panel.cpp)
-target_include_directories(mkw_vr_settings_panel_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_vr_settings_panel_tests PRIVATE cxx_std_17)
-set_target_properties(mkw_vr_settings_panel_tests PROPERTIES UNITY_BUILD OFF)
-add_test(NAME mkw_vr_settings_panel_tests COMMAND mkw_vr_settings_panel_tests)
-
-# Resolve the real local-kart pointer walk against synthetic offline/online rosters.
-add_executable(mkw_vr_player_tests "${CMAKE_CURRENT_LIST_DIR}/tests/vr_player_tests.cpp")
-target_include_directories(mkw_vr_player_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_vr_player_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_vr_player_tests COMMAND mkw_vr_player_tests)
-
-add_executable(mkw_vr_item_tests "${CMAKE_CURRENT_LIST_DIR}/tests/vr_item_tests.cpp")
-target_include_directories(mkw_vr_item_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_vr_item_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_vr_item_tests COMMAND mkw_vr_item_tests)
-
-add_executable(mkw_vr_policy_tests tests/vr_policy_tests.cpp src/vr/mkw_vr_policy.cpp)
-target_include_directories(mkw_vr_policy_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_vr_policy_tests PRIVATE cxx_std_17)
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(mkw_vr_policy_tests PRIVATE -ffast-math)
+# The prebuilt export also carries the game-independent runtime as a static
+# archive (x86_64 only; AArch64 compiles it locally with -mcpu=native). It is
+# defined here, after the project definitions, so its flags match the products'.
+if(MKW_NATIVE_PREBUILT_EXPORT_DIR AND NOT MKW_NATIVE_PREBUILT_DIR)
+    if(MKW_HOST_IS_X86_64)
+        mkw_add_runtime_library(mkw_runtime STATIC ${SOURCES})
+        set_target_properties(mkw_runtime PROPERTIES EXCLUDE_FROM_ALL ON)
+    endif()
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/NativePrebuiltExport.cmake")
 endif()
-add_test(NAME mkw_vr_policy_tests COMMAND mkw_vr_policy_tests)
-
-# F10 > Diagnostics: the OpenXR frame-diagnostics collector is free of OpenXR
-# and guest state, so its window accounting runs on a synthetic clock here.
-add_executable(mkw_openxr_diagnostics_tests tests/openxr_diagnostics_tests.cpp src/vr/openxr_diagnostics.cpp)
-target_include_directories(mkw_openxr_diagnostics_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_link_libraries(mkw_openxr_diagnostics_tests PRIVATE mkw::toml11)
-target_compile_features(mkw_openxr_diagnostics_tests PRIVATE cxx_std_20)
-set_target_properties(mkw_openxr_diagnostics_tests PROPERTIES UNITY_BUILD OFF)
-add_test(NAME mkw_openxr_diagnostics_tests COMMAND mkw_openxr_diagnostics_tests)
-
-# F10 > Diagnostics > Export Logs, against temporary folders.
-add_executable(mkw_log_export_tests tests/log_export_tests.cpp src/log_export.cpp)
-target_include_directories(mkw_log_export_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_log_export_tests PRIVATE cxx_std_20)
-set_target_properties(mkw_log_export_tests PROPERTIES UNITY_BUILD OFF)
-add_test(NAME mkw_log_export_tests COMMAND mkw_log_export_tests)
-
-if(MKW_ENABLE_OPENXR AND MKW_PLATFORM_WINDOWS)
-    add_executable(mkw_openxr_replay_tests
-        tests/openxr_d3d12_replay_tests.cpp src/vr/openxr_d3d12.cpp src/vr/openxr_diagnostics.cpp)
-    target_include_directories(mkw_openxr_replay_tests PRIVATE
-        "${CMAKE_CURRENT_LIST_DIR}/include"
-        "${CMAKE_CURRENT_LIST_DIR}/../aurora-main/include"
-        "$<TARGET_PROPERTY:${MKW_OPENXR_TARGET},INTERFACE_INCLUDE_DIRECTORIES>")
-    target_compile_definitions(mkw_openxr_replay_tests PRIVATE MKW_ENABLE_OPENXR=1)
-    target_compile_features(mkw_openxr_replay_tests PRIVATE cxx_std_17)
-    set_target_properties(mkw_openxr_replay_tests PROPERTIES UNITY_BUILD OFF)
-    add_test(NAME mkw_openxr_replay_tests COMMAND mkw_openxr_replay_tests)
-    add_executable(mkw_openxr_vulkan_replay_tests
-        tests/openxr_d3d12_replay_tests.cpp src/vr/openxr_vulkan_win32.cpp src/vr/openxr_diagnostics.cpp)
-    target_include_directories(mkw_openxr_vulkan_replay_tests PRIVATE
-        "${CMAKE_CURRENT_LIST_DIR}/include"
-        "${CMAKE_CURRENT_LIST_DIR}/../aurora-main/include"
-        "$<TARGET_PROPERTY:${MKW_OPENXR_TARGET},INTERFACE_INCLUDE_DIRECTORIES>")
-    target_compile_definitions(mkw_openxr_vulkan_replay_tests PRIVATE MKW_ENABLE_OPENXR=1 TEST_WINDOWS_VULKAN=1)
-    target_compile_features(mkw_openxr_vulkan_replay_tests PRIVATE cxx_std_17)
-    set_target_properties(mkw_openxr_vulkan_replay_tests PROPERTIES UNITY_BUILD OFF)
-    add_test(NAME mkw_openxr_vulkan_replay_tests COMMAND mkw_openxr_vulkan_replay_tests)
-endif()
-
-add_executable(mkw_nand_save_tests "${CMAKE_CURRENT_LIST_DIR}/tests/nand_save_tests.cpp")
-target_include_directories(mkw_nand_save_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_nand_save_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_nand_save_tests COMMAND mkw_nand_save_tests)
-
-add_executable(mkw_nand_settings_tests "${CMAKE_CURRENT_LIST_DIR}/tests/nand_settings_tests.cpp")
-find_package(Threads REQUIRED)
-target_link_libraries(mkw_nand_settings_tests PRIVATE Threads::Threads)
-target_include_directories(mkw_nand_settings_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_nand_settings_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_nand_settings_tests COMMAND mkw_nand_settings_tests)
-
-add_executable(mkw_sc_serial_tests "${CMAKE_CURRENT_LIST_DIR}/tests/sc_serial_tests.cpp")
-target_include_directories(mkw_sc_serial_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_sc_serial_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_sc_serial_tests COMMAND mkw_sc_serial_tests)
-
-# The input expression engine is self-contained, so it can be exercised without
-# linking the runtime or SDL.
-add_executable(mkw_input_expr_tests
-    "${CMAKE_CURRENT_LIST_DIR}/tests/test_expr.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/src/input_expr.cpp")
-target_include_directories(mkw_input_expr_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-target_compile_features(mkw_input_expr_tests PRIVATE cxx_std_17)
-add_test(NAME mkw_input_expr_tests COMMAND mkw_input_expr_tests)
-
-# HostContext deliberately keeps the platform-specific context primitive out
-# of fiber_manager.cpp. Exercise the Linux libco handoff directly so future
-# refactors cannot silently remove its headers, implementation, or link edge.
-if(MKW_PLATFORM_LINUX)
-    add_executable(mkw_linux_host_context_tests
-        "${CMAKE_CURRENT_LIST_DIR}/tests/host_context_tests.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/src/host_context.cpp")
-    target_include_directories(mkw_linux_host_context_tests PRIVATE
-        "${CMAKE_CURRENT_LIST_DIR}/include"
-        "${CMAKE_CURRENT_LIST_DIR}/third_party/libco")
-    target_compile_features(mkw_linux_host_context_tests PRIVATE cxx_std_17)
-    target_link_libraries(mkw_linux_host_context_tests PRIVATE mkw::libco)
-    add_test(NAME mkw_linux_host_context_tests COMMAND mkw_linux_host_context_tests)
-endif()
-
-if(MKW_PLATFORM_MACOS)
-    # Exercise the Apple Silicon context ABI and the public host-memory
-    # contracts separately from translated products.
-    enable_language(ASM)
-    add_executable(mkw_macos_context_abi_tests
-        "${CMAKE_CURRENT_LIST_DIR}/tests/macos_context_abi_tests.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/src/platform/macos/co_switch.S")
-    target_compile_features(mkw_macos_context_abi_tests PRIVATE cxx_std_17)
-    add_test(NAME mkw_macos_context_abi_tests COMMAND mkw_macos_context_abi_tests)
-
-    add_executable(mkw_macos_host_context_tests
-        "${CMAKE_CURRENT_LIST_DIR}/tests/host_context_tests.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/src/host_context.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/src/platform/macos/co_switch.S")
-    target_include_directories(mkw_macos_host_context_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-    target_compile_features(mkw_macos_host_context_tests PRIVATE cxx_std_17)
-    add_test(NAME mkw_macos_host_context_tests COMMAND mkw_macos_host_context_tests)
-
-    add_executable(mkw_macos_guest_flat_memory_tests
-        "${CMAKE_CURRENT_LIST_DIR}/tests/macos_guest_flat_memory_tests.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory_macos.cpp")
-    target_include_directories(mkw_macos_guest_flat_memory_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
-    target_compile_features(mkw_macos_guest_flat_memory_tests PRIVATE cxx_std_17)
-    add_test(NAME mkw_macos_guest_flat_memory_tests COMMAND mkw_macos_guest_flat_memory_tests)
-endif()
-endif() # MKW_BUILD_TESTS
 
 # The translator emits the complete, content-addressed source graph. Consuming
 # this one manifest keeps configure independent of the 28k generated function
@@ -593,8 +510,8 @@ if(MKW_BUILD_PRODUCTS)
     set(MKW_TRANSLATED_SHARD_MANIFEST
         "${CMAKE_CURRENT_LIST_DIR}/../generated/build_shards/shards.cmake"
         CACHE FILEPATH "Translator-owned aggregate shard manifest")
-    # The prebuilt export only needs the aurora/third-party closure configured above, so a
-    # packaging machine without a translation stops here instead of failing.
+    # The prebuilt export only needs the aurora/third-party closure and the runtime
+    # configured above, so a packaging machine without a translation stops here.
     if(MKW_NATIVE_PREBUILT_EXPORT_DIR AND NOT EXISTS "${MKW_TRANSLATED_SHARD_MANIFEST}")
         message(STATUS "No translator shard manifest; configuring the native prebuilt export only")
         return()
@@ -611,20 +528,13 @@ if(MKW_BUILD_PRODUCTS)
         "${MKW_PROFILE_SENSITIVE_CALLER_COUNT} profile-sensitive callers; "
         "${MKW_RETRO_REWIND_FUNCTION_COUNT} Retro Rewind functions")
 
-    set(MKW_RUNTIME_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
     include("${CMAKE_CURRENT_LIST_DIR}/cmake/PublicProducts.cmake")
 else()
     if(MKW_PLATFORM_MACOS)
         # Compile-only audit of native runtime sources. It deliberately avoids
         # translated products until their host dependencies are portable.
-        # These sources depend on generated/RuntimeConfig.h, which is emitted for
-        # a particular game by the translator and is intentionally unavailable
-        # in this platform-only configuration.
-        set(MKW_MACOS_NATIVE_AUDIT_SOURCES ${SOURCES})
-        list(REMOVE_ITEM MKW_MACOS_NATIVE_AUDIT_SOURCES
-            "${CMAKE_CURRENT_LIST_DIR}/src/abi_bridge.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/src/hle/os/os_alarm.cpp")
-        add_library(mkw_macos_native_compile OBJECT ${MKW_MACOS_NATIVE_AUDIT_SOURCES})
+        # runtime/src is game-independent; per-game glue lives in runtime/game.
+        add_library(mkw_macos_native_compile OBJECT ${SOURCES})
         target_include_directories(mkw_macos_native_compile PRIVATE
             "${CMAKE_CURRENT_LIST_DIR}/include" "${CMAKE_CURRENT_LIST_DIR}/src"
             "${CMAKE_CURRENT_LIST_DIR}/.." "${CMAKE_CURRENT_LIST_DIR}/../aurora-main/include")
@@ -632,7 +542,15 @@ else()
         target_compile_definitions(mkw_macos_native_compile PRIVATE SDL_MAIN_HANDLED TARGET_PC)
         target_link_libraries(mkw_macos_native_compile PRIVATE
             aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx
-            mkw::pugixml mkw::toml11 mkw::cryptopp)
+            mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls)
+        if(MKW_PLATFORM_MACOS_X86_64)
+            target_link_libraries(mkw_macos_native_compile PRIVATE mkw::libco)
+            target_compile_options(mkw_macos_native_compile PRIVATE
+                -march=x86-64-${MKW_X86_CPU_PROFILE})
+            if(MKW_X86_CPU_PROFILE STREQUAL "v2")
+                target_compile_definitions(mkw_macos_native_compile PRIVATE MKW_X86_CPU_PROFILE_V2=1)
+            endif()
+        endif()
         set_target_properties(mkw_macos_native_compile PROPERTIES UNITY_BUILD OFF)
     endif()
     if(MKW_PLATFORM_ANDROID)

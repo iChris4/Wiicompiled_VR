@@ -85,6 +85,6 @@ void GXCallDisplayListLE(const void* data, u32 nbytes) {
   aurora::gx::fifo::drain();
 
   // Process the display list through the command processor (little-endian)
-  aurora::gx::fifo::process(static_cast<const u8*>(data), nbytes, false);
+  aurora::gx::fifo::process_all(static_cast<const u8*>(data), nbytes, false);
 }
 }

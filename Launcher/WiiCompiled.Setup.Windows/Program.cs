@@ -1,5 +1,6 @@
 ﻿namespace WiiCompiled.Setup.Windows;
 
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 internal static class Program
@@ -30,7 +31,7 @@ internal static class Program
             {
                 // A command line was supplied, so a caller is driving this process. Rejecting the
                 // command with a modal dialog would hang that caller forever.
-                if (progressJson) new NdjsonInstallReporter().Failure(ex.Message);
+                if (progressJson) new NdjsonInstallReporter(ProductInfo.Version).Failure(ex.Message);
                 else Console.Error.WriteLine(ex.Message);
                 return 1;
             }
@@ -98,7 +99,7 @@ internal static class Program
             // errors raised outside it.
             if (progressJson)
             {
-                new NdjsonInstallReporter().Failure(ex.Message);
+                new NdjsonInstallReporter(ProductInfo.Version).Failure(ex.Message);
                 Console.Error.WriteLine(ex);
             }
             else
@@ -130,7 +131,9 @@ internal static class ProductInfo
 {
     public const string Name = "WiiCompiled OpenXR VR";
     public const string Id = "wiicompiled-openxr-vr";
-    public static string Version => typeof(ProductInfo).Assembly.GetName().Version!.ToString(3);
+    public static readonly string Version =
+        typeof(ProductInfo).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
+            .InformationalVersion;
 
     /// <summary>
     /// The setup executable is copied into the installation under this name. It is the launcher and

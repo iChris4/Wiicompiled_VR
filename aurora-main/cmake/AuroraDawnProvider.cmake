@@ -48,7 +48,7 @@ if (_aurora_dawn_provider STREQUAL "auto")
     set(_has_package TRUE)
   elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|aarch64)$")
     set(_has_package TRUE)
-  elseif (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|x86_64)$")
+  elseif (APPLE AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|x86_64)$" OR CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64|x86_64)$"))
     set(_has_package TRUE)
   elseif (CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     set(_has_package TRUE)
@@ -103,7 +103,7 @@ if (_aurora_dawn_provider STREQUAL "vendor")
     include(FetchContent)
     FetchContent_Declare(dawn
       URL "https://github.com/google/dawn/archive/refs/tags/${AURORA_DAWN_VERSION}.tar.gz"
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      DOWNLOAD_EXTRACT_TIMESTAMP FALSE
       EXCLUDE_FROM_ALL
     )
     FetchContent_MakeAvailable(dawn)
@@ -145,6 +145,10 @@ elseif (_aurora_dawn_provider STREQUAL "package")
   if (NOT AURORA_DAWN_PACKAGE_URL)
     string(TOLOWER "${CMAKE_SYSTEM_NAME}" _dawn_system)
     string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _dawn_arch)
+    if (APPLE AND CMAKE_OSX_ARCHITECTURES)
+      list(GET CMAKE_OSX_ARCHITECTURES 0 _dawn_osx_arch)
+      string(TOLOWER "${_dawn_osx_arch}" _dawn_arch)
+    endif ()
     if (_dawn_system STREQUAL "windows")
       if (_dawn_arch STREQUAL "x86_64")
         set(_dawn_arch "amd64")
@@ -196,7 +200,7 @@ elseif (_aurora_dawn_provider STREQUAL "package")
   FetchContent_Declare(dawn_prebuilt
     URL "${AURORA_DAWN_PACKAGE_URL}"
     ${_dawn_prebuilt_hash_argument}
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
   )
   FetchContent_MakeAvailable(dawn_prebuilt)
 

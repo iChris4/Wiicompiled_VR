@@ -39,7 +39,7 @@ require_command() {
 }
 
 sha256_of() {
-    sha256sum "$1" | awk '{print $1}'
+    mkw_sha256 "$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -47,6 +47,8 @@ sha256_of() {
 # ---------------------------------------------------------------------------
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=build-cache.sh
+source "$script_dir/build-cache.sh"
 workspace=$(cd "$script_dir/.." && pwd)
 profile=base
 output_dir=""
@@ -66,6 +68,7 @@ translator_bin_override=""
 fuse_ld_override=""
 native_prebuilt_dir=""
 sysroot=""
+setup_version=""
 
 usage() {
     cat <<'EOF'
@@ -90,6 +93,8 @@ Usage: local-build.sh --output-dir DIR [options]
                                    skips compiling aurora-main from source entirely
   --sysroot PATH                   Passed to CMake as -DCMAKE_SYSROOT: where the compiler resolves
                                    standard headers/startup files
+  --setup-version VERSION          Version recorded in the runtime log (default: <Version> in
+                                   Launcher/Directory.Build.props when present)
 EOF
 }
 
@@ -114,10 +119,16 @@ while [[ $# -gt 0 ]]; do
         --translator-bin) translator_bin_override=$2; shift 2 ;;
         --native-prebuilt-dir) native_prebuilt_dir=$2; shift 2 ;;
         --sysroot) sysroot=$2; shift 2 ;;
+        --setup-version) setup_version=$2; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
+
+if [[ -z "$setup_version" && -f "$workspace/Launcher/Directory.Build.props" ]]; then
+    setup_version=$(sed -nE 's/.*<Version>([^<]+)<\/Version>.*/\1/p' "$workspace/Launcher/Directory.Build.props" | head -n 1)
+fi
+[[ "$setup_version" =~ ^[0-9A-Za-z.+-]*$ ]] || fail "--setup-version contains unsupported characters"
 
 [[ -n "$output_dir" ]] || { usage; fail "--output-dir is required"; }
 case "$profile" in
@@ -190,6 +201,30 @@ assert_file "$project" "Translation project"
 assert_file "$assets/main.dol" "Extracted main.dol (see translator/README.md - owning the game is required)"
 assert_file "$assets/StaticR.rel" "Extracted StaticR.rel (see translator/README.md - owning the game is required)"
 
+# The AppImage bundles Clang, but Linux startup objects and the C/C++ link runtimes
+# still come from the host. Check them before the expensive translation so a missing
+# development package produces a useful error instead of CMake's generic exit 1.
+link_probe_dir=$(mktemp -d)
+link_probe_flags=()
+[[ -z "$sysroot" ]] || link_probe_flags+=(--sysroot="$sysroot")
+[[ -z "$fuse_ld_override" ]] || link_probe_flags+=(-fuse-ld="$fuse_ld_override")
+printf 'int main(void) { return 0; }\n' > "$link_probe_dir/probe.c"
+cat > "$link_probe_dir/probe.cpp" <<'EOF'
+#include <vector>
+int main() { std::vector<int> values{1}; return values.front() - 1; }
+EOF
+if ! "$cc_bin" "${link_probe_flags[@]}" "$link_probe_dir/probe.c" -o "$link_probe_dir/probe-c" > "$link_probe_dir/error" 2>&1; then
+    cat "$link_probe_dir/error" >&2
+    rm -rf "$link_probe_dir"
+    fail "The C compiler cannot link a test program. Linux needs C development files (glibc startup objects and a compiler runtime) in addition to bundled Clang. Install your distribution's development packages, or on SteamOS run WiiCompiled through the Wheel Wizard Flatpak."
+fi
+if ! "$cxx_bin" "${link_probe_flags[@]}" "$link_probe_dir/probe.cpp" -o "$link_probe_dir/probe-cxx" > "$link_probe_dir/error" 2>&1; then
+    cat "$link_probe_dir/error" >&2
+    rm -rf "$link_probe_dir"
+    fail "The C++ compiler cannot link a test program. Install your distribution's C++ development packages, or on SteamOS run WiiCompiled through the Wheel Wizard Flatpak."
+fi
+rm -rf "$link_probe_dir"
+
 # Literal line matching against the manifest's fixed shape, not a YAML dependency - the same
 # approach NativeBuildFlags.ps1's Get-MkwProjectPins uses on Windows, kept here only for the one
 # field this script actually needs from the manifest.
@@ -242,10 +277,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Translation cache: this script is the only owner of the reuse decision (unlike LocalBuild.ps1,
-# which is handed caller-computed fingerprints by the Windows installer - there is no Linux
-# installer yet to supply anything). Hash the game inputs the translation actually depends on;
-# a match plus every expected output file present means the previous translation is still good.
+# Translation cache: this script is the only owner of the reuse decision. The identity (see
+# build-cache.sh) covers the game inputs, project, native registrations, translator and this script,
+# matching the Windows installer's translation identity.
 # ---------------------------------------------------------------------------
 
 if (( force_clean_build )); then
@@ -253,13 +287,12 @@ if (( force_clean_build )); then
     rm -rf "$generated" "$base_manifest_dir" "$build"
 fi
 
-translation_fingerprint=$(cat "$assets/main.dol" "$assets/StaticR.rel" "$project" | sha256sum | awk '{print $1}')
+translator_identity_input=${translator_bin:-$(dirname "$translator_dll")}
+translation_fingerprint=$(mkw_translation_identity "$workspace" "$translator_identity_input" "$script_dir/local-build.sh")
 reuse_base=0
-if [[ -f "$translation_provenance" ]]; then
-    recorded=$(grep -o '"TranslationFingerprint" *: *"[^"]*"' "$translation_provenance" 2>/dev/null | sed 's/.*"\([0-9a-f]*\)"$/\1/' || true)
-    if [[ "$recorded" == "$translation_fingerprint" && -f "$base_metadata" && -f "$base_manifest" ]]; then
-        reuse_base=1
-    fi
+if [[ "$(mkw_read_identity "$translation_provenance" TranslationFingerprint)" == "$translation_fingerprint" \
+      && -f "$base_metadata" && -f "$base_manifest" ]]; then
+    reuse_base=1
 fi
 
 if (( builds_retro )); then
@@ -307,8 +340,7 @@ else
     translator emit-base-manifest --project "$project" --out "$base_manifest_dir" \
         --functions-dir "$functions" --translation-output-metadata "$base_metadata" --region P
 
-    printf '{"SchemaVersion":1,"TranslationFingerprint":"%s"}' "$translation_fingerprint" \
-        > "$translation_provenance"
+    mkw_write_identity "$translation_provenance" TranslationFingerprint "$translation_fingerprint"
 fi
 
 if (( builds_retro )); then
@@ -383,6 +415,13 @@ if [[ -f "$build/CMakeCache.txt" ]]; then
         done < <(grep -o ':FILEPATH=.*' "$build/CMakeCache.txt" | sed 's/^:FILEPATH=//')
     fi
 fi
+# The AppImage keeps tool paths stable across updates, so a changed compiler is only visible here.
+toolchain_fingerprint=$(mkw_toolchain_identity "$workspace" "$cc_bin" "$cxx_bin" "$cmake_bin" "$ninja_bin")
+if [[ "$keep_native_build" -eq 1 && \
+      "$(mkw_read_identity "$toolchain_provenance" ToolchainFingerprint)" != "$toolchain_fingerprint" ]]; then
+    keep_native_build=0
+    stale_reason=" (the toolchain or a pinned dependency changed)"
+fi
 if [[ -d "$build" && "$keep_native_build" -eq 0 ]]; then
     echo "MKWCBUILD: The native build cache does not belong to this workspace path or toolchain; rebuilding from scratch$stale_reason"
     rm -rf "$build"
@@ -394,7 +433,8 @@ configure_args=(-S "$workspace/runtime" -B "$build" -G Ninja
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_C_COMPILER="$cc_bin" -DCMAKE_CXX_COMPILER="$cxx_bin"
     -DCMAKE_MAKE_PROGRAM="$ninja_bin"
-    -DMKW_TRANSLATED_COMPILE_JOBS="$translated_jobs")
+    -DMKW_TRANSLATED_COMPILE_JOBS="$translated_jobs"
+    -DMKW_SETUP_VERSION="$setup_version")
 # CMAKE_C_COMPILER/CXX_COMPILER stay stable across AppImage runs on their own (they're exactly
 # what's passed via -D above, and AppRun points --cc/--cxx at a symlink it re-targets at the
 # current mount every launch - see build-appimage.sh). CMAKE_AR/RANLIB/LINKER/ASM_COMPILER do NOT
@@ -413,7 +453,9 @@ if [[ "$cc_bin" == */* ]]; then
     configure_args+=(-DCMAKE_ASM_COMPILER="$cc_bin")
 fi
 if [[ -n "$fuse_ld_override" ]]; then
-    configure_args+=(-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=$fuse_ld_override")
+    # CMAKE_EXE_LINKER_FLAGS is one string that CMake pastes into the shell link command.
+    printf -v fuse_ld_quoted '%q' "$fuse_ld_override"
+    configure_args+=(-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=$fuse_ld_quoted")
 fi
 if [[ -n "$native_prebuilt_dir" ]]; then
     configure_args+=(-DMKW_NATIVE_PREBUILT_DIR="$native_prebuilt_dir")
@@ -429,6 +471,7 @@ fi
 
 log_step configure-native "Configuring the native toolchain"
 "$cmake_bin" "${configure_args[@]}"
+mkw_write_identity "$toolchain_provenance" ToolchainFingerprint "$toolchain_fingerprint"
 
 case "$profile" in
     base) targets=(WiiCompiled) ;;
@@ -457,7 +500,9 @@ publish_built_product() {
     local exe=$build/$target
     assert_file "$exe" "Locally compiled game executable"
     cp -f "$exe" "$destination/$target"
-    for name in dsp_coef.bin initial_pipeline_cache.db; do
+    # cacert.pem is the TLS root bundle the mbed TLS path looks up beside the executable
+    # (runtime/src/hle/net/network_ssl.cpp); without it HTTPS fails at runtime.
+    for name in dsp_coef.bin initial_pipeline_cache.db cacert.pem; do
         [[ -f "$build/$name" ]] && cp -f "$build/$name" "$destination/"
     done
     [[ -d "$build/wii_bootstrap" ]] && cp -rf "$build/wii_bootstrap" "$destination/"

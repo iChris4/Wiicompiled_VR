@@ -105,7 +105,8 @@ internal sealed class TranslationProjectConfig
             .ToArray();
         var runtime = new ProjectRuntime(
             abiDirectories,
-            ResolvePath(workspaceRoot, dto.Runtime?.NativeRegistrationRoot ?? "runtime/src"));
+            ResolvePath(workspaceRoot, dto.Runtime?.NativeRegistrationRoot ?? "runtime/src"),
+            ResolvePath(workspaceRoot, dto.Runtime?.NativeIndex ?? "runtime/native-index.json"));
         var outputRoot = ResolvePath(workspaceRoot, dto.Output?.Root ?? "generated");
         var output = new ProjectOutput(
             outputRoot,
@@ -462,6 +463,7 @@ internal sealed class TranslationProjectConfig
     {
         public List<string>? NativeAbiDirectories { get; init; }
         public string? NativeRegistrationRoot { get; init; }
+        public string? NativeIndex { get; init; }
     }
 
     private sealed class OutputDto
@@ -526,7 +528,8 @@ internal sealed record ProjectEntryObserver(
     IReadOnlySet<uint> EntryPoints);
 internal sealed record ProjectRuntime(
     IReadOnlyList<string> NativeAbiDirectories,
-    string NativeRegistrationRoot);
+    string NativeRegistrationRoot,
+    string NativeIndex);
 internal sealed record ProjectOutput(
     string Root,
     string Functions,

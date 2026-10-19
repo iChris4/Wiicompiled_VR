@@ -1,39 +1,19 @@
 using System.Text.Json;
 
-namespace WiiCompiled.Setup.Windows;
-
-/// <summary>
-/// Stable stage identifiers reported by <c>--progress-json</c>. These are part of the public
-/// WheelWizard contract (docs/WHEELWIZARD_CONTRACT.md): the strings may gain new members, but an
-/// existing identifier never changes meaning.
-/// </summary>
-internal static class InstallStages
-{
-    public const string Validate = "validate";
-    public const string ExtractToolkit = "extract-toolkit";
-    public const string ExtractDisc = "extract-disc";
-    public const string PrepareRetro = "prepare-retro";
-    public const string BuildBase = "build-base";
-    public const string BuildRetro = "build-retro";
-    public const string Publish = "publish";
-    public const string QuestKit = "quest-kit";
-    public const string QuestToolchain = "quest-toolchain";
-    public const string QuestBuild = "quest-build";
-    public const string QuestPackage = "quest-package";
-}
+namespace WiiCompiled.Setup.Common;
 
 /// <summary>
 /// Where an installation reports what it is doing. Progress is coarse and monotonic; raw translator
 /// and compiler output is a diagnostic, never progress, because it is unbounded and machine-hostile.
 /// </summary>
-internal interface IInstallReporter
+public interface IInstallReporter
 {
     void Progress(string stage, string message, int percent);
     void Diagnostic(string line);
 }
 
 /// <summary>Reports to a caller-supplied sink; used by console and maintenance commands.</summary>
-internal sealed class DelegatingInstallReporter : IInstallReporter
+public sealed class DelegatingInstallReporter : IInstallReporter
 {
     private readonly Action<string> _sink;
 
@@ -47,15 +27,20 @@ internal sealed class DelegatingInstallReporter : IInstallReporter
 /// The <c>--progress-json</c> protocol: one JSON object per line on stdout, nothing else on stdout,
 /// diagnostics on stderr. The terminal <c>result</c> line is written exactly once.
 /// </summary>
-internal sealed class NdjsonInstallReporter : IInstallReporter
+public sealed class NdjsonInstallReporter : IInstallReporter
 {
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = false };
+    private readonly string _version;
     private readonly Action<string>? _log;
     private readonly object _gate = new();
     private int _lastPercent;
     private bool _finished;
 
-    public NdjsonInstallReporter(Action<string>? log = null) => _log = log;
+    public NdjsonInstallReporter(string version, Action<string>? log = null)
+    {
+        _version = version;
+        _log = log;
+    }
 
     public void Progress(string stage, string message, int percent)
     {
@@ -82,7 +67,7 @@ internal sealed class NdjsonInstallReporter : IInstallReporter
         {
             if (_finished) return;
             _finished = true;
-            WriteLine(new { type = "result", success = true, version = ProductInfo.Version, installDir = installDirectory });
+            WriteLine(new { type = "result", success = true, version = _version, installDir = installDirectory });
         }
     }
 
@@ -101,15 +86,15 @@ internal sealed class NdjsonInstallReporter : IInstallReporter
     /// <c>--build-quest</c>'s product: where the game package is and what it was built against. Written
     /// once, before the terminal result line.
     /// </summary>
-    public void QuestPackage(QuestBuildService.Result result)
+    public void QuestPackage(string packagePath, string kitFingerprint, bool includesGameFiles, long sizeBytes)
     {
         lock (_gate)
         {
             if (_finished) return;
             WriteLine(new
             {
-                type = "quest-package", path = result.PackagePath, kitFingerprint = result.KitFingerprint,
-                includesGameFiles = result.IncludesGameFiles, sizeBytes = result.SizeBytes
+                type = "quest-package", path = packagePath, kitFingerprint,
+                includesGameFiles, sizeBytes
             });
         }
     }
@@ -127,8 +112,8 @@ internal sealed class NdjsonInstallReporter : IInstallReporter
     }
 }
 
-/// <summary>Plain-text console reporting for a silent install without <c>--progress-json</c>.</summary>
-internal sealed class ConsoleInstallReporter : IInstallReporter
+/// <summary>Plain-text console reporting for a run without <c>--progress-json</c>.</summary>
+public sealed class ConsoleInstallReporter : IInstallReporter
 {
     private readonly Action<string>? _log;
 
@@ -147,10 +132,10 @@ internal sealed class ConsoleInstallReporter : IInstallReporter
     }
 }
 
-/// <summary>Build step identifiers from the bundled script's <c>MKWCBUILD:STEP:&lt;id&gt;</c> lines. The
+/// <summary>Build step identifiers from the build scripts' <c>MKWCBUILD:STEP:&lt;id&gt;</c> lines. The
 /// id is the contract; LocalBuild.ps1 emits these exactly and Test-PinnedFacts.ps1 fails the release if
 /// the two sets disagree, so progress never depends on matching reworded English prose.</summary>
-internal static class BuildStepIds
+public static class BuildStepIds
 {
     public const string ReuseBaseTranslation = "reuse-base-translation";
     public const string RetranslateBase = "retranslate-base";
@@ -164,16 +149,16 @@ internal static class BuildStepIds
 }
 
 /// <summary>
-/// Maps one local translate-and-compile run onto a slice of the overall percentage. The bundled
-/// build script announces every step it starts with an <c>MKWCBUILD:</c> prefix, so the slice can
-/// advance on real events instead of on a timer.
+/// Maps one local translate-and-compile run onto a slice of the overall percentage. The build
+/// scripts announce every step they start with an <c>MKWCBUILD:</c> prefix, so the slice can advance
+/// on real events instead of on a timer.
 /// </summary>
-internal sealed class BuildProgressWindow
+public sealed class BuildProgressWindow
 {
     private const string Marker = "MKWCBUILD:";
     private const string StepMarker = "STEP:";
 
-    /// <summary>The fraction the compile step reaches; beyond it, compiler output is a heartbeat.</summary>
+    /// <summary>The fraction the compile step reaches; beyond it, Ninja's counter drives progress.</summary>
     private const double CompileFraction = 0.58;
 
     private static readonly (string Id, double Fraction, string Message)[] Steps =
@@ -185,7 +170,7 @@ internal sealed class BuildProgressWindow
         (BuildStepIds.TranslateMod, 0.38, "Translating the Retro Rewind Code.pul"),
         (BuildStepIds.GenerateDataInit, 0.44, "Generating game data initialization"),
         (BuildStepIds.EmitBuildShards, 0.48, "Preparing the native build"),
-        (BuildStepIds.ConfigureNative, 0.52, "Configuring the bundled compiler"),
+        (BuildStepIds.ConfigureNative, 0.52, "Configuring the compiler"),
         (BuildStepIds.Compile, CompileFraction, "Compiling the game. This is the longest step"),
     ];
 
@@ -230,17 +215,28 @@ internal sealed class BuildProgressWindow
             }
         }
 
-        // Anything else - an unknown step identifier from a newer script, a plain MKWCBUILD note, or
-        // raw tool output - stays a diagnostic and only feeds the heartbeat below.
+        // Anything else - an unknown step identifier, a plain MKWCBUILD note, or raw tool output -
+        // stays a diagnostic.
         _reporter.Diagnostic(line);
-        // Compilation announces itself once and then emits thousands of compiler lines. Treat that
-        // output as a heartbeat so the slice keeps creeping forward, but only publish a progress
-        // line when the rounded percentage actually changes.
-        if (_fraction >= CompileFraction)
+        // Ninja prefixes every edge with [done/total]; how many edges there are depends on how much
+        // of the build is already up to date, so follow the counter rather than counting lines.
+        if (_fraction >= CompileFraction && TryParseNinjaProgress(line, out var done, out var total))
         {
-            _fraction = Math.Min(0.97, _fraction + 0.0015);
+            _fraction = Math.Max(_fraction, CompileFraction + (0.97 - CompileFraction) * done / total);
             Emit();
         }
+    }
+
+    private static bool TryParseNinjaProgress(string line, out int done, out int total)
+    {
+        done = total = 0;
+        if (!line.StartsWith('[')) return false;
+        var close = line.IndexOf(']');
+        var slash = line.IndexOf('/');
+        return close > 0 && slash > 0 && slash < close
+            && int.TryParse(line.AsSpan(1, slash - 1), out done)
+            && int.TryParse(line.AsSpan(slash + 1, close - slash - 1), out total)
+            && total > 0 && done <= total;
     }
 
     private void Emit()

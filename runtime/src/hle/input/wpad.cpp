@@ -6,6 +6,9 @@
 
 #include <cstdint>
 
+#include <dolphin/pad.h>
+
+extern "C" bool PAD_HLE_RumbleEnabled();
 void NandQueueIosCallback(uint32_t callbackPtr, int32_t result, uint32_t callbackArg);
 extern "C" bool PAD_HLE_RumbleEnabled();
 
@@ -93,12 +96,20 @@ extern "C" int32_t WUDGetStatus_HLE()
 }
 PPC_NATIVE_OVERRIDE(801CDB84, WUDGetStatus_HLE, int32_t, (), ());
 
-// WPADGetDataFormat reads the per-channel format set by WPADSetDataFormat. Can't reuse the
-// translated SDK implementation: it dereferences Bluetooth control blocks that HLE'd WPADInit
-// never constructs.
+// WPADGetDataFormat: the format KPAD runs the attached extension in (WPAD_FMT_*_ACC_DPD).
+// WPADClampStick keys off it. Can't reuse the translated SDK implementation: it dereferences
+// Bluetooth control blocks that HLE'd WPADInit never constructs.
 extern "C" int32_t WPADGetDataFormat_HLE(uint32_t chan)
 {
-    return g_state.contract.GetDataFormat(chan);
+    const int32_t status = g_state.contract.GetDataFormat(chan);
+    if (status < 0) {
+        return status;
+    }
+    switch (WiiRemoteInput::EffectiveKind(chan)) {
+    case WiiRemoteInput::Kind::RemoteWithNunchuk: return 5;
+    case WiiRemoteInput::Kind::RemoteWithClassic: return 8;
+    default: return 2;
+    }
 }
 PPC_NATIVE_OVERRIDE(801C0B54, WPADGetDataFormat_HLE, int32_t, (uint32_t chan), (chan));
 
@@ -144,13 +155,16 @@ extern "C" int32_t WPADProbe_HLE(uint32_t chan, uint32_t typePtr)
 }
 PPC_NATIVE_OVERRIDE(801C0990, WPADProbe_HLE, int32_t, (uint32_t chan, uint32_t typePtr), (chan, typePtr));
 
-// WPADControlMotor: a Bluetooth remote's motor is not driven, but VR controllers
-// standing in for a remote rumble both hands while the game holds it on.
+// WPADControlMotor: the port's controller rumbles while the game holds the motor on.
+// VR controllers standing in for a remote rumble both hands through OpenXR.
 extern "C" void WPADControlMotor_HLE(uint32_t chan, uint32_t command)
 {
+    const bool on = command == kWpadMotorRumble && PAD_HLE_RumbleEnabled();
     if (chan < WpadContract::kChannelCount && WiiRemoteInput::IsVrControllerChannel(chan)) {
-        mkw::vr::OpenXRSetWiiRemoteRumble(command == kWpadMotorRumble && PAD_HLE_RumbleEnabled());
+        mkw::vr::OpenXRSetWiiRemoteRumble(on);
+        return;
     }
+    PADControlMotor(chan, on ? PAD_MOTOR_RUMBLE : PAD_MOTOR_STOP_HARD);
 }
 PPC_NATIVE_OVERRIDE(801C0EC4, WPADControlMotor_HLE, void, (uint32_t chan, uint32_t command), (chan, command));
 

@@ -9,7 +9,7 @@ namespace aurora::gx::fifo {
 void reset_cp_register_cache();
 
 // Process a buffer of GX FIFO commands
-void process(const uint8_t* data, uint32_t size, bool bigEndian);
+uint32_t process(const uint8_t* data, uint32_t size, bool bigEndian);
 
 // A display list called by the game (big-endian): drawn from the geometry cache when it only draws triangles of
 // one format with indexed attributes and the cache is on, otherwise processed like any FIFO bytes.

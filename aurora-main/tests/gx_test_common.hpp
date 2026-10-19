@@ -53,6 +53,9 @@ void use_real_vertex_format_helpers(bool enabled) noexcept;
 // What vertex_staging_room() and index_staging_room() answer (the stubs' staging never fills by itself).
 void set_vertex_staging_room(size_t bytes) noexcept;
 void set_index_staging_room(size_t bytes) noexcept;
+// Admit this many draws, then refuse one as if the staging batch were full.
+void refuse_staging_admission_after(uint32_t admissions) noexcept;
+void reset_staging_capacity() noexcept;
 } // namespace aurora::gfx::testing
 
 class GXFifoTest : public ::testing::Test {
@@ -68,6 +71,7 @@ protected:
     aurora::gfx::testing::reset_resolve_pass_records();
     aurora::gfx::testing::reset_vertex_push_record();
     aurora::gfx::testing::use_real_vertex_format_helpers(false);
+    aurora::gfx::testing::reset_staging_capacity();
   }
 
   // Copy the internal FIFO buffer contents and clear it

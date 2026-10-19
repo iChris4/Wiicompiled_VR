@@ -570,9 +570,11 @@ made the Quest port and Wheel Wizard, opens Settings on About, and links to Whee
 Wizard's Discord, this repository on GitHub and Wheel Wizard's Ko-fi.
 `SidebarStatusTest` covers the status and the path data.
 
-The launcher follows the runtime's rules exactly. `TomlConfig` edits one line
-the way `RuntimeConfigFile::WriteSetting` does, and every edit re-reads the file,
-so values the in-headset panel wrote are kept. Each row reads its key with the
+The launcher reads values by the runtime's rules. `TomlConfig` edits one line
+the way `RuntimeConfigFile::WriteSetting` did before upstream v0.2.34 made it
+re-emit the whole document through toml11 (keys, order and attached comments
+kept, layout possibly not), and every edit re-reads the file, so values the
+in-headset panel wrote are kept. Each row reads its key with the
 runtime's default and accepted range. `TomlConfigTest` (`gradlew
 :app:testBaseDebugUnitTest`) covers the editor.
 
@@ -652,9 +654,11 @@ the only place Android lets an app load native code it did not install.
 The kit is exported from CMake's own build graph, so its flags cannot drift from a normal build:
 
 - `runtime/cmake/PublicProducts.cmake` defines `mkw_quest_kit_probe` on Android: WiiCompiled
-  `WITHOUT_GAME` (no base shards, and the runtime objects `$<FILTER>`ed of the two
-  disc-generated sources, which skip the unity build on Android for that reason), linked with the
-  game's symbols unresolved. The app builds this probe instead of the product.
+  `WITHOUT_GAME` (no base shards, no registration objects, and the `mkw_game_data` objects
+  `$<FILTER>`ed of the disc-generated sources: `data_sections_init` with its blob assembly and
+  `guest_symbol_table`; the game-independent `mkw_runtime_common` objects and the per-build glue in
+  `runtime/game/` stay), linked with the game's symbols unresolved. The app builds this probe
+  instead of the product.
 - `android/QuestGameKit.psm1` (`Export-QuestGameKit`, run by the `export*QuestGameKit`
   Gradle tasks) turns the probe's ninja link edge into `kit.json`'s ordered link inputs. It adds
   `{game:runtime}`, `{game:product}` and `{game:translated}` markers where WiiCompiled had those

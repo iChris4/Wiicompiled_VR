@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <cstdio>
 #include <limits>
 #include <iostream>
 #include <mutex>
@@ -270,6 +271,10 @@ bool g_vrRecenterRebinding = false;
 float g_vrLeanBackDegrees = RuntimeConfigFile::VrLeanBackDegrees();
 // [vr] render_scale as the slider shows it, in percent of the headset's recommended size.
 int g_vrRenderScalePercent = static_cast<int>(std::lround(RuntimeConfigFile::VrRenderScale() * 100.0f));
+bool g_forceAspect169 = RuntimeConfigFile::ForceAspect169Enabled();
+#if defined(__APPLE__)
+bool g_metalFxSpatialUpscaling = RuntimeConfigFile::MetalFxSpatialUpscaling(false);
+#endif
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths();
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
@@ -322,6 +327,11 @@ uint64_t g_presentedFrame = 0;
 std::atomic_bool g_strapInputAccepted = false;
 std::atomic_uint64_t g_startupDismissFrame = UINT64_MAX;
 constexpr uint64_t kStrapTransitionCoverFrames = 60;
+std::atomic_bool g_bootShadersReady = false;
+bool g_bootShaderNotice = false;
+Clock::time_point g_bootShaderWaitStart{};
+constexpr uint32_t kBootShaderNoticeThreshold = 100;
+constexpr auto kBootShaderWaitLimit = std::chrono::minutes(3);
 
 constexpr std::array<ResolutionItem, 8> kResolutions = {{
     {"Auto (window size)", 0.0f}, {"Native (1x)", 1.0f}, {"1.5x", 1.5f}, {"2x", 2.0f},
@@ -460,10 +470,9 @@ void DrawWiiRemoteAccelerometer(uint32_t port) {
     } else {
         ImGui::TextDisabled("No accelerometer data yet.");
     }
-    // SDL's read of the remote's calibration block often times out over Bluetooth
-    // and it falls back to a nominal zero point, leaving a small per-axis bias;
-    // measured here with the remote at rest.
-    if (WiiRemoteInput::IsAccelCalibrating()) {
+    // Residual per-axis bias left after SDL's factory-calibrated decode, measured
+    // here with the remote at rest.
+    if (WiiRemoteInput::IsAccelCalibrating(port)) {
         ImGui::ProgressBar(WiiRemoteInput::AccelCalibrationProgress(), ImVec2(Scaled(220.0f), 0.0f), "Hold still...");
     } else if (ImGui::Button("Calibrate (remote lying flat, buttons up)")) {
         WiiRemoteInput::StartAccelCalibration(port);
@@ -473,18 +482,20 @@ void DrawWiiRemoteAccelerometer(uint32_t port) {
                           "for about two seconds. Corrects the steering offset of a remote held sideways.");
     }
     ImGui::SameLine();
-    ImGui::BeginDisabled(!RuntimeConfigFile::HasWiiAccelOffset() || WiiRemoteInput::IsAccelCalibrating());
+    const auto stored = WiiRemoteInput::ReadAccelOffset(port);
+    const std::array<double, 3> offset = stored.value_or(std::array<double, 3>{});
+    const bool calibrated = offset[0] != 0.0 || offset[1] != 0.0 || offset[2] != 0.0;
+    ImGui::BeginDisabled(!calibrated || WiiRemoteInput::IsAccelCalibrating(port));
     if (ImGui::Button("Clear calibration")) {
-        WiiRemoteInput::ClearAccelCalibration();
+        WiiRemoteInput::ClearAccelCalibration(port);
     }
     ImGui::EndDisabled();
-    if (const char* message = WiiRemoteInput::AccelCalibrationMessage()) {
+    if (const char* message = WiiRemoteInput::AccelCalibrationMessage(port)) {
         ImGui::TextWrapped("%s", message);
-    } else if (RuntimeConfigFile::HasWiiAccelOffset()) {
-        const std::array<double, 3> offset = RuntimeConfigFile::WiiAccelOffset();
+    } else if (calibrated) {
         ImGui::TextDisabled("Stored offset: x %+.3f  y %+.3f  z %+.3f g", offset[0], offset[1], offset[2]);
     } else {
-        ImGui::TextDisabled("Not calibrated (using SDL's zero point; see console.log for \"fallback accelerometer calibration\").");
+        ImGui::TextDisabled("No trim stored.");
     }
 }
 
@@ -973,8 +984,15 @@ void DrawControllerSettings() {
     if (ImGui::BeginMenu("Assign connected controller")) {
         for (uint32_t index = 0; index < controllerCount; ++index) {
             const char* name = PADGetNameForControllerIndex(index);
+            std::string label = name != nullptr ? name : "Unknown controller";
+            for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
+                if (PADGetIndexForPort(port) == static_cast<s32>(index)) {
+                    label += " (Port " + std::to_string(port + 1) + ")";
+                    break;
+                }
+            }
             ImGui::PushID(static_cast<int>(index));
-            if (ImGui::MenuItem(name != nullptr ? name : "Unknown controller")) {
+            if (ImGui::MenuItem(label.c_str())) {
                 PADSetPortForIndex(index, selectedGamePort);
                 g_configuredControllerIndices.fill(std::numeric_limits<int32_t>::min());
                 ApplyConfiguredMappings();
@@ -982,6 +1000,12 @@ void DrawControllerSettings() {
             ImGui::PopID();
         }
         ImGui::EndMenu();
+    }
+
+    if (WiiRemoteInput::IsRemoteChannel(selectedGamePort)) {
+        ImGui::TextDisabled("The game reads this controller as a Wii Remote, so the button mapping does not apply.");
+        DrawRumbleSettings();
+        return;
     }
 
     uint32_t mappingCount = 0;
@@ -1195,13 +1219,24 @@ void DrawAudioSettings() {
         MusicAttenuation::SetEnabled(g_attenuateMusicWhenMediaPlays);
         RuntimeConfigFile::SetAttenuateMusicWhenMediaPlays(g_attenuateMusicWhenMediaPlays);
     }
+#if defined(__APPLE__)
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Detects other apps with active audio output on macOS 14.2 or later. "
+            "Apps that keep an output stream running silently may keep game music muted.");
+    }
+#endif
     if (g_attenuateMusicWhenMediaPlays) {
         if (MusicAttenuation::IsExternalMediaPlaying()) {
             ImGui::TextDisabled("External media is playing; game music is muted.");
         } else if (!MusicAttenuation::IsMediaControlInitializationComplete()) {
-            ImGui::TextDisabled("Waiting for media controls...");
+            ImGui::TextDisabled("Checking external audio...");
         } else if (!MusicAttenuation::IsMediaControlAvailable()) {
+#if defined(__APPLE__)
+            ImGui::TextDisabled("External audio detection unavailable (requires macOS 14.2 or later).");
+#else
             ImGui::TextDisabled("Media controls are unavailable.");
+#endif
         } else {
             ImGui::TextDisabled("No external media is currently playing.");
         }
@@ -1358,6 +1393,12 @@ void DrawVrSteeringWheelSettings() {
 
 void DrawGraphicsSettings() {
     g_displayMode = static_cast<int>(aurora_get_display_mode());
+    if (ImGui::Checkbox("Force 16:9", &g_forceAspect169)) {
+        SetMkwForceAspect169(g_forceAspect169);
+        RuntimeConfigFile::SetForceAspect169(g_forceAspect169);
+    }
+    ImGui::TextDisabled("Keep a 16:9 image with black bars when the window has another shape.");
+    ImGui::Separator();
     struct EffectFlag {
         const char* label;
         uint32_t flag;
@@ -1432,6 +1473,36 @@ void DrawGraphicsSettings() {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + Scaled(380.0f));
     ImGui::TextDisabled("Frame interpolation is experimental, you might find visual artifacts");
     ImGui::PopTextWrapPos();
+#if defined(__APPLE__)
+    const bool metalFxSupported = aurora_is_metalfx_spatial_supported();
+    ImGui::BeginDisabled(!metalFxSupported);
+    if (ImGui::Checkbox("MetalFX spatial upscaling", &g_metalFxSpatialUpscaling)) {
+        aurora_set_metalfx_spatial(g_metalFxSpatialUpscaling);
+        RuntimeConfigFile::SetMetalFxSpatialUpscaling(g_metalFxSpatialUpscaling);
+    }
+    ImGui::EndDisabled();
+    switch (aurora_get_metalfx_status()) {
+    case AURORA_METALFX_ACTIVE:
+        ImGui::TextDisabled("Active: upscaling the game image before the overlay.");
+        break;
+    case AURORA_METALFX_NOT_UPSCALING:
+        ImGui::TextDisabled("Choose a lower internal resolution to use MetalFX.");
+        break;
+    case AURORA_METALFX_UNSUPPORTED:
+        ImGui::TextDisabled("Requires macOS 13+, Metal, and a MetalFX-capable GPU.");
+        break;
+    case AURORA_METALFX_ERROR:
+        ImGui::TextDisabled("Unavailable after a renderer error; toggle off and on to retry.");
+        break;
+    case AURORA_METALFX_DISABLED:
+        if (metalFxSupported) {
+            ImGui::TextDisabled("Render below output resolution for sharper lower-cost output.");
+        } else {
+            ImGui::TextDisabled("MetalFX spatial upscaling is unavailable on this device.");
+        }
+        break;
+    }
+#endif
     if (ImGui::Checkbox("Disable copy filter", &g_disableCopyFilter)) {
         aurora_set_disable_copy_filter(g_disableCopyFilter);
         RuntimeConfigFile::SetDisableCopyFilter(g_disableCopyFilter);
@@ -2267,10 +2338,34 @@ void DrawStartupScreen() {
         const float startY = std::max(0.0f, (viewport->Size.y - titleSize.y) * 0.5f);
         ImGui::SetCursorPos(ImVec2(titleX, startY));
         ImGui::TextUnformatted(kTitle);
+        if (g_bootShaderNotice && !g_bootShadersReady.load(std::memory_order_relaxed)) {
+            ImGui::SetWindowFontScale(0.9f);
+            char line[96];
+            std::snprintf(line, sizeof(line), "Compiling shaders, please hold on: %u remaining",
+                          aurora_get_queued_pipeline_count());
+            const float lineX = std::max(0.0f, (viewport->Size.x - ImGui::CalcTextSize(line).x) * 0.5f);
+            ImGui::SetCursorPos(ImVec2(lineX, startY + titleSize.y * 1.8f));
+            ImGui::TextUnformatted(line);
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
+}
+
+void UpdateBootShaderState() {
+    if (g_bootShadersReady.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const auto now = Clock::now();
+    if (g_bootShaderWaitStart == Clock::time_point{}) {
+        g_bootShaderWaitStart = now;
+    }
+    const uint32_t queued = aurora_get_queued_pipeline_count();
+    g_bootShaderNotice |= queued > kBootShaderNoticeThreshold;
+    if (queued == 0 || now - g_bootShaderWaitStart > kBootShaderWaitLimit) {
+        g_bootShadersReady.store(true, std::memory_order_release);
+    }
 }
 
 void DrawExitPrompt() {
@@ -2315,15 +2410,20 @@ void DrawTopBar() {
     ImGui::GetBackgroundDrawList()->AddRectFilled(viewport->Pos,
         ImVec2(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y),
         IM_COL32(0, 0, 0, 70));
+    constexpr float kHintMargin = 10.0f;
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
-                                 viewport->Pos.y + viewport->Size.y - 24.0f),
-                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
-    ImGui::SetNextWindowBgAlpha(0.85f);
+                                 viewport->Pos.y + ImGui::GetFrameHeight() + kHintMargin),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
     if (ImGui::Begin("Settings input hint", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoFocusOnAppearing)) {
-        ImGui::TextUnformatted("Settings open - game controls disabled. Press F10 to return to the game.");
+        for (const char* line : {"Settings open - game controls disabled.",
+                                 "Press F10 to return to the game."}) {
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(line).x) * 0.5f);
+            ImGui::TextUnformatted(line);
+        }
     }
     ImGui::End();
     if (!ImGui::BeginMainMenuBar()) return;
@@ -2611,6 +2711,13 @@ void DrawVrSettingsPanel() {
     ImGui::SetCurrentContext(desktop);
     aurora_imgui_set_stereo_overlay(drawData, mkw::vr::kSettingsPanelWidthFraction);
 }
+
+void ApplyInputBlockState() {
+    const bool blocked = controller_mapping_wizard::IsActive() || g_rebind.active ||
+                         g_exitPromptOpen || g_topBarVisible || StartupScreenVisible();
+    PADBlockInput(blocked);
+    InputBindings::SetInputBlocked(blocked);
+}
 } // namespace
 
 void InitializeRuntimeSettings() noexcept {
@@ -2631,6 +2738,9 @@ void InitializeRuntimeSettings() noexcept {
     MusicAttenuation::SetVoicesVolume(static_cast<float>(g_voicesVolumePercent) / 100.0f);
     MusicAttenuation::SetEnabled(g_attenuateMusicWhenMediaPlays);
     RuntimeGameGraphicsOptions::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
+#if defined(__APPLE__)
+    aurora_set_metalfx_spatial(g_metalFxSpatialUpscaling);
+#endif
     const uint32_t targetFps = kFrameInterpolationTargetFps[static_cast<size_t>(g_frameInterpolationMode)];
     LimitResolutionForFrameRate();
     aurora_set_frame_interpolation_fps(targetFps);
@@ -2648,6 +2758,9 @@ void InitializeRuntimeSettings() noexcept {
     mkw::vr::diagnostics::SetEnabled(g_openxrDiagnosticsLogging);
     g_strapInputAccepted.store(false, std::memory_order_relaxed);
     g_startupDismissFrame.store(UINT64_MAX, std::memory_order_relaxed);
+    g_bootShadersReady.store(false, std::memory_order_relaxed);
+    g_bootShaderNotice = false;
+    g_bootShaderWaitStart = {};
     PADBlockInput(false);
     InputBindings::SetInputBlocked(false);
 }
@@ -2681,6 +2794,7 @@ void HandleEvents(const AuroraEvent* events) noexcept {
         }
         if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_F10)) {
             SetTopBarVisible(!g_topBarVisible);
+            ApplyInputBlockState();
         }
         if (!g_rebind.active && g_vrRecenterScancode != SDL_SCANCODE_UNKNOWN &&
             IsToggleKey(ev->sdl, g_vrRecenterScancode)) {
@@ -2692,8 +2806,15 @@ void HandleEvents(const AuroraEvent* events) noexcept {
             AudioBackend::Instance().SetMuted(g_audioMuted);
             RuntimeConfigFile::SetAudioMuted(g_audioMuted);
         }
-        if (!g_rebind.active && !g_topBarVisible && IsToggleKey(ev->sdl, SDL_SCANCODE_ESCAPE)) {
-            g_exitPromptOpen = true;
+        if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_ESCAPE)) {
+            if (g_exitPromptOpen) {
+                g_exitPromptOpen = false;
+            } else if (g_topBarVisible) {
+                SetTopBarVisible(false);
+            } else {
+                g_exitPromptOpen = true;
+            }
+            ApplyInputBlockState();
         }
         if (IsMouseActivity(ev->sdl)) {
             g_lastMouseActivity = Clock::now();
@@ -2763,6 +2884,7 @@ void Draw() noexcept {
     ApplyConfiguredMappings();
     PersistDisplayModeIfChanged();
     UpdateCursorAutoHide();
+    UpdateBootShaderState();
     if (!StartupScreenVisible()) {
         DrawShaderCompilationStatus();
     }
@@ -2770,16 +2892,14 @@ void Draw() noexcept {
     DrawTopBar();
     DrawExitPrompt();
     controller_mapping_wizard::Draw();
-    // The wizard captures raw presses; keep them out of the game.
-    const bool inputBlocked = controller_mapping_wizard::IsActive() || g_rebind.active;
-    PADBlockInput(inputBlocked);
-    InputBindings::SetInputBlocked(inputBlocked);
+    ApplyInputBlockState();
     DrawStartupScreen();
     DrawVrSettingsPanel();
 }
 
 bool StartupScreenVisible() noexcept {
     return !g_strapInputAccepted.load(std::memory_order_acquire) ||
+           !g_bootShadersReady.load(std::memory_order_acquire) ||
            g_presentedFrame < g_startupDismissFrame.load(std::memory_order_relaxed);
 }
 

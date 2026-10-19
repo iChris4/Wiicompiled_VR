@@ -70,7 +70,7 @@ internal static class ConsoleCommands
 
     public static int VerifyInputs(CommandLine command)
     {
-        var reporter = command.ProgressJson ? new NdjsonInstallReporter() : null;
+        var reporter = command.ProgressJson ? new NdjsonInstallReporter(ProductInfo.Version) : null;
         var temp = Path.Combine(Path.GetTempPath(), "mkwc-verify-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temp);
         try
@@ -120,7 +120,7 @@ internal static class ConsoleCommands
         }
         File.WriteAllText(logPath, $"{ProductInfo.Name} setup {ProductInfo.Version}{Environment.NewLine}");
 
-        var ndjson = command.ProgressJson ? new NdjsonInstallReporter(Log) : null;
+        var ndjson = command.ProgressJson ? new NdjsonInstallReporter(ProductInfo.Version, Log) : null;
         IInstallReporter reporter = ndjson ?? (IInstallReporter)new ConsoleInstallReporter(Log);
         var installDirectory = Path.GetFullPath(command.InstallDirectory!);
         try
@@ -158,7 +158,7 @@ internal static class ConsoleCommands
     public static int CheckProducts(CommandLine command,
         CancellationToken cancellationToken = default)
     {
-        var reporter = command.ProgressJson ? new NdjsonInstallReporter() : null;
+        var reporter = command.ProgressJson ? new NdjsonInstallReporter(ProductInfo.Version) : null;
         var installation = new Installation(string.IsNullOrWhiteSpace(command.InstallDirectory)
             ? AppContext.BaseDirectory
             : Path.GetFullPath(command.InstallDirectory));
@@ -211,7 +211,7 @@ internal static class ConsoleCommands
             }
         }
 
-        var ndjson = command.ProgressJson ? new NdjsonInstallReporter(Log) : null;
+        var ndjson = command.ProgressJson ? new NdjsonInstallReporter(ProductInfo.Version, Log) : null;
         IInstallReporter reporter = ndjson is null ? new ConsoleInstallReporter(Log) : ndjson;
         var installDirectory = Path.GetFullPath(command.InstallDirectory!);
         var installation = new Installation(installDirectory);
@@ -284,7 +284,7 @@ internal static class ConsoleCommands
         }
         File.WriteAllText(logPath, $"{ProductInfo.Name} Quest build {ProductInfo.Version}{Environment.NewLine}");
 
-        var ndjson = command.ProgressJson ? new NdjsonInstallReporter(Log) : null;
+        var ndjson = command.ProgressJson ? new NdjsonInstallReporter(ProductInfo.Version, Log) : null;
         IInstallReporter reporter = ndjson is null ? new ConsoleInstallReporter(Log) : ndjson;
         var installation = new Installation(Path.GetFullPath(command.InstallDirectory!));
         try
@@ -298,7 +298,7 @@ internal static class ConsoleCommands
                 command.IncludeModContent ? Path.GetFullPath(command.RetroDirectoryPath!) : null);
             if (ndjson is null)
                 Console.Out.WriteLine($"Quest game package: {result.PackagePath} ({result.SizeBytes / 1_000_000} MB)");
-            ndjson?.QuestPackage(result);
+            ndjson?.QuestPackage(result.PackagePath, result.KitFingerprint, result.IncludesGameFiles, result.SizeBytes);
             ndjson?.Success(installation.Root);
             return 0;
         }

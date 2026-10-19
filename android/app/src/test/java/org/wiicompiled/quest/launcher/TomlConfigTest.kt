@@ -6,8 +6,9 @@ import org.junit.Test
 
 /**
  * The launcher and the runtime edit the same Config.toml, so the line editor
- * must place keys exactly where RuntimeConfigFile::WriteSetting does and read
- * only what the runtime's toml11 lookups accept.
+ * must keep every line it does not edit, place keys where the runtime's former
+ * line-based WriteSetting did, and read only what the runtime's toml11 lookups
+ * accept.
  */
 class TomlConfigTest {
 

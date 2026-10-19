@@ -140,14 +140,16 @@ Source: <https://github.com/higan-emu/libco>. Full license text:
 
 ## Fetched at build time and redistributed in release builds
 
-These are pinned in `aurora-main/extern/CMakeLists.txt`, `aurora-main/CMakeLists.txt` and
-`aurora-main/cmake/AuroraDawnProvider.cmake`. They are not stored in this repository; the build
-downloads them, and release installers carry the resulting binaries. Their license texts are
+These are pinned in `aurora-main/extern/CMakeLists.txt`, `aurora-main/CMakeLists.txt`,
+`aurora-main/cmake/AuroraDawnProvider.cmake`, and (for Mbed TLS) `runtime/CMakeLists.txt`. They are
+not stored in this repository; the build downloads them - each fetch is pinned to an exact version
+with a checked SHA-256 - and links or redistributes the resulting binaries. Their license texts are
 included in the installer's `licenses/` folder. The Windows installer bundles the pinned source
 trees themselves (fetched by `Launcher/Prepare-Dependencies.ps1`) so end-user builds run offline.
 
 | Component | Version | License | Upstream |
 | --- | --- | --- | --- |
+| Mbed TLS | 3.6.7 | Apache-2.0 / GPL-2.0-or-later | <https://github.com/Mbed-TLS/mbedtls> |
 | Dawn (WebGPU) | `v20260603.191052` prebuilt | BSD-3-Clause | <https://dawn.googlesource.com/dawn> |
 | Tint (part of Dawn) | with Dawn | BSD-3-Clause | <https://dawn.googlesource.com/dawn> |
 | DirectXShaderCompiler (`dxcompiler.dll`) | with Dawn | NCSA / University of Illinois Open Source | <https://github.com/microsoft/DirectXShaderCompiler> |
@@ -156,7 +158,7 @@ trees themselves (fetched by `Launcher/Prepare-Dependencies.ps1`) so end-user bu
 | Abseil | LTS 20240722.0 | Apache-2.0 | <https://github.com/abseil/abseil-cpp> |
 | Dear ImGui | 1.91.9b-docking | MIT | <https://github.com/ocornut/imgui> |
 | {fmt} | 11.1.4 | MIT | <https://github.com/fmtlib/fmt> |
-| xxHash | 0.8.3 | BSD-2-Clause | <https://github.com/Cyan4973/xxHash> |
+| xxHash | 0.8.4 | BSD-2-Clause | <https://github.com/Cyan4973/xxHash> |
 | zlib | 1.3.2 | zlib | <https://github.com/madler/zlib> |
 | libpng | 1.6.58 | PNG Reference Library License v2 | <https://github.com/pnggroup/libpng> |
 | FreeType | 2.14.3 | **FreeType License (FTL)** - see below | <https://freetype.org/> |

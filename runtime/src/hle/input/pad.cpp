@@ -92,15 +92,14 @@ void WritePadStatus(uint32_t base, const PADStatus& status) {
 
 } // namespace
 
-extern "C" void PAD_HLE_SetRumbleEnabled(bool enabled)
-{
-    g_rumbleEnabled.store(enabled, std::memory_order_relaxed);
-}
-
-// The same switch, for the Wii Remote motor the VR controllers stand in for.
 extern "C" bool PAD_HLE_RumbleEnabled()
 {
     return g_rumbleEnabled.load(std::memory_order_relaxed);
+}
+
+extern "C" void PAD_HLE_SetRumbleEnabled(bool enabled)
+{
+    g_rumbleEnabled.store(enabled, std::memory_order_relaxed);
 }
 
 extern "C" uint32_t PAD__Init_HLE()

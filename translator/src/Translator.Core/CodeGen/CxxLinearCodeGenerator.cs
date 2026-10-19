@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -192,10 +192,7 @@ public sealed partial class CxxLinearCodeGenerator
             : LeafRegisterCacheInitializers.Empty;
         var sb = new StringBuilder();
         sb.AppendLine("#include <cstdint>");
-        sb.AppendLine("#include \"ppc_runtime.h\"");
-        sb.AppendLine("#include \"abi_bridge.h\"");
-        sb.AppendLine("#include \"memory.h\"");
-        sb.AppendLine("#include \"recomp_mod_loader.h\"");
+        sb.AppendLine("#include \"guest_abi/guest_abi.h\"");
         sb.AppendLine();
 
         var forwardDecls = CollectCallTargets(func)
@@ -241,12 +238,38 @@ public sealed partial class CxxLinearCodeGenerator
 
         var labelNames = func.Blocks.ToDictionary(b => b.Label, b => SanitizeLabel(b.Label), StringComparer.OrdinalIgnoreCase);
         var instructionContinuationLabels = new Dictionary<uint, string>();
+        var continuationCallCount = func.Blocks.Sum(block =>
+        {
+            var term = block.Instructions.LastOrDefault();
+            var emittedInstructionCount = term is IrBranch or IrJump or IrReturn or IrJumpTable or IrUndefined
+                ? Math.Max(0, block.Instructions.Count - 1)
+                : block.Instructions.Count;
+            var suppressed = suppressedInstructionMasks.TryGetValue(block.Label, out var mask) ? mask : null;
+            return Enumerable.Range(0, emittedInstructionCount).Count(index =>
+            {
+                if ((suppressed is not null && index < suppressed.Length && suppressed[index]) ||
+                    block.Instructions[index] is not IrCall call ||
+                    !TryParseAddress(call.Target, out var target) ||
+                    TryGetInlineGuestThunkSpec(target, out _))
+                {
+                    return false;
+                }
+
+                return nonReturningCallTargets.Contains(target) ||
+                    (lrContinuationCallTargets.Contains(target) &&
+                     TryGetLocalFallthroughLr(block.Instructions, index, nonReturningCallTargets, lrContinuationCallTargets).HasValue);
+            });
+        });
+        // Labels remain available for every recognized continuation target.
+        // Sharing the terminal dispatcher is narrower: it only applies when
+        // more than one emitted call can actually jump there.
         var needsInstructionContinuationLabels = func.Blocks
             .SelectMany(static block => block.Instructions)
             .OfType<IrCall>()
             .Any(call =>
                 TryParseAddress(call.Target, out var target) &&
                 (nonReturningCallTargets.Contains(target) || lrContinuationCallTargets.Contains(target)));
+        var shareLrContinuationDispatch = continuationCallCount > 1;
         if (needsInstructionContinuationLabels)
         {
             foreach (var trace in func.Blocks.SelectMany(static block => block.Instructions).OfType<IrTracePpc>())
@@ -394,7 +417,7 @@ public sealed partial class CxxLinearCodeGenerator
                             instructionContinuationLabels.TryGetValue(trace.Address, out var continuationLabel))
                         {
                             RecordEmittedLocalLabel(continuationLabel);
-                            body.AppendLine($"{continuationLabel}:");
+                            body.AppendLine($"{continuationLabel}: ;");
                         }
                         var localFallthroughLr = TryGetLocalFallthroughLr(block.Instructions, i, nonReturningCallTargets, lrContinuationCallTargets);
                         // State-free bodies are cloned after register caching and lose their
@@ -405,7 +428,7 @@ public sealed partial class CxxLinearCodeGenerator
                         _activeGpuFifoBurstSlot = gpuFifoBurstPlan.Slot(block.Label, i);
                         try
                         {
-                            EmitInstruction(block.Label, directCallOrdinal, block.Instructions[i], body, bufferBaseLength, 1, cfg, labelNames, types, signature, localPaired, _guestAbiProvider, knownConstants, localConstants, linkedAddressRemap, nonReturningCallTargets, lrContinuationCallTargets, stackFacts, inlineGuestThunkStackBase, localFallthroughLr, guestAbiContracts, stateFreeAbiContracts, stateFreeCallSymbols, stateFreeCallSiteVariants, modOverridableCallTargets);
+                            EmitInstruction(block.Label, directCallOrdinal, block.Instructions[i], body, bufferBaseLength, 1, cfg, labelNames, types, signature, localPaired, _guestAbiProvider, knownConstants, localConstants, linkedAddressRemap, nonReturningCallTargets, lrContinuationCallTargets, stackFacts, inlineGuestThunkStackBase, localFallthroughLr, guestAbiContracts, stateFreeAbiContracts, stateFreeCallSymbols, stateFreeCallSiteVariants, modOverridableCallTargets, shareLrContinuationDispatch);
                         }
                         finally
                         {
@@ -423,7 +446,7 @@ public sealed partial class CxxLinearCodeGenerator
                     switch (term)
                     {
                         case IrUndefined undef:
-                            EmitInstruction(block.Label, -1, undef, body, bufferBaseLength, 1, cfg, labelNames, types, signature, localPaired, _guestAbiProvider, knownConstants, localConstants, linkedAddressRemap, nonReturningCallTargets, lrContinuationCallTargets, stackFacts, inlineGuestThunkStackBase: false, localFallthroughLr: null, guestAbiContracts, stateFreeAbiContracts, stateFreeCallSymbols, stateFreeCallSiteVariants, modOverridableCallTargets);
+                            EmitInstruction(block.Label, -1, undef, body, bufferBaseLength, 1, cfg, labelNames, types, signature, localPaired, _guestAbiProvider, knownConstants, localConstants, linkedAddressRemap, nonReturningCallTargets, lrContinuationCallTargets, stackFacts, inlineGuestThunkStackBase: false, localFallthroughLr: null, guestAbiContracts, stateFreeAbiContracts, stateFreeCallSymbols, stateFreeCallSiteVariants, modOverridableCallTargets, shareLrContinuationDispatch);
                             AppendFlush(body, "    ");
                             body.AppendLine("    return;");
                             break;
@@ -509,6 +532,18 @@ public sealed partial class CxxLinearCodeGenerator
                     body.AppendLine();
                 }
 
+                if (shareLrContinuationDispatch)
+                {
+                    // Every call site has already reloaded the callee's state.
+                    // Keep the complete local target set, but emit it only once.
+                    body.AppendLine("    return;");
+                    body.AppendLine("lr_continuation_dispatch:");
+                    EmitLocalLrContinuationDispatch(body, "    ", labelNames);
+                    body.AppendLine("    if (TranslatedFunctionRegistry::FindByAddressPtr(ctx->lr) != nullptr) {");
+                    body.AppendLine("        InvokeIndirectCpu(ctx->lr, ctx);");
+                    body.AppendLine("    }");
+                    body.AppendLine("    return;");
+                }
                 body.Append('}');
                 // The residency discovery pass only exists for its side effects
                 // on the recorder; materializing its text costs a full copy of

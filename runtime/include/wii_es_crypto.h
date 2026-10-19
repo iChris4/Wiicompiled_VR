@@ -140,10 +140,10 @@ using CryptoEcdsa = CryptoPP::ECDSA<CryptoPP::EC2N, CryptoPP::SHA1>;
 // published public key is the same point Dolphin derives from the raw scalar.
 inline CryptoEcdsa::PrivateKey MakePrivateKey(const uint8_t* key) {
     CryptoPP::DL_GroupParameters_EC<CryptoPP::EC2N> parameters(CryptoPP::ASN1::sect233r1());
-    CryptoPP::Integer exponent(key, 30);
-    exponent %= parameters.GetSubgroupOrder();
-    if (exponent <= CryptoPP::Integer::Zero()) {
-        throw std::invalid_argument("Wii ES private key is zero modulo the sect233r1 subgroup order");
+    // Wii keys need not be canonical scalars; reduction preserves their public key.
+    const CryptoPP::Integer exponent = CryptoPP::Integer(key, 30) % parameters.GetSubgroupOrder();
+    if (exponent == CryptoPP::Integer::Zero()) {
+        throw std::invalid_argument("Wii ES private key is outside the sect233r1 subgroup");
     }
 
     CryptoEcdsa::PrivateKey privateKey;

@@ -52,7 +52,7 @@ if (NOT TARGET gtest)
   FetchContent_Declare(googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz
     URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
     EXCLUDE_FROM_ALL
   )
   FetchContent_MakeAvailable(googletest)
@@ -75,6 +75,7 @@ if (AURORA_ENABLE_GX)
     texture_bind_group_cache_key_test.cpp
     gx_geometry_cache_test.cpp
     native_vertex_test.cpp
+    renderer_regression_test.cpp
     ../lib/gfx/efb_ram_encoder.cpp
     ../lib/gx/geometry_cache.cpp
     # GX API implementations (encoders)
@@ -137,6 +138,18 @@ if (AURORA_ENABLE_GX)
       target_link_libraries(gpu_cache_tests PRIVATE libzstd_static)
     endif ()
     gtest_discover_tests(gpu_cache_tests)
+  endif ()
+
+  option(AURORA_BUILD_GPU_TESTS "Build renderer pixel tests requiring a graphics device" OFF)
+  if (AURORA_BUILD_GPU_TESTS)
+    add_executable(gx_readback_tests gpu_readback_test.cpp)
+    target_compile_features(gx_readback_tests PRIVATE cxx_std_20)
+    target_include_directories(gx_readback_tests PRIVATE ../lib)
+    target_link_libraries(gx_readback_tests PRIVATE
+      aurora::core aurora::gx aurora::pad aurora::vi aurora::mtx aurora::si
+      dawn::dawncpp_headers absl::flat_hash_map absl::btree TracyClient)
+    add_test(NAME gx_readback_tests COMMAND gx_readback_tests "${CMAKE_CURRENT_BINARY_DIR}/readback-cache")
+    set_tests_properties(gx_readback_tests PROPERTIES TIMEOUT 90)
   endif ()
 endif () # AURORA_ENABLE_GX
 
