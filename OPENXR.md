@@ -405,8 +405,11 @@ thumbsticks together** instead); the left controller's menu button and the panel
 also close it. It can be opened from the desktop as well, with
 **F10 → VR → Show these settings in the headset**.
 
-The panel has the F10 bar's menus as tabs (VR, Camera, Graphics, Controllers, Audio, Diagnostics) and a
-*Recenter view* button. Aim a controller at it: the cursor goes where you aim, a trigger (or A / X)
+The panel has the F10 bar's menus as tabs (VR, Camera, Graphics, Controllers, Audio, Diagnostics), a
+*Recenter view* button and a *Quit game* button. *Quit game* asks first, in place of the tabs (closing
+the panel cancels), then ends the game the way the Quest system menu's Quit or closing the desktop
+window does: it queues SDL's quit event rather than exiting from the panel, which is drawn on a guest
+fiber where the Quest cannot call into Java. Aim a controller at it: the cursor goes where you aim, a trigger (or A / X)
 selects and drags sliders, and a thumbstick scrolls. Whichever hand last pulled its trigger does the
 pointing. Changes apply exactly as they do from the F10 bar, and the two stay in step.
 

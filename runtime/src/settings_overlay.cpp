@@ -2571,6 +2571,9 @@ struct VrSettingsPanel {
     ImGuiContext* context = nullptr;
     Clock::time_point lastFrame{};
     bool selectHeld = false;
+    // Quit game asks first, in place of the tabs; closing the panel answers no.
+    bool quitPromptOpen = false;
+    bool quitRequested = false;
 };
 VrSettingsPanel g_vrSettingsPanel;
 
@@ -2616,6 +2619,50 @@ ImGuiContext* CreateVrSettingsPanelContext() {
     return context;
 }
 
+// The panel is drawn on a guest fiber, where the Quest's ART aborts on anything that reaches Java,
+// and ExitForAuroraWindowClose releases the controllers through SDL. So the button only queues
+// SDL's quit event, the request the Quest system menu's Quit and a closed desktop window make:
+// Aurora turns it into AURORA_EXIT, which the event pump handles on a safe stack.
+void DrawVrQuitPrompt() {
+    VrSettingsPanel& panel = g_vrSettingsPanel;
+    constexpr const char* kQuestion = "Quit the game?";
+    constexpr const char* kNote = "Anything the game has not saved yet is lost.";
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float buttonWidth = 120.0f * mkw::vr::kSettingsPanelUiScale;
+    const float regionWidth = ImGui::GetContentRegionAvail().x;
+    const auto centreNext = [regionWidth](float width) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (regionWidth - width) * 0.5f));
+    };
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetContentRegionAvail().y * 0.3f));
+    centreNext(ImGui::CalcTextSize(kQuestion).x);
+    ImGui::TextUnformatted(kQuestion);
+    centreNext(ImGui::CalcTextSize(kNote).x);
+    ImGui::TextDisabled("%s", kNote);
+    ImGui::Spacing();
+    ImGui::Spacing();
+    if (panel.quitRequested) {
+        // Storing the pipeline caches on the way out can take a moment.
+        centreNext(ImGui::CalcTextSize("Quitting...").x);
+        ImGui::TextUnformatted("Quitting...");
+        return;
+    }
+    centreNext(buttonWidth * 2.0f + style.ItemSpacing.x);
+    if (ImGui::Button("Quit", ImVec2(buttonWidth, 0.0f))) {
+        SDL_Event quit{};
+        quit.type = SDL_EVENT_QUIT;
+        if (SDL_PushEvent(&quit)) {
+            RT_LOG(RT_TAG_RUNTIME) << "Quit requested from the headset settings panel\n";
+            panel.quitRequested = true;
+        } else {
+            RT_LOG(RT_TAG_RUNTIME) << "Could not queue the panel's quit request: " << SDL_GetError() << '\n';
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0.0f))) {
+        panel.quitPromptOpen = false;
+    }
+}
+
 void DrawVrSettingsPanelWindow() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos, ImGuiCond_Always);
@@ -2625,9 +2672,15 @@ void DrawVrSettingsPanelWindow() {
     if (ImGui::Begin("WiiCompiled settings", nullptr, kFlags)) {
         ImGui::TextUnformatted("WiiCompiled settings");
         const ImGuiStyle& style = ImGui::GetStyle();
+        const float quitWidth = ImGui::CalcTextSize("Quit game").x + style.FramePadding.x * 2.0f;
         const float recenterWidth = ImGui::CalcTextSize("Recenter view").x + style.FramePadding.x * 2.0f;
         const float closeWidth = ImGui::CalcTextSize("Close").x + style.FramePadding.x * 2.0f;
-        ImGui::SameLine(ImGui::GetContentRegionMax().x - recenterWidth - closeWidth - style.ItemSpacing.x);
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - quitWidth - recenterWidth - closeWidth -
+                        style.ItemSpacing.x * 2.0f);
+        if (ImGui::Button("Quit game")) {
+            g_vrSettingsPanel.quitPromptOpen = true;
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Recenter view")) {
             mkw::vr::OpenXRRequestRecenter();
         }
@@ -2641,7 +2694,9 @@ void DrawVrSettingsPanelWindow() {
                                 ? "Click both thumbsticks or press Menu"
                                 : "Press left Y or Menu");
         ImGui::Separator();
-        if (ImGui::BeginTabBar("Settings")) {
+        if (g_vrSettingsPanel.quitPromptOpen) {
+            DrawVrQuitPrompt();
+        } else if (ImGui::BeginTabBar("Settings")) {
             const auto tab = [](const char* label, void (*draw)()) {
                 if (ImGui::BeginTabItem(label)) {
                     // Its own scrolling region, so the header stays in view.
@@ -2671,11 +2726,12 @@ void DrawVrSettingsPanelWindow() {
 // worker done: the draw data handed to Aurora must stay put until the next
 // frame is encoded, and only the next call here rebuilds it.
 void DrawVrSettingsPanel() {
+    VrSettingsPanel& panel = g_vrSettingsPanel;
     if (!mkw::vr::OpenXRIsRunning() || !mkw::vr::OpenXRSettingsPanelOpen()) {
+        panel.quitPromptOpen = false;
         aurora_imgui_set_stereo_overlay(nullptr, 0.0f);
         return;
     }
-    VrSettingsPanel& panel = g_vrSettingsPanel;
     if (panel.context == nullptr) {
         panel.context = CreateVrSettingsPanelContext();
     }
