@@ -126,6 +126,16 @@ object RetroRewindPack {
         return relative
     }
 
+    /** The newest version among [updates], or null when the feed listed none. */
+    fun latest(updates: List<Update>): String? =
+        updates.map { it.version }.maxWithOrNull { a, b -> compare(a, b) }
+
+    /**
+     * The newest version Retro Rewind publishes, read from the same version feed an update applies.
+     * Network work: call it off the main thread. Throws IOException when the server cannot be read.
+     */
+    fun latestPublishedVersion(): String? = latest(parseUpdates(fetchText(VERSION_URL) { false }))
+
     /** The version the installed pack holds, or null when there is none. */
     fun installedVersion(context: Context): String? =
         File(GameStorage.modDirectory(context), VERSION_FILE)

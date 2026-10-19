@@ -2020,6 +2020,20 @@ int RunTranslateModCore(string[] argsTail, string? outputDirectoryOverride)
             translateModPublishedOutputDirectory ?? outDir);
     }
 
+    // Which Code.pul this output was translated from, so a packaged game can say so and a
+    // launcher can tell when the mod's pack moves on without it.
+    JsonOutput.WriteIfChanged(
+        Path.Combine(outDir, "mod_source.json"),
+        new
+        {
+            Format = "mkwii-mod-translation-source",
+            FormatVersion = 1,
+            Mod = modName,
+            Region = region,
+            CodePulSha256 = ChecksumUtilities.Sha256HexOfFile(codePul)
+        },
+        JsonOutput.Indented);
+
     LogModPhase("data patches + dispatch profile");
     Console.WriteLine("[translator] translate-mod complete");
     Console.WriteLine($"  mod: {modName}");

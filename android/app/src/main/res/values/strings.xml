@@ -50,6 +50,8 @@
     <string name="home_setup_intro">Nothing from Mario Kart Wii comes with this app: each game is built from your own PAL (RMCP01) disc.\n\nOn this headset: copy your disc image (ISO, WBFS, RVZ…) here, for example into Download, press Select disc image, then Build on this Quest.\n\nWith a computer: in the WiiCompiled VR launcher, use Build for Quest with your disc image, copy the .wcgame file it makes to this headset, then press Import from computer. Retro Rewind also needs its pack, which this app can download from Retro Rewind\'s own server, or a Retro Rewind game file can carry.</string>
     <string name="home_game_missing">The game files are ready. Now build this game from them: Build on this Quest takes about 30–40 minutes on a Quest 3. With a computer, use Build for Quest in the WiiCompiled VR launcher instead, copy the .wcgame file to this headset and press Import from computer.</string>
     <string name="home_game_stale">This app was updated, so the game must be built again for it: press Build on this Quest, or use Build for Quest in the WiiCompiled VR launcher again and Import from computer.</string>
+    <string name="home_game_pack_changed">The Retro Rewind pack is now version %1$s, and this game was built from an earlier pack\'s code. Build it again: press Build on this Quest, or use Build for Quest in the WiiCompiled VR launcher with the same Retro Rewind version and Import from computer.\n\nUntil then, Play anyway starts the game you have, but it may not match the new pack and online play may refuse it.</string>
+    <string name="home_play_anyway">Play anyway</string>
     <string name="home_mod_needed_title">Retro Rewind needs its pack</string>
     <string name="home_mod_needed_message">Retro Rewind needs its pack (the RetroRewind6 folder) on this headset. It can be downloaded here from Retro Rewind\'s own server, or arrive with a Retro Rewind game file built with the pack included.</string>
     <string name="home_download_mod_pack">Download Retro Rewind</string>
@@ -60,9 +62,20 @@
     <string name="home_mod_pack_running">Downloading the Retro Rewind pack from its own server. It carries on if you close this panel.</string>
     <string name="home_mod_pack_done">The Retro Rewind pack is ready.</string>
     <string name="home_mod_pack_failed">The Retro Rewind pack could not be downloaded.\n%1$s</string>
+    <string name="home_update_mod_pack">Update Retro Rewind</string>
+    <string name="home_mod_pack_update_available">Retro Rewind %1$s is out, and this headset has %2$s. Update Retro Rewind downloads only what changed.</string>
+    <string name="rr_update_title">Retro Rewind update available</string>
+    <string name="rr_update_message">Retro Rewind %1$s is out, and this headset has %2$s. Only what changed is downloaded, from Retro Rewind\'s own server.\n\nWhen an update changes Retro Rewind\'s code, its game must be built again afterwards. You are asked before that starts.</string>
+    <string name="rr_update_now">Update</string>
+    <string name="rr_later">Later</string>
+    <string name="rr_rebuild_title">Build Retro Rewind again?</string>
+    <string name="rr_rebuild_message">The Retro Rewind %1$s pack changes the game\'s code, so the Retro Rewind game must be built again from it. On this headset that takes about 30–40 minutes on a Quest 3, so keep it on its charger. The installed game stays until the new build has finished.\n\nWith a computer, use Build for Quest in the WiiCompiled VR launcher with the same Retro Rewind version instead, then Import from computer.</string>
+    <string name="rr_rebuild_unknown_message">This Retro Rewind game was built before the app recorded which pack it came from, so it cannot tell whether the Retro Rewind %1$s update changed the game\'s code. Building it again makes sure they match. On this headset that takes about 30–40 minutes on a Quest 3, so keep it on its charger. The installed game stays until the new build has finished.\n\nWith a computer, use Build for Quest in the WiiCompiled VR launcher with the same Retro Rewind version instead, then Import from computer.</string>
+    <string name="rr_rebuild_now">Build on this Quest</string>
     <string name="mod_pack_downloading">Downloading Retro Rewind: %1$d%%</string>
     <string name="about_mod_pack">Retro Rewind pack</string>
     <string name="about_mod_pack_version">Version %1$s</string>
+    <string name="about_mod_pack_version_update">Version %1$s (%2$s available)</string>
     <string name="about_mod_pack_missing">Not installed</string>
     <string name="about_mod_pack_action">Retro Rewind download</string>
     <string name="about_mod_pack_helper">Gets the pack, and later its updates, from Retro Rewind\'s own server.</string>
@@ -669,6 +682,7 @@
     <string name="about_game_ready">Built by %1$s on %2$s</string>
     <string name="about_game_missing">Not installed yet</string>
     <string name="about_game_stale">Built for another version of this app; build it again</string>
+    <string name="about_game_pack_changed">Built from an earlier Retro Rewind pack; build it again</string>
     <string name="about_build_helper">Builds the game from DATA on this headset: about 30–40 minutes on a Quest 3.</string>
     <string name="about_import_helper">Installs a .wcgame made by Build for Quest in the WiiCompiled VR launcher on a computer.</string>
     <string name="section_about_diagnostics">Diagnostics</string>

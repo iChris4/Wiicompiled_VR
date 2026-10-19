@@ -13,13 +13,20 @@ import org.json.JSONObject
  * did not install (execution from shared or external storage is blocked). A library built for
  * another kit, meaning another app version's runtime, is Stale and must be rebuilt: it would link
  * against runtime objects this APK no longer has.
+ *
+ * Retro Rewind's code is translated from its pack's Code.pul, so a game whose game.json names a
+ * different Code.pul than the pack now holds is PackChanged: it still loads, but the new pack may
+ * expect code it does not have, and Retro WFC is likely to refuse it online. Games built before
+ * game.json recorded the Code.pul cannot be checked and count as Ready.
  */
 object GameLibrary {
 
-    enum class Status { Missing, Stale, Ready }
+    enum class Status { Missing, Stale, PackChanged, Ready }
 
     const val LIBRARY_NAME = "libmain.so"
     const val MANIFEST_NAME = "game.json"
+    /** game.json's SHA-256 of the Code.pul a Retro Rewind game was translated from. */
+    const val MOD_CODE_PUL_KEY = "modCodePulSha256"
 
     @Volatile
     private var cachedKitFingerprint: String? = null
@@ -50,8 +57,25 @@ object GameLibrary {
         if (manifest == null || !library(context, profile).isFile) {
             return Status.Missing
         }
-        return if (manifest.optString("kitFingerprint") == kitFingerprint(context) &&
-            manifest.optString("androidCpu") == BuildConfig.ANDROID_CPU
-        ) Status.Ready else Status.Stale
+        if (manifest.optString("kitFingerprint") != kitFingerprint(context) ||
+            manifest.optString("androidCpu") != BuildConfig.ANDROID_CPU
+        ) return Status.Stale
+        if (profile.modPack &&
+            packChanged(manifest.optString(MOD_CODE_PUL_KEY), GameStorage.modCodePulSha256(context))
+        ) return Status.PackChanged
+        return Status.Ready
     }
+
+    /** Whether the game's library can be loaded at all: a changed pack still runs, another kit does not. */
+    fun loadable(status: Status): Boolean = status == Status.Ready || status == Status.PackChanged
+
+    /**
+     * Whether a game translated from the Code.pul hashed [recorded] mismatches the pack's [current]
+     * one. Unknown on either side (an older game.json, no pack) is not a mismatch.
+     */
+    fun packChanged(recorded: String?, current: String?): Boolean =
+        !recorded.isNullOrBlank() && !current.isNullOrBlank() && !recorded.equals(current, ignoreCase = true)
+
+    /** Whether game.json records which Code.pul the game was translated from. */
+    fun recordsCodePul(manifest: JSONObject?): Boolean = !manifest?.optString(MOD_CODE_PUL_KEY).isNullOrBlank()
 }

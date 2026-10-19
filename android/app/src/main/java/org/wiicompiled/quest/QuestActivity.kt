@@ -54,7 +54,8 @@ class QuestActivity : SDLActivity() {
         super.loadLibraries()
         // SDLActivity reports a failed load in its own error dialog and never starts the game.
         storageFailure?.let { throw UnsatisfiedLinkError(getString(R.string.game_storage_failed, it)) }
-        if (GameLibrary.status(this, profile) != GameLibrary.Status.Ready) {
+        // A Retro Rewind game built from an earlier pack still runs (the launcher's Play anyway).
+        if (!GameLibrary.loadable(GameLibrary.status(this, profile))) {
             throw UnsatisfiedLinkError(getString(R.string.game_not_installed))
         }
         System.load(GameLibrary.library(this, profile).absolutePath)

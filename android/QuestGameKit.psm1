@@ -595,6 +595,27 @@ function Invoke-QuestGameBuild {
     return "$build/libmain.so"
 }
 
+# The SHA-256 of the Code.pul a Retro Rewind translation was made from, which translate-mod records
+# beside its output (mod_source.json), or '' for a translation made before it did. The headset
+# compares it with its own pack's Code.pul to tell when a pack update leaves the game behind.
+function Get-QuestModCodePulSha256 {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$GeneratedDir)
+    $shards = "$(ConvertTo-ForwardPath $GeneratedDir)/build_shards/shards.cmake"
+    if (-not (Test-Path -LiteralPath $shards)) { return '' }
+    $dataPatches = @(Read-ShardList $shards 'MKW_RETRO_EXTRA_SOURCES' |
+        Where-Object { [IO.Path]::GetFileName($_) -eq 'mod_data_patches.cpp' })
+    if ($dataPatches.Count -ne 1) { return '' }
+    # mod_data_patches.cpp sits in the output's cpp/ directory.
+    $record = Join-Path (Split-Path -Parent (Split-Path -Parent $dataPatches[0])) 'mod_source.json'
+    if (-not (Test-Path -LiteralPath $record)) { return '' }
+    $source = [IO.File]::ReadAllText($record) | ConvertFrom-Json
+    if ($source.Format -ne 'mkwii-mod-translation-source' -or "$($source.CodePulSha256)" -notmatch '^[0-9a-fA-F]{64}$') {
+        return ''
+    }
+    return $source.CodePulSha256.ToLowerInvariant()
+}
+
 # A .wcgame: the built library and what it was built from, for the headset to import. It can also
 # carry, written without compression, the extracted disc (-DataDir, as DATA/...) and the Retro
 # Rewind pack (-ModDir, as MOD/...), so a player who builds on a PC copies one file to the headset
@@ -611,11 +632,14 @@ function New-QuestGamePackage {
         [Parameter(Mandatory)] [string]$RelSha256,
         [Parameter(Mandatory)] [string]$BuiltBy,
         [Parameter(Mandatory)] [string]$OutputPath,
-        [ValidateSet('base', 'retro_rewind')] [string]$Product = 'base'
+        [ValidateSet('base', 'retro_rewind')] [string]$Product = 'base',
+        # Retro Rewind only: what Get-QuestModCodePulSha256 read from the translation.
+        [string]$ModCodePulSha256 = ''
     )
     $ErrorActionPreference = 'Stop'
     $recipe = [IO.File]::ReadAllText((Join-Path $KitDir 'kit.json')) | ConvertFrom-Json
     if ($ModDir -and $Product -ne 'retro_rewind') { throw 'Only a Retro Rewind game carries the mod pack.' }
+    if ($ModCodePulSha256 -and $Product -ne 'retro_rewind') { throw 'Only a Retro Rewind game is translated from a Code.pul.' }
     $game = [ordered]@{
         schema = $script:GameSchema
         profile = $Product
@@ -631,6 +655,8 @@ function New-QuestGamePackage {
         builtBy = $BuiltBy
         builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     }
+    # The headset's GameLibrary reads this key (MOD_CODE_PUL_KEY).
+    if ($ModCodePulSha256) { $game['modCodePulSha256'] = $ModCodePulSha256.ToLowerInvariant() }
     Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
     if (Test-Path $OutputPath) { Remove-Item -Force $OutputPath }
     New-Item -ItemType Directory -Force (Split-Path -Parent ([IO.Path]::GetFullPath($OutputPath))) | Out-Null
@@ -651,4 +677,4 @@ function New-QuestGamePackage {
     return $game
 }
 
-Export-ModuleMember -Function Export-QuestGameKit, Invoke-QuestGameBuild, New-QuestGamePackage
+Export-ModuleMember -Function Export-QuestGameKit, Invoke-QuestGameBuild, New-QuestGamePackage, Get-QuestModCodePulSha256

@@ -710,6 +710,24 @@ Home's main button becomes **Download Retro Rewind** whenever that game is selec
 missing, and Settings → About shows the installed version with an Update button. Building the mod on
 the headset needs the mod's `Code.pul`, which is part of the pack, so the same rule covers it.
 
+A pack update needs no new app: the runtime and the kit do not depend on the pack. But Retro
+Rewind's code is translated from the pack's `Code.pul`, so an update that changes it needs the game
+built again. `RetroRewindUpdates` keeps track of both:
+
+- Each time the launcher comes to the front with the pack installed, it reads
+  `RetroRewindVersion.txt` in the background, at most every 4 hours (30 minutes after a failed
+  read). A newer version is offered in a dialog once per published version. Until it is installed,
+  Home shows an info banner with an **Update Retro Rewind** second button, and Settings → About
+  shows `Version x (y available)`.
+- `game.json` records `modCodePulSha256`, the Code.pul the game was translated from. The headset
+  build writes it. On a PC, `translate-mod` writes `mod_source.json` next to its output, which
+  `Build-QuestGame.ps1` reads through `Get-QuestModCodePulSha256`. When it differs from the
+  installed pack's Code.pul, `GameLibrary` reports **PackChanged**. Home then leads with **Build on
+  this Quest**, adds **Play anyway** (the old game still loads, but may not match the new pack and
+  online play may refuse it) and shows a warning banner. A dialog offers the build once per
+  Code.pul. Right after an update, a game whose `game.json` predates the key gets the same offer,
+  because it cannot be checked.
+
 Online play (Retro Rewind WFC) needs the Retro-WFC payload translated into the mod, as on a PC:
 `translate-mod --retro-wfc-payload`, with the payload Setup downloads and verifies from
 `https://rwfc.net/api/wfc/payload?g=RMCPD00`. Without it the mod downloads `WWFC/Payload` while
@@ -726,7 +744,8 @@ one, rebuild the game.
 A `.wcgame` is a zip holding `game.json`, `libmain.so` and optionally `DATA/…` (the extracted
 disc) and `MOD/…` (the RetroRewind6 pack), both written without compression. `game.json` records
 the profile, game ID, `main.dol` and `StaticR.rel` pins, the kit fingerprint, the library's
-SHA-256, whether the package carries game files and mod content, and who built it.
+SHA-256, whether the package carries game files and mod content, who built it and, for Retro
+Rewind, `modCodePulSha256`.
 `android/Build-QuestGame.ps1 -Product base|retro_rewind` builds one on a PC from the translator's
 output and the kit the last APK build exported; `-Data` includes the game files and `-Mod
 <RetroRewind6>` the pack. `-Install` pushes it into the app's `Import` folder. The launcher

@@ -439,6 +439,7 @@ class SettingsPage(
                         activity.getString(R.string.about_game_ready, it.optString("builtBy"), it.optString("builtAt"))
                     } ?: activity.getString(R.string.about_game_missing)
                     GameLibrary.Status.Stale -> activity.getString(R.string.about_game_stale)
+                    GameLibrary.Status.PackChanged -> activity.getString(R.string.about_game_pack_changed)
                     GameLibrary.Status.Missing -> activity.getString(R.string.about_game_missing)
                 }
                 info(profile.title, gameText, stacked = true)
@@ -460,10 +461,15 @@ class SettingsPage(
             // Retro Rewind's pack is its own download, and the row says which version is installed.
             if (GameProfile.RetroRewind in GameProfile.available(activity)) {
                 val installed = RetroRewindPack.installedVersion(activity)
+                val latest = RetroRewindUpdates.latestKnown(activity)
                 info(
                     R.string.about_mod_pack,
-                    installed?.let { activity.getString(R.string.about_mod_pack_version, it) }
-                        ?: activity.getString(R.string.about_mod_pack_missing),
+                    when {
+                        installed == null -> activity.getString(R.string.about_mod_pack_missing)
+                        RetroRewindUpdates.updateAvailable(installed, latest) ->
+                            activity.getString(R.string.about_mod_pack_version_update, installed, latest)
+                        else -> activity.getString(R.string.about_mod_pack_version, installed)
+                    },
                     stacked = true,
                 )
                 action(

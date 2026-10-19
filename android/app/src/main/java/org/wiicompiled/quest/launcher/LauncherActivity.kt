@@ -48,7 +48,7 @@ class LauncherActivity : Activity() {
     private enum class Page { Home, Profiles, Patches, Miis, Settings, Rooms, Leaderboard, Friends }
 
     /** What Home's main and secondary buttons do. */
-    private enum class Action { Play, Resume, SelectDisc, ImportGame, BuildGame, DownloadModPack, Reset }
+    private enum class Action { Play, PlayAnyway, Resume, SelectDisc, ImportGame, BuildGame, DownloadModPack, UpdateModPack, Reset }
 
     private lateinit var navHome: View
     private lateinit var navProfiles: View
@@ -127,6 +127,9 @@ class LauncherActivity : Activity() {
     private var setupKind: Class<*>? = null
     private var mainAction = Action.Play
     private var secondaryAction: Action? = null
+    private var resumed = false
+    /** A Retro Rewind update or rebuild offer is on screen; the other waits for the next chance. */
+    private var retroRewindPrompt = false
 
     private val setupListener: (GameSetup.State) -> Unit = { state ->
         when {
@@ -135,6 +138,10 @@ class LauncherActivity : Activity() {
             state.javaClass != setupKind -> settings.refresh()
         }
         setupKind = state.javaClass
+        // A finished pack update usually leaves Retro Rewind's game behind its new Code.pul.
+        if (state is GameSetup.State.Done && state.task == GameSetup.Task.DownloadModPack) {
+            offerRetroRewindRebuild(afterUpdate = true)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -286,6 +293,7 @@ class LauncherActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         launching = false
         // An import can install the other game and select it, so the toggle follows the file.
         profile = GameProfile.selected(this)
@@ -293,6 +301,10 @@ class LauncherActivity : Activity() {
         setupKind = GameSetup.state.javaClass
         refresh()
         GameSetup.addListener(setupListener)
+        // Retro Rewind's pack: a newer one published is offered first, then a game left behind.
+        offerRetroRewindUpdate()
+        offerRetroRewindRebuild(afterUpdate = false)
+        checkRetroRewindUpdates()
         patches.attach()
         // The game may have changed the save while it ran; the profiles page reads it again itself.
         if (page != Page.Profiles) sidebarProfile.refresh()
@@ -314,6 +326,7 @@ class LauncherActivity : Activity() {
     }
 
     override fun onPause() {
+        resumed = false
         GameSetup.removeListener(setupListener)
         patches.detach()
         profilesPage.setVisible(false)
@@ -450,7 +463,10 @@ class LauncherActivity : Activity() {
             mainAction == Action.Reset -> Action.SelectDisc
             setup is GameSetup.State.Failed && gameFilesTask -> Action.Reset
             mainAction == Action.ImportGame -> null
+            // Built from an earlier Retro Rewind pack: it still runs offline, as the player chooses.
+            mainAction == Action.BuildGame && gameStatus == GameLibrary.Status.PackChanged -> Action.PlayAnyway
             gameStatus != GameLibrary.Status.Ready || mainAction == Action.SelectDisc -> Action.ImportGame
+            mainAction == Action.Play && profile.modPack && retroRewindUpdateAvailable() -> Action.UpdateModPack
             else -> null
         }
 
@@ -537,11 +553,23 @@ class LauncherActivity : Activity() {
             discStatus == GameStorage.DiscStatus.Ready && !GameStorage.modContentReady(this, profile) ->
                 showBanner(getString(R.string.home_mod_needed_message), warning = true)
             gameStatus == GameLibrary.Status.Stale -> showBanner(getString(R.string.home_game_stale), warning = true)
+            gameStatus == GameLibrary.Status.PackChanged -> showBanner(
+                getString(R.string.home_game_pack_changed, RetroRewindPack.installedVersion(this).orEmpty()),
+                warning = true,
+            )
             gameStatus == GameLibrary.Status.Missing && discStatus == GameStorage.DiscStatus.Missing ->
                 showBanner(getString(R.string.home_setup_intro) + discMd5Note(), warning = false)
             gameStatus == GameLibrary.Status.Missing -> showBanner(getString(R.string.home_game_missing), warning = false)
             discStatus == GameStorage.DiscStatus.Missing ->
                 showBanner(getString(R.string.home_data_missing, disc) + discMd5Note(), warning = false)
+            profile.modPack && retroRewindUpdateAvailable() -> showBanner(
+                getString(
+                    R.string.home_mod_pack_update_available,
+                    RetroRewindUpdates.latestKnown(this).orEmpty(),
+                    RetroRewindPack.installedVersion(this).orEmpty(),
+                ),
+                warning = false,
+            )
             else -> showBanner(null)
         }
 
@@ -587,22 +615,24 @@ class LauncherActivity : Activity() {
 
     private fun label(action: Action): Int = when (action) {
         Action.Play -> R.string.home_play
+        Action.PlayAnyway -> R.string.home_play_anyway
         Action.Resume -> R.string.home_resume
         Action.SelectDisc -> R.string.home_select_disc
         Action.ImportGame -> R.string.home_import
         Action.BuildGame -> R.string.home_build
         Action.DownloadModPack -> R.string.home_download_mod_pack
+        Action.UpdateModPack -> R.string.home_update_mod_pack
         Action.Reset -> R.string.home_reset
     }
 
     private fun perform(action: Action) {
         if (GameSetup.isRunning) return
         when (action) {
-            Action.Play, Action.Resume -> play()
+            Action.Play, Action.PlayAnyway, Action.Resume -> play()
             Action.SelectDisc -> selectDiscImage()
             Action.ImportGame -> importGame()
             Action.BuildGame -> buildGame()
-            Action.DownloadModPack -> downloadModPack()
+            Action.DownloadModPack, Action.UpdateModPack -> downloadModPack()
             Action.Reset -> resetInstallation()
         }
     }
@@ -677,6 +707,93 @@ class LauncherActivity : Activity() {
         }
     }
 
+    /** The Retro Rewind game, when this APK carries its kit. */
+    private val retroRewind: GameProfile?
+        get() = profiles.firstOrNull { it.modPack }
+
+    /** Whether the last check found a newer Retro Rewind pack than this headset holds. */
+    private fun retroRewindUpdateAvailable(): Boolean =
+        RetroRewindUpdates.updateAvailable(RetroRewindPack.installedVersion(this), RetroRewindUpdates.latestKnown(this))
+
+    /**
+     * Reads Retro Rewind's version feed in the background when a check is due and the headset has
+     * the pack. A newer version is offered as soon as it is found, if the launcher is still in front.
+     */
+    private fun checkRetroRewindUpdates() {
+        if (retroRewind == null || RetroRewindPack.installedVersion(this) == null) return
+        RetroRewindUpdates.checkInBackground(this) { latest ->
+            if (latest == null || isDestroyed) return@checkInBackground
+            refresh()
+            offerRetroRewindUpdate()
+        }
+    }
+
+    /** Offers a newer Retro Rewind pack, once per published version. */
+    private fun offerRetroRewindUpdate() {
+        if (!resumed || retroRewindPrompt || retroRewind == null || GameSetup.isRunning || isGameRunning()) return
+        val installed = RetroRewindPack.installedVersion(this) ?: return
+        val version = RetroRewindUpdates.updateToOffer(
+            installed,
+            RetroRewindUpdates.latestKnown(this),
+            RetroRewindUpdates.offeredUpdate(this),
+        ) ?: return
+        RetroRewindUpdates.markUpdateOffered(this, version)
+        retroRewindPrompt = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rr_update_title)
+            .setMessage(getString(R.string.rr_update_message, version, installed))
+            .setPositiveButton(R.string.rr_update_now) { _, _ ->
+                if (GameSetup.isRunning || refuseWhileGameRuns()) return@setPositiveButton
+                GameSetupService.startModPackDownload(this)
+                showPage(Page.Home)
+            }
+            .setNegativeButton(R.string.rr_later, null)
+            .setOnDismissListener { retroRewindPrompt = false }
+            .show()
+    }
+
+    /**
+     * Offers building Retro Rewind again on this headset when its game is behind the pack's
+     * Code.pul, or, right after a pack update, when the game is too old to say which it was built
+     * from. Once per Code.pul: declined, Home keeps saying so and offers Build and Play anyway.
+     */
+    private fun offerRetroRewindRebuild(afterUpdate: Boolean) {
+        if (!BuildConfig.ON_DEVICE_BUILD || !resumed || retroRewindPrompt || GameSetup.isRunning || isGameRunning()) return
+        val target = retroRewind ?: return
+        if (GameStorage.discStatus(this) != GameStorage.DiscStatus.Ready || !GameStorage.modContentReady(this, target)) return
+        val status = GameLibrary.status(this, target)
+        // Only a built game can be behind its pack, and hashing Code.pul is not free.
+        if (status != GameLibrary.Status.PackChanged && !(afterUpdate && status == GameLibrary.Status.Ready)) return
+        val codePul = GameStorage.modCodePulSha256(this)
+        val offer = RetroRewindUpdates.rebuildToOffer(
+            status,
+            GameLibrary.recordsCodePul(GameLibrary.manifest(this, target)),
+            afterUpdate,
+            codePul,
+            RetroRewindUpdates.offeredRebuild(this),
+        )
+        if (!offer || codePul == null) return
+        RetroRewindUpdates.markRebuildOffered(this, codePul)
+        retroRewindPrompt = true
+        val message = if (status == GameLibrary.Status.PackChanged) {
+            R.string.rr_rebuild_message
+        } else {
+            R.string.rr_rebuild_unknown_message
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rr_rebuild_title)
+            .setMessage(getString(message, RetroRewindPack.installedVersion(this).orEmpty()))
+            .setPositiveButton(R.string.rr_rebuild_now) { _, _ ->
+                if (GameSetup.isRunning || refuseWhileGameRuns()) return@setPositiveButton
+                selectProfile(target)
+                GameSetupService.startBuild(this, target)
+                showPage(Page.Home)
+            }
+            .setNegativeButton(R.string.rr_later, null)
+            .setOnDismissListener { retroRewindPrompt = false }
+            .show()
+    }
+
     private fun buildStatus(state: GameSetup.State.Working): String = when (state.step) {
         GameBuild.Step.Download -> getString(R.string.build_step_download, state.stepDone, state.stepTotal)
         GameBuild.Step.Translate -> getString(R.string.build_step_translate, state.stepDone, state.stepTotal)
@@ -693,7 +810,8 @@ class LauncherActivity : Activity() {
             confirm(R.string.home_mod_needed_title, R.string.home_mod_needed_message, R.string.home_download_mod_pack) { downloadModPack() }
             return
         }
-        val message = if (GameLibrary.status(this, profile) == GameLibrary.Status.Ready) {
+        val status = GameLibrary.status(this, profile)
+        val message = if (status == GameLibrary.Status.Ready || status == GameLibrary.Status.PackChanged) {
             R.string.home_build_replace_message
         } else {
             R.string.home_build_message
@@ -735,7 +853,7 @@ class LauncherActivity : Activity() {
     /** Opens the document picker for a .wcgame, asking first when it would replace the game. */
     private fun importGame() {
         if (GameSetup.isRunning || refuseWhileGameRuns()) return
-        if (GameLibrary.status(this, profile) != GameLibrary.Status.Ready) {
+        if (!GameLibrary.loadable(GameLibrary.status(this, profile))) {
             openPicker(REQUEST_GAME_PACKAGE)
             return
         }

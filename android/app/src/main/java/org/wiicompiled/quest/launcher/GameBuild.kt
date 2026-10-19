@@ -127,6 +127,8 @@ object GameBuild {
         val objects = File(work, "obj")
         val temporary = File(root, "tmp")
         val failure = AtomicReference<String?>(null)
+        /** The SHA-256 of the Code.pul a Retro Rewind translation was made from (the pack's). */
+        var translatedCodePulSha256: String? = null
 
         fun run(): String? {
             log.line("WiiCompiled Quest ${BuildConfig.VERSION_NAME} building ${profile.id} on this headset")
@@ -358,7 +360,10 @@ object GameBuild {
             // A modded game needs a base translation that knows this Code.pul, so the pack's own
             // identity (and the payload's) is part of what the stored translation is reused for.
             val modIdentity = if (payload != null) {
-                "${BuildRecipe.hex(sha256(GameStorage.modCodePul(context)))} ${BuildRecipe.hex(sha256(payload))}"
+                val codePul = BuildRecipe.hex(sha256(GameStorage.modCodePul(context)))
+                // game.json records it, so the launcher sees when the pack moves on without the game.
+                translatedCodePulSha256 = codePul
+                "$codePul ${BuildRecipe.hex(sha256(payload))}"
             } else {
                 ""
             }
@@ -655,6 +660,7 @@ object GameBuild {
                     .put("includesData", false)
                     .put("builtBy", "this headset (WiiCompiled Quest ${BuildConfig.VERSION_NAME})")
                     .put("builtAt", builtAt)
+                translatedCodePulSha256?.let { manifest.put(GameLibrary.MOD_CODE_PUL_KEY, it) }
                 File(staging, GameLibrary.MANIFEST_NAME).writeText(manifest.toString(2))
                 destination.parentFile?.mkdirs()
                 return GameFiles.replace(destination, staging)

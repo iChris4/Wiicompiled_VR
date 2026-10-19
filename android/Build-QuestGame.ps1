@@ -93,9 +93,18 @@ $library = Invoke-QuestGameBuild -KitDir $Kit -GeneratedDir $Generated -BuildDir
 Write-Host ("Built {0} in {1:N1} min" -f $library, $stopwatch.Elapsed.TotalMinutes)
 
 if (-not $Output) { $Output = Join-Path $BuildDir 'MarioKartWii.wcgame' }
+# Which Code.pul Retro Rewind was translated from, so the headset can tell when its pack moves on.
+$modCodePul = ''
+if ($Product -eq 'retro_rewind') {
+    $modCodePul = Get-QuestModCodePulSha256 -GeneratedDir $Generated
+    if (-not $modCodePul) {
+        Write-Warning ('This Retro Rewind translation does not record its Code.pul (mod_source.json), so the ' +
+            'headset cannot tell when a pack update leaves this game behind. Translate the mod again to add it.')
+    }
+}
 Write-Host 'MKWCBUILD:STEP:quest-package Packaging the game for Quest'
 $game = New-QuestGamePackage -Library $library -DataDir $Data -ModDir $Mod -KitDir $Kit -GameId $gameId -DolSha256 $dolSha -RelSha256 $relSha `
-    -BuiltBy $BuiltBy -OutputPath $Output -Product $Product
+    -BuiltBy $BuiltBy -OutputPath $Output -Product $Product -ModCodePulSha256 $modCodePul
 Write-Host "Game package: $Output (kit $($game.kitFingerprint))"
 
 if ($Install) {

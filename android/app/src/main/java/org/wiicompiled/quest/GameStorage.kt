@@ -2,6 +2,7 @@ package org.wiicompiled.quest
 
 import android.content.Context
 import java.io.File
+import java.security.MessageDigest
 import org.wiicompiled.quest.launcher.TomlConfig
 
 /**
@@ -38,6 +39,32 @@ object GameStorage {
 
     /** The pack's own Code.pul, which is what a modded game and a mod translation both need. */
     fun modCodePul(context: Context): File = File(modDirectory(context), "Binaries/Code.pul")
+
+    @Volatile
+    private var cachedCodePul: Pair<String, String>? = null
+
+    /**
+     * The SHA-256 of the pack's Code.pul, or null without a pack. Home asks on every refresh, so
+     * the hash is kept until the file's size or time changes (a pack update rewrites it).
+     */
+    fun modCodePulSha256(context: Context): String? {
+        val file = modCodePul(context)
+        if (!file.isFile) return null
+        val identity = "${file.length()}:${file.lastModified()}"
+        cachedCodePul?.let { (key, sha256) -> if (key == identity) return sha256 }
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(1 shl 16)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
+        cachedCodePul = identity to sha256
+        return sha256
+    }
 
     /** Whether the pack a profile needs is there. Always true for the unmodded game. */
     fun modContentReady(context: Context, profile: GameProfile): Boolean =
