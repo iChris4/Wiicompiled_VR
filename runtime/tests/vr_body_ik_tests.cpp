@@ -295,6 +295,26 @@ void TestAlign() {
     Check(Align(pivot, {1, 0, 0}, {}) == kIdentityMtx34, "a zero new segment is the identity");
 }
 
+void TestRollAboutForearm() {
+    // A right grip held palm down: +X (into the palm) up, +Y back along the
+    // forearm towards the player, +Z right.
+    const Mtx34 grip{0, 0, 1, 0.1f, 1, 0, 0, -0.2f, 0, 1, 0, -0.3f};
+    const auto turned = RollAboutForearm(grip, 90.0f);
+    // Looking forward along the arm from the seat, up turning to the left is
+    // counter-clockwise.
+    Check(NearVec(detail::TransformDirection(turned, {1, 0, 0}), {-1, 0, 0}),
+          "+90 turns the hand counter-clockwise as the player sees it");
+    Check(NearVec(detail::TransformDirection(turned, {0, 1, 0}), {0, 0, 1}), "the forearm axis stays");
+    Check(NearVec(Position(turned), Position(grip)), "the palm stays in place");
+    Check(IsRotation(turned), "the turned grip is a proper rotation");
+    Check(NearVec(detail::TransformDirection(RollAboutForearm(grip, -90.0f), {1, 0, 0}), {1, 0, 0}),
+          "-90 turns it clockwise");
+    Check(NearVec(detail::TransformDirection(RollAboutForearm(grip, 180.0f), {1, 0, 0}), {0, -1, 0}),
+          "180 turns it over");
+    Check(RollAboutForearm(grip, 0.0f) == grip, "no turn leaves the grip as it is");
+    Check(RollAboutForearm(grip, LoadedNaN()) == grip, "a non-finite turn leaves the grip as it is");
+}
+
 // root -> spin -> {arm_l1 -> arm_l2 -> wrist_l1 -> finger, arm_r1 -> arm_r2 ->
 // wrist_r1, face_1 -> hair}; root -> leg_l1 -> foot_l; root -> leg_r1.
 std::vector<RigBone> Skeleton() {
@@ -418,6 +438,7 @@ int main() {
     TestWristForPalm();
     TestMapSegment();
     TestAlign();
+    TestRollAboutForearm();
     TestClassifyRig();
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";

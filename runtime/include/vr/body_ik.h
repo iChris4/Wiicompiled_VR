@@ -119,6 +119,25 @@ inline Arm Solve(Vec shoulder, Vec elbow, Vec wrist, Vec target, Vec pole) {
     return {Add(shoulder, Add(Mul(axis, along), Mul(bend, height))), Add(shoulder, Mul(axis, distance)), true};
 }
 
+// A controller grip turned by `degrees` about its own +Y, which points back
+// along the forearm (the fingers lie along grip -Y): positive turns the hand
+// counter-clockwise as the player sees it, looking along the arm. The origin,
+// the palm, stays. It lets the character's hand match a grip its palm profile
+// was not recorded on.
+inline Mtx34 RollAboutForearm(const Mtx34& grip, float degrees) {
+    if (!detail::IsFiniteFloat(&degrees) || degrees == 0.0f) return grip;
+    const float radians = degrees * 0.01745329252f;
+    const float c = std::cos(radians), s = std::sin(radians);
+    // grip * R_y: X' = c X - s Z, Z' = s X + c Z.
+    Mtx34 out = grip;
+    for (int row = 0; row < 3; ++row) {
+        const float x = grip[row * 4 + 0], z = grip[row * 4 + 2];
+        out[row * 4 + 0] = c * x - s * z;
+        out[row * 4 + 2] = s * x + c * z;
+    }
+    return out;
+}
+
 // Rotate about a joint to align its old segment to the solved one. Opposite
 // vectors use a perpendicular axis rather than an undefined cross product.
 inline Mtx34 Align(Vec origin, Vec from, Vec to) {

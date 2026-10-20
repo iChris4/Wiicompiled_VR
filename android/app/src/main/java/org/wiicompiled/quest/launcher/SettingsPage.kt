@@ -209,6 +209,19 @@ class SettingsPage(
                 write = { c, value -> c.setBool("vr", "body_ik_hands_only", value) },
                 enabledIf = characterBody,
             )
+            // runtime_config.h's kVrBodyIkLeft/RightHandRollDefault (90, -90) and their -180..180 range.
+            for ((title, key, default) in listOf(
+                Triple(R.string.vr_body_ik_left_hand_roll, "body_ik_left_hand_roll", 90.0),
+                Triple(R.string.vr_body_ik_right_hand_roll, "body_ik_right_hand_roll", -90.0),
+            )) {
+                slider(
+                    title, R.string.vr_body_ik_hand_roll_helper, -180.0, 180.0, 5.0,
+                    read = { number(it, "vr", key, -180.0, 180.0, default) },
+                    format = { "%.0f°".format(it) },
+                    write = { c, value -> c.setFloat("vr", key, value) },
+                    enabledIf = characterBody,
+                )
+            }
             // runtime_config.h's kVrPlaceholderSteeringWheelDefault is off.
             toggle(
                 R.string.vr_placeholder_wheel, R.string.vr_placeholder_wheel_helper,

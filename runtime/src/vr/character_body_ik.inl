@@ -410,7 +410,9 @@ unsigned PoseCharacterLocked(const std::vector<Mtx34>& original, std::vector<Mtx
         const Mtx34 shoulder = modified[matrix_of(arm[0])];
         const Mtx34 elbow = modified[matrix_of(arm[1])];
         const Mtx34 wrist = modified[matrix_of(arm[2])];
-        auto grip = tracking.hands[hand].seat_from_grip;
+        // Turned about the forearm as the player set it, since the palm
+        // profiles were recorded on another runtime's controller grip.
+        auto grip = body_ik::RollAboutForearm(tracking.hands[hand].seat_from_grip, g_state.body_ik_hand_roll[hand]);
         for (int row = 0; row < 3; ++row) {
             grip[row * 4 + 3] *= units;
         }

@@ -173,6 +173,7 @@ int VrBulletBillCameraIndex(std::string_view value) {
 int g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::VrBulletBillCamera());
 bool g_vrBodyIk = RuntimeConfigFile::VrBodyIk();
 bool g_vrBodyIkHandsOnly = RuntimeConfigFile::VrBodyIkHandsOnly();
+std::array<float, 2> g_vrBodyIkHandRoll{RuntimeConfigFile::VrBodyIkHandRoll(0), RuntimeConfigFile::VrBodyIkHandRoll(1)};
 bool g_vrFirstPersonToggleClick = RuntimeConfigFile::VrFirstPersonToggleClick();
 // Set from any thread by the right-thumbstick click, applied on the game thread.
 std::atomic<bool> g_firstPersonToggleRequested{false};
@@ -1943,6 +1944,22 @@ void DrawVrCameraSettings() {
             "Hides the character's body and arms and keeps only its own hands, following the "
             "controllers.");
     }
+    // The palm profiles were recorded on another runtime's controller grip.
+    static constexpr std::array<const char*, 2> kHandRollLabels{"Character hand rotation (left)",
+                                                                "Character hand rotation (right)"};
+    for (size_t hand = 0; hand < kHandRollLabels.size(); ++hand) {
+        if (ImGui::SliderFloat(kHandRollLabels[hand], &g_vrBodyIkHandRoll[hand], RuntimeConfigFile::kVrBodyIkHandRollMin,
+                               RuntimeConfigFile::kVrBodyIkHandRollMax, "%.0f deg")) {
+            RuntimeConfigFile::SetVrBodyIkHandRoll(hand, g_vrBodyIkHandRoll[hand]);
+            mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Turns the character's hand about your forearm until it sits as you hold "
+                              "the controller, or as your tracked hand is: higher turns it "
+                              "counter-clockwise as you look along your arm. Default 90 deg on the "
+                              "left, -90 on the right.");
+        }
+    }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
     // Two presentations of one setting: which models go, or none at all.
@@ -2036,6 +2053,10 @@ void DrawVrCameraSettings() {
         g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::kVrBulletBillCameraDefault);
         RuntimeConfigFile::SetVrBodyIk(g_vrBodyIk);
         RuntimeConfigFile::SetVrBodyIkHandsOnly(g_vrBodyIkHandsOnly);
+        for (size_t hand = 0; hand < g_vrBodyIkHandRoll.size(); ++hand) {
+            g_vrBodyIkHandRoll[hand] = RuntimeConfigFile::VrBodyIkHandRollDefault(hand);
+            RuntimeConfigFile::SetVrBodyIkHandRoll(hand, g_vrBodyIkHandRoll[hand]);
+        }
         RuntimeConfigFile::SetVrBulletBillCamera(RuntimeConfigFile::kVrBulletBillCameraDefault);
         mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
         ApplyVrHudVirtualScreen();

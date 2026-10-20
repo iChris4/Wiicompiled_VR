@@ -84,6 +84,8 @@ struct RuntimeUserConfig {
     std::optional<std::string> vrBulletBillCamera;
     std::optional<bool> vrBodyIk;
     std::optional<bool> vrBodyIkHandsOnly;
+    std::optional<float> vrBodyIkLeftHandRoll;
+    std::optional<float> vrBodyIkRightHandRoll;
     std::optional<float> vrCockpitUnitsPerMeter;
     std::optional<bool> vrSteeringWheel;
     std::optional<bool> vrNativeSteeringWheel;
@@ -263,6 +265,14 @@ inline constexpr const char* kVrCockpitItemHandDefault = "left";
 // driver is hidden as first_person_hide_driver says and gloves are drawn.
 inline constexpr bool kVrBodyIkDefault = true;
 inline constexpr bool kVrBodyIkHandsOnlyDefault = false;
+// How far each character hand is turned about the forearm from where its
+// built-in palm profile puts it, in degrees, positive counter-clockwise as the
+// player looks along the arm: the profiles were recorded on another runtime's
+// controller grip, which a headset's can carry differently. The defaults,
+// mirrored between the hands, are what a Quest 3 needed.
+inline constexpr float kVrBodyIkLeftHandRollDefault = 90.0f;
+inline constexpr float kVrBodyIkRightHandRollDefault = -90.0f;
+inline constexpr float kVrBodyIkHandRollMin = -180.0f, kVrBodyIkHandRollMax = 180.0f;
 // While the player is a Bullet Bill, first person either rides inside the
 // bullet ("inside") or shows the game's own camera until it ends ("game").
 inline constexpr const char* kVrBulletBillCameraDefault = "inside";
@@ -637,6 +647,11 @@ inline void EnsureConfigFile() {
               "# keeps just its hands. Miis and unknown characters keep gloves.\n"
               "body_ik = true\n"
               "body_ik_hands_only = false\n"
+              "# How far its hands are turned about your forearms to sit as you\n"
+              "# hold the controllers, in degrees (-180 to 180), counter-clockwise\n"
+              "# as you look along the arm.\n"
+              "body_ik_left_hand_roll = 90.0\n"
+              "body_ik_right_hand_roll = -90.0\n"
               "# Where the view's orientation comes from: \"yaw\" levels the\n"
               "# horizon, \"yaw_pitch\" adds the kart's climb but no roll, and\n"
               "# \"full\" takes the kart's whole orientation so the view banks.\n"
@@ -983,6 +998,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     };
     config.vrCockpitUnitsPerMeter =
         readRangedFloat("cockpit_units_per_meter", kVrCockpitUnitsPerMeterMin, kVrCockpitUnitsPerMeterMax);
+    config.vrBodyIkLeftHandRoll = readRangedFloat("body_ik_left_hand_roll", kVrBodyIkHandRollMin, kVrBodyIkHandRollMax);
+    config.vrBodyIkRightHandRoll =
+        readRangedFloat("body_ik_right_hand_roll", kVrBodyIkHandRollMin, kVrBodyIkHandRollMax);
     config.vrSteeringWheel = FindConfigValue<bool>(document, "vr", "steering_wheel");
     config.vrNativeSteeringWheel = FindConfigValue<bool>(document, "vr", "native_steering_wheel");
     config.vrPlaceholderSteeringWheel = FindConfigValue<bool>(document, "vr", "placeholder_steering_wheel");
@@ -1259,6 +1277,15 @@ inline bool SetVrBodyIk(bool value) {
 inline bool SetVrBodyIkHandsOnly(bool value) {
     Mutable().vrBodyIkHandsOnly = value;
     return WriteSetting("vr", "body_ik_hands_only", value ? "true" : "false");
+}
+
+// hand 0 is the left.
+inline bool SetVrBodyIkHandRoll(size_t hand, float value) {
+    value = std::clamp(value, kVrBodyIkHandRollMin, kVrBodyIkHandRollMax);
+    (hand == 0 ? Mutable().vrBodyIkLeftHandRoll : Mutable().vrBodyIkRightHandRoll) = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", hand == 0 ? "body_ik_left_hand_roll" : "body_ik_right_hand_roll", formatted.str());
 }
 
 inline bool SetVrFirstPersonUnitsPerMeter(float value) {
@@ -1847,6 +1874,16 @@ inline bool VrBodyIk(bool fallback = kVrBodyIkDefault) {
 
 inline bool VrBodyIkHandsOnly(bool fallback = kVrBodyIkHandsOnlyDefault) {
     return Get().vrBodyIkHandsOnly.value_or(fallback);
+}
+
+// hand 0 is the left.
+inline constexpr float VrBodyIkHandRollDefault(size_t hand) {
+    return hand == 0 ? kVrBodyIkLeftHandRollDefault : kVrBodyIkRightHandRollDefault;
+}
+
+inline float VrBodyIkHandRoll(size_t hand) {
+    const auto& value = hand == 0 ? Get().vrBodyIkLeftHandRoll : Get().vrBodyIkRightHandRoll;
+    return std::clamp(value.value_or(VrBodyIkHandRollDefault(hand)), kVrBodyIkHandRollMin, kVrBodyIkHandRollMax);
 }
 
 inline float VrFirstPersonUnitsPerMeter(float fallback = kVrFirstPersonUnitsPerMeterDefault) {

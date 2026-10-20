@@ -407,6 +407,9 @@ struct FirstPersonState {
     // Character body (character_body_ik.inl).
     bool body_ik = RuntimeConfigFile::kVrBodyIkDefault;
     bool body_ik_hands_only = RuntimeConfigFile::kVrBodyIkHandsOnlyDefault;
+    // Degrees each hand turns about the forearm, left then right.
+    std::array<float, 2> body_ik_hand_roll{RuntimeConfigFile::kVrBodyIkLeftHandRollDefault,
+                                           RuntimeConfigFile::kVrBodyIkRightHandRollDefault};
     FirstPersonHeadOffsets offsets{};
     float units_per_meter = RuntimeConfigFile::kVrFirstPersonUnitsPerMeterDefault;
     FirstPersonRotation rotation = FirstPersonRotation::YawOnly;
@@ -1483,6 +1486,7 @@ void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
         g_state.bullet_game_camera = RuntimeConfigFile::VrBulletBillCamera() == "game";
         g_state.body_ik = RuntimeConfigFile::VrBodyIk();
         g_state.body_ik_hands_only = RuntimeConfigFile::VrBodyIkHandsOnly();
+        g_state.body_ik_hand_roll = {RuntimeConfigFile::VrBodyIkHandRoll(0), RuntimeConfigFile::VrBodyIkHandRoll(1)};
         // The next CalcView poses the body under the new settings; the seated
         // skeleton stays latched (re-latching here would take whatever pose
         // the driver happens to be in).

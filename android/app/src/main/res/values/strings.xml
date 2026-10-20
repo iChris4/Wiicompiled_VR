@@ -554,6 +554,9 @@
     <string name="vr_body_ik_helper">In the cockpit, your own character is drawn around you: its body sits in the seat, its arms follow the controllers and its head is hidden. Its hands replace the VR gloves, still holding your item. Not while you are a Bullet Bill. Miis and unknown characters keep the gloves and the driver hiding above; King Boo shows only his hands. Character body by heurazy.</string>
     <string name="vr_body_ik_hands_only">Character hands only</string>
     <string name="vr_body_ik_hands_only_helper">Hides the character\'s body and arms and keeps only its own hands, following the controllers.</string>
+    <string name="vr_body_ik_left_hand_roll">Character hand rotation (left)</string>
+    <string name="vr_body_ik_right_hand_roll">Character hand rotation (right)</string>
+    <string name="vr_body_ik_hand_roll_helper">Turns the character\'s hand about your forearm until it sits as you hold the controller, or as your tracked hand is. Higher turns it counter-clockwise as you look along your arm. Default 90° on the left, -90° on the right.</string>
     <string name="vr_placeholder_wheel">Placeholder wheel or handlebar</string>
     <string name="vr_placeholder_wheel_helper">In the cockpit, draws a separate VR steering wheel (karts) or handlebar (bikes) whenever the vehicle\'s own is not the one turning, as in the race\'s opening pan. Off, you only see the vehicle\'s own.</string>
     <string name="vr_hand_steering">Hand steering</string>

@@ -61,6 +61,8 @@ first_person_hide_driver = true
 first_person_hidden_model = 0
 body_ik = true
 body_ik_hands_only = false
+body_ik_left_hand_roll = 90.0
+body_ik_right_hand_roll = -90.0
 first_person_rotation = "yaw_pitch"
 steering_wheel = true
 native_steering_wheel = true
@@ -235,8 +237,8 @@ and it leaves out whatever a later clear of the whole color and depth erases. Th
 same with less GPU memory traffic, which a tiled mobile GPU pays for at every split (the "Eye replay
 plan" log line reports each new pass structure).
 `first_person` (the camera each race starts on), `bullet_bill_camera` and the `first_person_*` values
-are the first-person camera described below, and `body_ik` and `body_ik_hands_only` the
-[character body](#character-body) drawn in its cockpit. All are live and are also exposed in the F10
+are the first-person camera described below, and `body_ik`, `body_ik_hands_only` and the
+`body_ik_*_hand_roll` angles the [character body](#character-body) drawn in its cockpit. All are live and are also exposed in the F10
 settings bar.
 `performance_level` is the level asked of the runtime through `XR_EXT_performance_settings` for
 its CPU and GPU domains: `boost`, `sustained_high`, `sustained_low`, `power_savings`, or
@@ -866,7 +868,14 @@ that:
 - each arm is solved with two-bone IK to its controller grip, its length fitted to the reach, its
   sleeve at 65% of the model's thickness and its hand at half size, placed by one of 24 built-in
   palm profiles, one per standard character, recorded in heurazy's calibration workshop (a
-  standard rig without a profile, such as a custom character, gets a generic wrist offset);
+  standard rig without a profile, such as a custom character, gets a generic wrist offset). The
+  profiles were recorded on another runtime's controller grip, so the grip is first turned about
+  the forearm (its +Y) by `body_ik_left_hand_roll` and `body_ik_right_hand_roll`, -180 to 180
+  degrees, positive counter-clockwise as the player looks along the arm: 90 on the left and -90 on
+  the right by default, mirrored, from a Quest 3 test (**Character hand rotation** in F10 → Camera,
+  the headset panel and the Quest
+  launcher). A rig without a profile takes its wrist offset from the first tracked frame, so the
+  turn changes little there;
 - the head, and Toadette's separate hair, collapse at their pivot.
 
 It then re-runs the skinning for those matrices, calls the original `CalcView`, and restores the
