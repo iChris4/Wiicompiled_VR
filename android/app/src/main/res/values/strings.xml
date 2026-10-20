@@ -558,6 +558,10 @@
     <string name="vr_placeholder_wheel_helper">In the cockpit, draws a separate VR steering wheel (karts) or handlebar (bikes) whenever the vehicle\'s own is not the one turning, as in the race\'s opening pan. Off, you only see the vehicle\'s own.</string>
     <string name="vr_hand_steering">Hand steering</string>
     <string name="vr_hand_steering_helper">In the cockpit, squeeze a grip near the steering wheel or handlebar to grab it, and turn it to steer. Releasing both grips gives steering back to the stick. Hand steering by heurazy.</string>
+    <string name="vr_wheel_kart_sensitivity">Hand steering sensitivity (kart)</string>
+    <string name="vr_wheel_kart_sensitivity_helper">How far you turn the kart\'s wheel with your hands for full steering (default 90°). Lower is more sensitive: less turning. The stick steers as before; at full stick the wheel shows this angle. Needs Hand steering.</string>
+    <string name="vr_wheel_bike_sensitivity">Hand steering sensitivity (bike)</string>
+    <string name="vr_wheel_bike_sensitivity_helper">How far you turn the bike\'s handlebar with your hands for full steering (default 45°). Lower is more sensitive: less turning. The stick steers as before; at full stick the handlebar shows this angle. Needs Hand steering.</string>
     <string name="vr_cockpit_item_hand">Item in cockpit hand</string>
     <string name="vr_cockpit_item_hand_helper">Show Player 1\'s settled inventory item above the selected palm. Triple items show the remaining count. Using or losing the item hides it.</string>
     <string name="vr_item_left">Left</string>

@@ -712,7 +712,12 @@ or near a bar end, scaled by `wheel_grab_assist`. Once taken, only letting go of
 it. One hand steers by its angle around the hub; two hands steer by the line between them, so leaning
 or moving both arms together does not steer, and a hand joining, leaving or crossing the hub keeps
 the steering where it was. Turning past full lock is kept, so retracing the gesture returns to the
-same centre, while the game's steering saturates at full lock. `wheel_response` scales how quickly
+same centre, while the game's steering saturates at full lock. How far the hands turn for full lock
+is the hand steering sensitivity: `wheel_kart_degrees` (default 90) and `wheel_bike_degrees`
+(default 45), 20 to 180, offered as **Hand steering sensitivity (kart)** and **(bike)** right under
+Hand steering in F10 > VR, the headset panel, and the Quest launcher's Settings > VR; a lower angle
+is more sensitive. The stick's steering does not change;
+the wheel only shows it at the same full-lock angle. `wheel_response` scales how quickly
 the wheel follows, `wheel_tracking_grace` (seconds) how long a hand that loses tracking keeps hold,
 and `wheel_haptics` gives a short pulse on grab and release.
 

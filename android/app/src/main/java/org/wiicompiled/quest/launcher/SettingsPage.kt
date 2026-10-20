@@ -223,6 +223,23 @@ class SettingsPage(
                 write = { c, value -> c.setBool("vr", "hand_steering", value) },
                 enabledIf = cockpit,
             )
+            // The full-lock angles as sensitivities: runtime_config.h's kVrWheelDegreesMin/Max and
+            // WheelTuning's 90 and 45 defaults.
+            val handSteering = { c: TomlConfig -> cockpit(c) && (c.bool("vr", "hand_steering") ?: true) }
+            slider(
+                R.string.vr_wheel_kart_sensitivity, R.string.vr_wheel_kart_sensitivity_helper, 20.0, 180.0, 5.0,
+                read = { number(it, "vr", "wheel_kart_degrees", 20.0, 180.0, 90.0) },
+                format = { "%.0f°".format(it) },
+                write = { c, value -> c.setFloat("vr", "wheel_kart_degrees", value) },
+                enabledIf = handSteering,
+            )
+            slider(
+                R.string.vr_wheel_bike_sensitivity, R.string.vr_wheel_bike_sensitivity_helper, 20.0, 180.0, 5.0,
+                read = { number(it, "vr", "wheel_bike_degrees", 20.0, 180.0, 45.0) },
+                format = { "%.0f°".format(it) },
+                write = { c, value -> c.setFloat("vr", "wheel_bike_degrees", value) },
+                enabledIf = handSteering,
+            )
             choice(
                 R.string.vr_cockpit_item_hand, R.string.vr_cockpit_item_hand_helper,
                 listOf(R.string.vr_item_left, R.string.vr_item_right, R.string.vr_item_off),

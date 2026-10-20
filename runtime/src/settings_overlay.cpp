@@ -1293,6 +1293,29 @@ void DrawVrSteeringWheelSettings() {
                           "it to steer, with one hand or both. Releasing both grips gives steering "
                           "back to the stick, which still aims items.");
     }
+    // The full-lock angles, shown as sensitivities.
+    ImGui::BeginDisabled(!g_vrHandSteering);
+    bool sensitivityChanged = false;
+    sensitivityChanged |= ImGui::SliderFloat("Hand steering sensitivity (kart)", &g_vrWheelTuning.kartDegrees,
+                                             RuntimeConfigFile::kVrWheelDegreesMin,
+                                             RuntimeConfigFile::kVrWheelDegreesMax, "%.0f deg to full lock");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("How far you turn the kart's wheel with your hands for full steering (default "
+                          "90 deg). Lower is more sensitive: less turning. The stick steers as before; at "
+                          "full stick the wheel shows this angle. Needs Hand steering.");
+    }
+    sensitivityChanged |= ImGui::SliderFloat("Hand steering sensitivity (bike)", &g_vrWheelTuning.bikeDegrees,
+                                             RuntimeConfigFile::kVrWheelDegreesMin,
+                                             RuntimeConfigFile::kVrWheelDegreesMax, "%.0f deg to full lock");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("How far you turn the bike's handlebar with your hands for full steering "
+                          "(default 45 deg). Lower is more sensitive: less turning. The stick steers as "
+                          "before; at full stick the handlebar shows this angle. Needs Hand steering.");
+    }
+    if (sensitivityChanged) {
+        RuntimeConfigFile::SetVrWheelTuning(g_vrWheelTuning);
+    }
+    ImGui::EndDisabled();
     if (ImGui::Combo("Item in cockpit hand", &g_vrCockpitItemHand,
                      kVrCockpitItemHands.data(), static_cast<int>(kVrCockpitItemHands.size()))) {
         RuntimeConfigFile::SetVrCockpitItemHand(
@@ -1349,12 +1372,6 @@ void DrawVrSteeringWheelSettings() {
 #endif
     if (g_vrHandSteering && ImGui::TreeNode("Hand steering tuning")) {
         bool changed = false;
-        changed |= ImGui::SliderFloat("Kart full lock (degrees)", &g_vrWheelTuning.kartDegrees,
-                                      RuntimeConfigFile::kVrWheelDegreesMin,
-                                      RuntimeConfigFile::kVrWheelDegreesMax, "%.0f");
-        changed |= ImGui::SliderFloat("Bike full lock (degrees)", &g_vrWheelTuning.bikeDegrees,
-                                      RuntimeConfigFile::kVrWheelDegreesMin,
-                                      RuntimeConfigFile::kVrWheelDegreesMax, "%.0f");
         changed |= ImGui::SliderFloat("Grab reach (m)", &g_vrWheelTuning.grabDistance,
                                       RuntimeConfigFile::kVrWheelGrabDistanceMin,
                                       RuntimeConfigFile::kVrWheelGrabDistanceMax, "%.2f");
@@ -1369,7 +1386,12 @@ void DrawVrSteeringWheelSettings() {
                                       RuntimeConfigFile::kVrWheelTrackingGraceMax, "%.2f");
         changed |= ImGui::Checkbox("Grab and release pulse", &g_vrWheelTuning.haptics);
         if (ImGui::Button("Reset hand steering tuning")) {
+            // The sensitivities above are not part of the tuning.
+            const float kartDegrees = g_vrWheelTuning.kartDegrees;
+            const float bikeDegrees = g_vrWheelTuning.bikeDegrees;
             g_vrWheelTuning = {};
+            g_vrWheelTuning.kartDegrees = kartDegrees;
+            g_vrWheelTuning.bikeDegrees = bikeDegrees;
             changed = true;
         }
         if (changed) {
