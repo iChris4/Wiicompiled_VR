@@ -266,10 +266,11 @@ inline void append_item_badge(const AuroraCockpit& cockpit,const AuroraCockpitIt
   M frame;
   if(!cockpit_item::seat_from_item(hand,frame)) return;
   // In the item's upright frame, beside the widest model on the hand's outer
-  // side, facing the player like the item.
+  // side, facing the player like the item, a quarter of its size up.
   const float side=item.hand==0?-1.0f:1.0f;
   const size_t first=vertices.size();
-  const V base{side*0.095f,0.035f,0.0f};
+  const float size=cockpit_item::item_size(cockpit);
+  const V base{side*(0.5f*size+0.025f),0.25f*size,0.0f};
   ellipsoid(vertices,base,{0.016f,0.020f,0.004f},{0.05f,0.08f,0.13f});
   // A tiny raised seven-segment digit stays legible without creating another
   // textured game asset. One model is held for every triple inventory ID.

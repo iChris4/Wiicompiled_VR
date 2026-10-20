@@ -1406,6 +1406,7 @@ private:
     void BuildCockpit(const OpenXRBackendFrame& source, bool position_valid, float units_per_meter,
                       float lean_back_radians, AuroraCockpit& cockpit) noexcept {
         cockpit.unitsPerMeter = units_per_meter;
+        cockpit.itemSize = RuntimeConfigFile::VrCockpitItemSize();
         const DrivingSnapshot driving = input_ != nullptr ? input_->Driving() : DrivingSnapshot{};
         if ((driving.hand_steering || RuntimeConfigFile::VrCockpitItemHand() != "off") &&
             !hand_meshes_loaded_ && runtime_ != nullptr) {

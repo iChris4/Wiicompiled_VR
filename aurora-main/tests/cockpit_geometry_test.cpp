@@ -509,4 +509,56 @@ TEST_F(CockpitGeometry, CharacterHandKeepsTheItemCountBadge) {
   EXPECT_FALSE(cockpit::carries_hand(cockpit));
 }
 
+// The count badge keeps beside the held item as [vr] cockpit_item_size grows
+// it, the same distance out from its side and a quarter of its size up.
+TEST_F(CockpitGeometry, ItemCountBadgeStaysBesideTheItemsSize) {
+  using namespace aurora::gfx;
+  auto archive = std::make_shared<cockpit_item::data::Archive>();
+  auto& model = archive->models[cockpit_item::data::model_index(16)];
+  model.parts.emplace_back();
+  model.minimum = {-1.0f, 0.0f, -1.0f};
+  model.maximum = {1.0f, 1.0f, 1.0f};
+  archive->loaded = 1;
+  std::shared_ptr<const cockpit_item::data::Archive> previous;
+  {
+    std::lock_guard lock(cockpit_item::archiveMutex);
+    previous = cockpit_item::archive;
+    cockpit_item::archive = archive;
+  }
+  AuroraCockpit cockpit{};
+  cockpit.hands[1].tracked = true;
+  set_identity(cockpit.hands[1].seatFromGrip, {0.2f, -0.3f, -0.4f});
+  AuroraCockpitItem item{};
+  item.valid = true;
+  item.id = 16;
+  item.count = 3;
+  item.hand = 1;
+  // The badge's centre, from the item's origin just above the palm.
+  const auto offset = [&](float size) {
+    cockpit.itemSize = size;
+    std::vector<cockpit::Vertex> vertices;
+    cockpit::append_item_badge(cockpit, item, vertices);
+    std::array<float, 3> centre{};
+    for (const auto& vertex : vertices)
+      for (int axis = 0; axis < 3; ++axis) centre[axis] += vertex.position[axis] / vertices.size();
+    return std::array<float, 3>{std::hypot(centre[0] - 0.2f, centre[2] + 0.4f), centre[1] - (-0.3f + 0.05f),
+                                static_cast<float>(vertices.size())};
+  };
+  const auto small = offset(0.14f);
+  const auto large = offset(0.42f);
+  const auto fallback = offset(0.0f);
+  const auto defaulted = offset(cockpit_item::kDefaultItemSize);
+  {
+    std::lock_guard lock(cockpit_item::archiveMutex);
+    cockpit_item::archive = previous;
+  }
+  ASSERT_GT(small[2], 0.0f) << "a count badge";
+  EXPECT_NEAR(small[0], 0.095f, 0.01f) << "beside a 14 cm item, where it always was";
+  EXPECT_NEAR(small[1], 0.035f, 0.01f);
+  EXPECT_NEAR(large[0] - small[0], 0.14f, 0.005f) << "out by half the item's growth";
+  EXPECT_NEAR(large[1] - small[1], 0.07f, 0.005f) << "up by a quarter of it";
+  EXPECT_NEAR(fallback[0], defaulted[0], 1e-5f) << "no size is the default size";
+  EXPECT_NEAR(fallback[1], defaulted[1], 1e-5f);
+}
+
 } // namespace

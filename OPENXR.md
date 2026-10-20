@@ -71,6 +71,7 @@ object_culling = false
 hand_steering = true
 cockpit_item_hand = "left"
 cockpit_item_throw = true
+cockpit_item_size = 0.28
 performance_level = "boost"
 ```
 
@@ -338,7 +339,8 @@ own motion detection still reads them, so a sharp enough turn can read as a shak
 **Held item.** `cockpit_item_hand` accepts `"left"` (default), `"right"`, or `"off"` and is also
 available in F10 > VR. In cockpit view, the selected tracked hand holds one item model from the
 game's `Race/Common.szs` after the roulette settles. The item stands upright just above the palm
-with its front toward the player. It turns only with the hand's heading, so rolling or tilting the
+with its front toward the player, `cockpit_item_size` metres across its largest side (0.28 by
+default, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
 hand never tips it over. Triple items show their remaining inventory count beside the model, facing
 the player. The display follows player 1's inventory: using, losing, or deploying the
 item removes it from the hand even if a deployed object remains near the kart. Stick steering and

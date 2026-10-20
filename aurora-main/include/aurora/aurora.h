@@ -152,6 +152,9 @@ typedef struct {
   float handlebarRadius;
   // World units per metre used to build this packet's eye transforms.
   float unitsPerMeter;
+  // The held item's largest side in metres; zero, or a size out of range,
+  // keeps the default (cockpit_item::kDefaultItemSize).
+  float itemSize;
   float seatFromHandlebar[12];
   float eyeFromSeat[AURORA_STEREO_EYE_COUNT][12];
   AuroraCockpitHand hands[2];

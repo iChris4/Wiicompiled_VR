@@ -267,6 +267,14 @@ class SettingsPage(
                 write = { c, value -> c.setBool("vr", "cockpit_item_throw", value) },
                 enabledIf = { c -> cockpit(c) && stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS) != 2 },
             )
+            // runtime_config.h's kVrCockpitItemSizeDefault (0.28 m) and its 0.05..0.60 range.
+            slider(
+                R.string.vr_cockpit_item_size, R.string.vr_cockpit_item_size_helper, 0.05, 0.60, 0.01,
+                read = { number(it, "vr", "cockpit_item_size", 0.05, 0.60, 0.28) },
+                format = { "%.2f m".format(it) },
+                write = { c, value -> c.setFloat("vr", "cockpit_item_size", value) },
+                enabledIf = { c -> cockpit(c) && stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS) != 2 },
+            )
             // Tracked hands can show the item with stick steering as well.
             toggle(
                 R.string.vr_hand_tracking, R.string.vr_hand_tracking_helper,

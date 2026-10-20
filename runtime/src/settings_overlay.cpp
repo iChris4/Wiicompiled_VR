@@ -191,6 +191,7 @@ bool g_vrObjectCulling = RuntimeConfigFile::VrObjectCulling();
 bool g_vrHandSteering = RuntimeConfigFile::VrHandSteering();
 constexpr std::array<const char*, 3> kVrCockpitItemHands{"Left", "Right", "Off"};
 bool g_vrCockpitItemThrow = RuntimeConfigFile::VrCockpitItemThrow();
+float g_vrCockpitItemSize = RuntimeConfigFile::VrCockpitItemSize();
 int g_vrCockpitItemHand = RuntimeConfigFile::VrCockpitItemHand() == "right" ? 1 :
                           RuntimeConfigFile::VrCockpitItemHand() == "off" ? 2 : 0;
 mkw::vr::WheelTuning g_vrWheelTuning = RuntimeConfigFile::VrWheelTuning();
@@ -1336,6 +1337,13 @@ void DrawVrSteeringWheelSettings() {
                           "reads for an aimed throw. Swinging while holding the item button throws the "
                           "trailed item.");
     }
+    if (ImGui::SliderFloat("Held item size", &g_vrCockpitItemSize, RuntimeConfigFile::kVrCockpitItemSizeMin,
+                           RuntimeConfigFile::kVrCockpitItemSizeMax, "%.2f m")) {
+        RuntimeConfigFile::SetVrCockpitItemSize(g_vrCockpitItemSize);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("How big the item in your hand is, across its largest side (default 0.28 m).");
+    }
     ImGui::EndDisabled();
 #if defined(__ANDROID__)
     ImGui::BeginDisabled(!g_vrHandSteering && g_vrCockpitItemHand == 2);
@@ -2020,6 +2028,7 @@ void DrawVrCameraSettings() {
         g_vrHandSteering = RuntimeConfigFile::kVrHandSteeringDefault;
         g_vrCockpitItemHand = 0;
         g_vrCockpitItemThrow = RuntimeConfigFile::kVrCockpitItemThrowDefault;
+        g_vrCockpitItemSize = RuntimeConfigFile::kVrCockpitItemSizeDefault;
         RuntimeConfigFile::SetVrFirstPersonSeat(RuntimeConfigFile::kVrFirstPersonSeatDefault);
         RuntimeConfigFile::SetVrCockpitUnitsPerMeter(g_vrCockpitUnitsPerMeter);
         RuntimeConfigFile::SetVrSteeringWheel(g_vrSteeringWheel);
@@ -2028,6 +2037,7 @@ void DrawVrCameraSettings() {
         RuntimeConfigFile::SetVrHandSteering(g_vrHandSteering);
         RuntimeConfigFile::SetVrCockpitItemHand(RuntimeConfigFile::kVrCockpitItemHandDefault);
         RuntimeConfigFile::SetVrCockpitItemThrow(g_vrCockpitItemThrow);
+        RuntimeConfigFile::SetVrCockpitItemSize(g_vrCockpitItemSize);
 #if defined(__ANDROID__)
         g_vrHandTracking = RuntimeConfigFile::kVrHandTrackingDefault;
         RuntimeConfigFile::SetVrHandTracking(g_vrHandTracking);

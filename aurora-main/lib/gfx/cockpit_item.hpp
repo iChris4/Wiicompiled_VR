@@ -518,13 +518,20 @@ inline bool seat_from_item(const AuroraCockpitHand& hand,std::array<float,12>& o
   out={frontZ,0,frontX,pose[3], 0,1,0,pose[7]+lift, -frontX,0,frontZ,pose[11]};
   return true;
 }
-// Scales a model to 14 cm across its largest side and stands it on the item
-// frame's origin, centred.
-inline std::array<float,12> item_from_model(const data::Model& model) {
+// The held item's largest side, in metres, when the cockpit gives no usable
+// size ([vr] cockpit_item_size).
+inline constexpr float kDefaultItemSize=0.28f;
+inline float item_size(const AuroraCockpit& cockpit) {
+  const float size=cockpit.itemSize;
+  return size>=0.02f && size<=1.0f ? size : kDefaultItemSize;
+}
+// Scales a model to `size` metres across its largest side and stands it on the
+// item frame's origin, centred.
+inline std::array<float,12> item_from_model(const data::Model& model,float size) {
   const float span=std::max({model.maximum.x-model.minimum.x,model.maximum.y-model.minimum.y,
                              model.maximum.z-model.minimum.z});
   if(!(span>0.001f) || !std::isfinite(span)) return {};
-  const float k=0.14f/span;
+  const float k=size/span;
   const float cx=(model.minimum.x+model.maximum.x)*0.5f,cz=(model.minimum.z+model.maximum.z)*0.5f;
   return {k,0,0,-k*cx, 0,k,0,-k*model.minimum.y, 0,0,k,-k*cz};
 }
@@ -547,7 +554,7 @@ inline void render(const wgpu::RenderPassEncoder& pass,const StereoReplayFrame& 
   std::array<float,12> seatFromItem;
   if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return;
   const auto& model=gpuArchive->models[index];
-  const auto itemFromModel=item_from_model(model);
+  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit));
   if(!(itemFromModel[0]>0)) return;
   GpuFrame uniform{};
   compose(seatFromItem.data(),itemFromModel.data(),uniform.seatFromModel);
@@ -596,7 +603,7 @@ inline void render_multiview(const wgpu::RenderPassEncoder& pass,const StereoRep
   std::array<float,12> seatFromItem;
   if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return;
   const auto& model=gpuArchive->models[index];
-  const auto itemFromModel=item_from_model(model);
+  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit));
   if(!(itemFromModel[0]>0)) return;
   std::array<GpuFrame,2> uniforms{};
   for(uint32_t eye=0;eye<2;++eye) {

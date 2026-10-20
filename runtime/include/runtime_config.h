@@ -94,6 +94,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrHandSteering;
     std::optional<std::string> vrCockpitItemHand;
     std::optional<bool> vrCockpitItemThrow;
+    std::optional<float> vrCockpitItemSize;
     std::optional<bool> vrHandTracking;
     std::optional<float> vrWheelKartDegrees;
     std::optional<float> vrWheelBikeDegrees;
@@ -278,6 +279,10 @@ inline constexpr float kVrBodyIkHandRollMin = -180.0f, kVrBodyIkHandRollMax = 18
 inline constexpr const char* kVrBulletBillCameraDefault = "inside";
 // A quick swing of the item hand forward or back throws the item that way.
 inline constexpr bool kVrCockpitItemThrowDefault = true;
+// The held item's model across its largest side, in metres (Aurora's
+// cockpit_item::kDefaultItemSize is the same default).
+inline constexpr float kVrCockpitItemSizeDefault = 0.28f;
+inline constexpr float kVrCockpitItemSizeMin = 0.05f, kVrCockpitItemSizeMax = 0.60f;
 // The game hides karts and objects its own camera cannot see, which a head
 // turn in VR reveals. object_culling false draws them anyway (see
 // vr/mkw_vr_culling.h); it only takes effect while VR is enabled. The PC
@@ -680,6 +685,8 @@ inline void EnsureConfigFile() {
               "cockpit_item_hand = \"left\"\n"
               "# Swing that hand forward or back to throw the item that way.\n"
               "cockpit_item_throw = true\n"
+              "# How big that item is, in metres across its largest side.\n"
+              "cockpit_item_size = 0.28\n"
               "wheel_kart_degrees = 90.0\n"
               "wheel_bike_degrees = 45.0\n"
               "wheel_grab_distance = 0.35\n"
@@ -1008,6 +1015,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.vrHandSteering = FindConfigValue<bool>(document, "vr", "hand_steering");
     config.vrCockpitItemHand = FindConfigValue<std::string>(document, "vr", "cockpit_item_hand");
     config.vrCockpitItemThrow = FindConfigValue<bool>(document, "vr", "cockpit_item_throw");
+    config.vrCockpitItemSize = readRangedFloat("cockpit_item_size", kVrCockpitItemSizeMin, kVrCockpitItemSizeMax);
     config.vrHandTracking = FindConfigValue<bool>(document, "vr", "hand_tracking");
     config.vrWheelKartDegrees = readRangedFloat("wheel_kart_degrees", kVrWheelDegreesMin, kVrWheelDegreesMax);
     config.vrWheelBikeDegrees = readRangedFloat("wheel_bike_degrees", kVrWheelDegreesMin, kVrWheelDegreesMax);
@@ -1442,6 +1450,14 @@ inline bool SetVrCockpitItemHand(const std::string& value) {
 inline bool SetVrCockpitItemThrow(bool value) {
     Mutable().vrCockpitItemThrow = value;
     return WriteSetting("vr", "cockpit_item_throw", value ? "true" : "false");
+}
+
+inline bool SetVrCockpitItemSize(float value) {
+    value = std::clamp(value, kVrCockpitItemSizeMin, kVrCockpitItemSizeMax);
+    Mutable().vrCockpitItemSize = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("vr", "cockpit_item_size", formatted.str());
 }
 
 inline bool SetVrHandTracking(bool value) {
@@ -2012,6 +2028,10 @@ inline std::string VrCockpitItemHand() {
 
 inline bool VrCockpitItemThrow(bool fallback = kVrCockpitItemThrowDefault) {
     return Get().vrCockpitItemThrow.value_or(fallback);
+}
+
+inline float VrCockpitItemSize(float fallback = kVrCockpitItemSizeDefault) {
+    return std::clamp(Get().vrCockpitItemSize.value_or(fallback), kVrCockpitItemSizeMin, kVrCockpitItemSizeMax);
 }
 
 inline bool VrHandTracking(bool fallback = kVrHandTrackingDefault) {
