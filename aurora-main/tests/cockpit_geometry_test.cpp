@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -507,6 +508,78 @@ TEST_F(CockpitGeometry, CharacterHandKeepsTheItemCountBadge) {
   EXPECT_TRUE(cockpit::carries_hand(cockpit)) << "the overlay still draws for the item's hand";
   cockpit.hands[0].tracked = false;
   EXPECT_FALSE(cockpit::carries_hand(cockpit));
+}
+
+// The held item grows into the hand over kItemAnimationSeconds and shrinks away
+// when it goes; one turned round midway carries on from the size it had reached.
+TEST(CockpitItemAnimation, GrowsInAndShrinksAway) {
+  using namespace aurora::gfx::cockpit_item;
+  using Clock = ItemAnimation::Clock;
+  ItemAnimation state;
+  const auto step = [&](const AuroraCockpitItem& current, double seconds, bool hasModel = true) {
+    const auto at = Clock::time_point{} +
+                    std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1000.0 + seconds));
+    return step_item_animation(state, current, hasModel, at);
+  };
+  AuroraCockpitItem item{};
+  item.valid = true;
+  item.id = 16;
+  item.count = 3;
+  item.hand = 1;
+  item.raceGeneration = 7;
+  const AuroraCockpitItem none{};
+
+  // Times as fractions of the animation, stepped well inside the 250 ms after
+  // which a gap in drawing counts as first person having been off.
+  const double d = kItemAnimationSeconds;
+  auto shown = step(item, 0.0);
+  ASSERT_TRUE(shown.draw);
+  EXPECT_EQ(shown.id, 16);
+  EXPECT_EQ(shown.hand, 1);
+  EXPECT_NEAR(shown.scale, 0.0f, 1e-4f) << "it starts from nothing";
+  step(item, 0.2 * d);
+  EXPECT_NEAR(step(item, 0.5 * d).scale, 0.5f, 1e-3f) << "halfway at half the time";
+  step(item, 0.8 * d);
+  EXPECT_NEAR(step(item, d).scale, 1.0f, 1e-4f) << "full size when the time is up";
+  EXPECT_NEAR(step(item, 1.2 * d).scale, 1.0f, 1e-4f);
+
+  // Used: the same item keeps being drawn on the same hand, shrinking.
+  const double used = 1.4 * d;
+  shown = step(none, used);
+  ASSERT_TRUE(shown.draw);
+  EXPECT_EQ(shown.id, 16);
+  EXPECT_EQ(shown.hand, 1);
+  EXPECT_NEAR(shown.scale, 1.0f, 1e-4f) << "the shrink starts from full size";
+  step(none, used + 0.2 * d);
+  EXPECT_NEAR(step(none, used + 0.5 * d).scale, 0.5f, 1e-3f);
+  step(none, used + 0.8 * d);
+  EXPECT_FALSE(step(none, used + 1.1 * d).draw) << "gone once the time is up";
+
+  // Gone at 40% of its growth: it shrinks from the size it had reached, and
+  // back again it grows from where the shrink left it.
+  item.id = 5;
+  step(item, 2.0);
+  step(item, 2.0 + 0.2 * d);
+  const float reached = step(item, 2.0 + 0.4 * d).scale;
+  EXPECT_NEAR(reached, item_ease(0.4f), 1e-3f);
+  EXPECT_NEAR(step(none, 2.0 + 0.4 * d).scale, reached, 1e-3f) << "no jump when it starts to shrink";
+  const float shrunk = step(none, 2.0 + 0.6 * d).scale;
+  EXPECT_LT(shrunk, reached);
+  EXPECT_NEAR(step(item, 2.0 + 0.6 * d).scale, shrunk, 1e-3f) << "no jump when it grows again";
+
+  // Not drawn for over a second (the game's camera) while the item went: it is
+  // not shrunk late when first person comes back.
+  step(item, 3.0);
+  EXPECT_FALSE(step(none, 4.5).draw);
+
+  // A new race's item grows in again even when it is the same item.
+  for (double t = 6.0; t <= 6.0 + 1.2 * d; t += 0.2 * d) step(item, t);
+  EXPECT_NEAR(step(item, 6.0 + 1.5 * d).scale, 1.0f, 1e-4f);
+  item.raceGeneration = 8;
+  EXPECT_NEAR(step(item, 6.0 + 1.6 * d).scale, 0.0f, 1e-4f);
+
+  ItemAnimation fresh;
+  EXPECT_FALSE(step_item_animation(fresh, item, false, Clock::now()).draw) << "an item without a model draws nothing";
 }
 
 // The count badge keeps beside the held item as [vr] cockpit_item_size grows

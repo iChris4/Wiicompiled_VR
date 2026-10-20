@@ -343,7 +343,10 @@ with its front toward the player, `cockpit_item_size` metres across its largest 
 default, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
 hand never tips it over. Triple items show their remaining inventory count beside the model, facing
 the player. The display follows player 1's inventory: using, losing, or deploying the
-item removes it from the hand even if a deployed object remains near the kart. Stick steering and
+item removes it from the hand even if a deployed object remains near the kart. The model grows into
+the hand over 0.2 s when it arrives and shrinks away over 0.2 s when it goes
+(`cockpit_item::step_item_animation`, eased at both ends; one turned round midway goes on from the
+size it had reached). It is not shrunk late after first person was off while the item went. Stick steering and
 the existing item buttons still work. The imported models use their static bind pose; item effects
 and animations are not reproduced in the hand. Each material is drawn from its own data: texture
 layers with their wrap modes, SRT and environment mapping, vertex colours, culling, blending and up

@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -536,6 +537,62 @@ inline std::array<float,12> item_from_model(const data::Model& model,float size)
   return {k,0,0,-k*cx, 0,k,0,-k*model.minimum.y, 0,0,k,-k*cz};
 }
 
+// The held item grows into the hand when it arrives and shrinks away when it
+// is used or lost, over kItemAnimationSeconds, instead of popping in and out.
+// Each draw of a displayed frame steps the one render-thread state with the
+// same item, so the second eye never steps it again.
+inline constexpr float kItemAnimationSeconds=0.2f;
+struct ItemAnimation {
+  using Clock=std::chrono::steady_clock;
+  bool shown=false,leaving=false;
+  uint8_t id=0,hand=0;
+  uint64_t raceGeneration=0;
+  // When a whole grow or shrink would have begun: one turned round midway goes
+  // on from the size it had reached.
+  Clock::time_point start{};
+  Clock::time_point stepped{};
+};
+struct ItemDraw { bool draw=false;uint8_t id=0,hand=0;float scale=0; };
+// Smooth at both ends, and symmetric: ease(1-t) is 1-ease(t).
+inline float item_ease(float t) { t=std::clamp(t,0.0f,1.0f);return t*t*(3-2*t); }
+inline ItemDraw step_item_animation(ItemAnimation& state,const AuroraCockpitItem& item,bool hasModel,
+                                    ItemAnimation::Clock::time_point now) {
+  using Clock=ItemAnimation::Clock;
+  const auto progress=[&] {
+    return std::clamp(std::chrono::duration<float>(now-state.start).count()/kItemAnimationSeconds,0.0f,1.0f);
+  };
+  const auto startedAt=[&](float done) {
+    return now-std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(done*kItemAnimationSeconds));
+  };
+  // Not drawn for a while (the game's camera, a menu): an item that went in
+  // the meantime is not shrunk late.
+  const bool stale=state.shown && now-state.stepped>std::chrono::milliseconds(250);
+  state.stepped=now;
+  const bool present=item.valid && item.hand<=1 && item.count>=1 && item.count<=3 && hasModel;
+  if(present) {
+    const bool same=state.shown && state.id==item.id && state.hand==item.hand &&
+                    state.raceGeneration==item.raceGeneration;
+    if(!same) {
+      state.shown=true;state.leaving=false;state.id=item.id;state.hand=item.hand;
+      state.raceGeneration=item.raceGeneration;state.start=now;
+    } else if(state.leaving) {
+      // Back before it had gone: grow again from the size it shrank to.
+      const float done=progress();
+      state.leaving=false;state.start=startedAt(1-done);
+    }
+  } else if(state.shown && stale) {
+    state.shown=false;state.leaving=false;
+  } else if(state.shown && !state.leaving) {
+    const float done=progress();
+    state.leaving=true;state.start=startedAt(1-done);
+  }
+  if(!state.shown) return {};
+  const float done=progress();
+  if(state.leaving && done>=1) { state.shown=false;state.leaving=false;return {}; }
+  return {true,state.id,state.hand,state.leaving?item_ease(1-done):item_ease(done)};
+}
+inline ItemAnimation itemAnimation;
+
 inline void render(const wgpu::RenderPassEncoder& pass,const StereoReplayFrame& frame,uint32_t eye,
                    float sceneZ,float sceneConstant) {
   if(!frame.cockpit.active || !(frame.cockpit.unitsPerMeter>0) || eye>1) return;
@@ -547,14 +604,17 @@ inline void render(const wgpu::RenderPassEncoder& pass,const StereoReplayFrame& 
   for(size_t i=0;i<gpuArchive->models.size();++i)
     if(!gpuReady[i] && gpuArchive->models[i].valid()) prepare_model(i);
   const auto& item=frame.cockpitItem;
-  if(!item.valid || item.hand>1 || item.count==0 || item.count>3) return;
-  const int index=data::model_index(item.id);
+  const int itemIndex=data::model_index(item.id);
+  const auto shown=step_item_animation(itemAnimation,item,itemIndex>=0 && gpuArchive->models[itemIndex].valid(),
+                                       ItemAnimation::Clock::now());
+  if(!shown.draw || !(shown.scale>0.01f)) return;
+  const int index=data::model_index(shown.id);
   if(index<0 || !gpuArchive->models[index].valid()) return;
-  const auto& hand=frame.cockpit.hands[item.hand];
+  const auto& hand=frame.cockpit.hands[shown.hand];
   std::array<float,12> seatFromItem;
   if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return;
   const auto& model=gpuArchive->models[index];
-  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit));
+  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit)*shown.scale);
   if(!(itemFromModel[0]>0)) return;
   GpuFrame uniform{};
   compose(seatFromItem.data(),itemFromModel.data(),uniform.seatFromModel);
@@ -596,14 +656,17 @@ inline void render_multiview(const wgpu::RenderPassEncoder& pass,const StereoRep
   for(size_t i=0;i<gpuArchive->models.size();++i)
     if(!gpuReady[i] && gpuArchive->models[i].valid()) prepare_model(i);
   const auto& item=frame.cockpitItem;
-  if(!item.valid || item.hand>1 || item.count==0 || item.count>3) return;
-  const int index=data::model_index(item.id);
+  const int itemIndex=data::model_index(item.id);
+  const auto shown=step_item_animation(itemAnimation,item,itemIndex>=0 && gpuArchive->models[itemIndex].valid(),
+                                       ItemAnimation::Clock::now());
+  if(!shown.draw || !(shown.scale>0.01f)) return;
+  const int index=data::model_index(shown.id);
   if(index<0 || !gpuArchive->models[index].valid()) return;
-  const auto& hand=frame.cockpit.hands[item.hand];
+  const auto& hand=frame.cockpit.hands[shown.hand];
   std::array<float,12> seatFromItem;
   if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return;
   const auto& model=gpuArchive->models[index];
-  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit));
+  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit)*shown.scale);
   if(!(itemFromModel[0]>0)) return;
   std::array<GpuFrame,2> uniforms{};
   for(uint32_t eye=0;eye<2;++eye) {
