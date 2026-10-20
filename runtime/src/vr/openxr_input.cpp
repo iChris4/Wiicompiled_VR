@@ -1564,7 +1564,8 @@ void OpenXRInput::UpdateDriving(XrTime display_time, const driving::SeatFrame& s
         // The hardware wheel is already smooth; follow it directly.
         snapshot.visual_angle = m_wheel_visual.Update(true, snapshot.steering_input * max_angle, 0.0f, max_angle, dt);
     } else {
-        snapshot.steering_input = withheld ? 0.0f : hands[0].stick_x;
+        snapshot.steering_input =
+            driving::SteeringShown(anchor.steering_valid, anchor.steering, hands[0].stick_x, withheld);
         snapshot.visual_angle = m_wheel_visual.Update(wheel.held[0] || wheel.held[1], wheel.visualAngle,
                                                       snapshot.steering_input, max_angle, dt);
     }

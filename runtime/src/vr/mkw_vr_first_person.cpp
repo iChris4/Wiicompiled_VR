@@ -124,6 +124,13 @@ constexpr uint32_t kKartAccessorDriverOffset = 0x14u;
 constexpr uint32_t kKartAccessorStateOffset = 0x4u;
 constexpr uint32_t kKartStateFlagsOffset = 0xCu;
 constexpr uint32_t kKartStateInBullet = 1u << 27;
+// Kart::Status::UpdateFromInput (0x8059487C) copies the stick of the input
+// state driving the kart to KartState+0x88, and Kart::Movement::UpdateTurn
+// (0x8057A8B4) turns by its negation: the steering the vehicle turns with,
+// -1..1 with positive to the right, whatever controller it came from. The input
+// state has already mirrored it in mirror cups (Input::State::
+// SetStickXMirrorCheck, 0x8051E960), as the scene the wheel is drawn in is.
+constexpr uint32_t kKartStateStickXOffset = 0x88u;
 // Kart::Link::GetKiller (0x80591618): accessor+0x60. Killer::__ct
 // (0x8059B658) stores the ModelDirector at +0x34 (+0x38 is its shadow).
 constexpr uint32_t kKartAccessorKillerOffset = 0x60u;
@@ -449,6 +456,8 @@ struct FirstPersonState {
         Mtx34 handle_pose = kIdentityMtx34;
         bool predicted_view_valid = false;
         Mtx34 predicted_view = kIdentityMtx34;
+        bool steering_valid = false;
+        float steering = 0.0f;
         bool mesh_published = false;
         // The vehicle's own wheel would have been animated but the XR side has
         // not published its first driving snapshot yet: it shows unturned.
@@ -1079,6 +1088,15 @@ void LatchCockpitLocked(uint64_t guest_frame_index) noexcept {
         if (ReadGuestPointer(kart.accessor + kKartAccessorDamageOffset, damage)) {
             Memory::TryRead32(damage + kDamageTypeOffset, damage_type);
         }
+        uint32_t state = 0;
+        if (ReadGuestPointer(kart.accessor + kKartAccessorStateOffset, state) &&
+            Memory::Contains(state + kKartStateStickXOffset, 4)) {
+            const float steering = Memory::ReadFloat32(state + kKartStateStickXOffset);
+            if (detail::IsFiniteFloat(&steering)) {
+                latch.steering = std::clamp(steering, -1.0f, 1.0f);
+                latch.steering_valid = true;
+            }
+        }
     } catch (const Memory::AccessViolation&) {
         return;
     }
@@ -1253,6 +1271,8 @@ bool ComputeCockpitAnchorLocked(const Mtx34& view_from_world, const KartPoseRead
     out.units_per_meter = render_units;
     out.vehicle_identity = kart.body;
     out.bike = latch.bike;
+    out.steering_valid = latch.steering_valid;
+    out.steering = latch.steering;
     if (latch.grips_valid) {
         const detail::Vec3 left{latch.left_grip[3], latch.left_grip[7], latch.left_grip[11]};
         const detail::Vec3 right{latch.right_grip[3], latch.right_grip[7], latch.right_grip[11]};

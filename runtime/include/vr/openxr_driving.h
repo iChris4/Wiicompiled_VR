@@ -67,8 +67,8 @@ struct DrivingSnapshot {
     // Hand steering is on: a squeezed grip near the wheel takes hold of it.
     bool hand_steering = false;
     std::array<bool, 2> held{};
-    // The steering the game receives, -1..1: the wheel while a hand holds it,
-    // otherwise the left stick.
+    // The steering the vehicle turns with, -1..1: a USB wheel's, otherwise the
+    // game's own from whatever controller it reads (SteeringShown).
     float steering_input = 0.0f;
     // What the wheel or handlebar shows, in radians. Positive turns it
     // clockwise as the driver sees it, i.e. to the right.
@@ -128,9 +128,20 @@ inline void ApplyHandSteering(std::array<wii_remote::HandInputs, 2>& hands, cons
     }
 }
 
+// The steering an unheld wheel follows: the game's own, so a gamepad, a
+// keyboard or a wheel the game reads as a controller turns it as well as the
+// VR controllers do. Only while that cannot be read does it fall back to the
+// left stick, centred when the controllers are nothing to the game.
+inline float SteeringShown(bool game_valid, float game, float stick_x, bool withheld) noexcept {
+    if (game_valid && IsFinite(game)) {
+        return std::clamp(game, -1.0f, 1.0f);
+    }
+    return withheld || !IsFinite(stick_x) ? 0.0f : std::clamp(stick_x, -1.0f, 1.0f);
+}
+
 // The angle the wheel shows. A held wheel shows the hands' own angle; otherwise
-// it follows the stick at the configured full-lock angle, eased so a flicked
-// stick does not snap it round.
+// it follows the steering at the configured full-lock angle, eased so a
+// flicked stick does not snap it round.
 class WheelVisual {
 public:
     float Update(bool held, float held_angle, float stick_x, float max_angle, float dt) noexcept {

@@ -88,6 +88,23 @@ void TestVisual() {
     CheckNear(angle, -2.5f, "a held wheel shows the hands' angle exactly");
 }
 
+void TestSteeringShown() {
+    // Arguments: game_valid, game, stick_x, withheld.
+    CheckNear(driving::SteeringShown(true, -0.6f, 0.0f, false), -0.6f,
+              "another controller's steering turns the wheel while the VR stick rests");
+    CheckNear(driving::SteeringShown(true, 0.4f, 0.0f, true), 0.4f,
+              "the game's steering turns the wheel with the VR controllers withheld");
+    CheckNear(driving::SteeringShown(true, -1.0f, 1.0f, false), -1.0f,
+              "the game's steering wins over the VR stick (mirror cups flip it)");
+    CheckNear(driving::SteeringShown(true, 3.0f, 0.0f, false), 1.0f, "the game's steering is clamped");
+    CheckNear(driving::SteeringShown(false, 0.0f, 0.7f, false), 0.7f,
+              "the VR stick stands in while the game's steering cannot be read");
+    CheckNear(driving::SteeringShown(false, 0.0f, 0.7f, true), 0.0f,
+              "withheld controllers do not turn the wheel");
+    CheckNear(driving::SteeringShown(true, std::nanf(""), -0.5f, false), -0.5f,
+              "a non-finite game value falls back to the VR stick");
+}
+
 void TestSeatFrame() {
     driving::SeatFrame seat;
     seat.valid = true;
@@ -129,6 +146,7 @@ int main() {
     TestHandOff();
     TestMaxAngle();
     TestVisual();
+    TestSteeringShown();
     TestSeatFrame();
     TestPlaceholderControl();
     if (g_failures != 0) {

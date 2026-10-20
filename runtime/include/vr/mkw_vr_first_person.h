@@ -75,6 +75,11 @@ struct FirstPersonAnchor {
     bool native_mesh_prepared = false;
     // Changes whenever the player's vehicle object does.
     uint64_t vehicle_identity = 0;
+    // The steering the vehicle turns with this frame, -1..1 with positive to
+    // the right, from whatever controller the game reads (mirrored in mirror
+    // cups, like the scene).
+    bool steering_valid = false;
+    float steering = 0.0f;
 };
 
 // ---------------------------------------------------------------------------

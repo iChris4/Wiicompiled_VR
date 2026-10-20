@@ -639,9 +639,14 @@ Ported from [heurazy's mario-kart-wii-VR-port](https://github.com/heurazy/mario-
 (GPL-3.0-or-later). It applies to the cockpit seat.
 
 **The wheel turns.** With `steering_wheel = true` (the default) the kart's steering wheel or the
-bike's handlebar turns with your steering: the left stick's deflection at the full-lock angle
-(`wheel_kart_degrees` 90, `wheel_bike_degrees` 45), eased so a flicked stick does not snap it round,
-or the hands' own angle while they hold it. `native_steering_wheel = true` turns the vehicle's own
+bike's handlebar turns with your steering: the steering the game applies to the kart at the
+full-lock angle (`wheel_kart_degrees` 90, `wheel_bike_degrees` 45), eased so a flicked stick does
+not snap it round, or the hands' own angle while they hold it. That steering is the kart's own
+stick (`KartState+0x88`, the value `Kart::Movement::UpdateTurn` turns by), so the wheel turns
+whichever controller drives: the VR controllers, a gamepad, a keyboard or a steering wheel the
+game reads as a controller. It is already mirrored in mirror cups, like the scene the wheel is
+drawn in. The VR left stick stands in only while the kart cannot be read; a USB wheel set up in
+`PhysicalWheel.toml` shows its own unquantised angle. `native_steering_wheel = true` turns the vehicle's own
 model. Karts bake the wheel into the body, so at the race draw boundary the runtime decodes the
 body's MDL0 position arrays and shape connectivity. Hand grips locate the wheel, but its complete
 rim determines the rotation centre, radius and tilt: grip height/spacing varies by character.
