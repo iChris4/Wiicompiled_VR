@@ -350,8 +350,12 @@ or bananas leaves the hand together once it circles or trails the kart, while tr
 at a time. The model grows into the hand over 0.1 s when it arrives and shrinks away over 0.1 s when it
 goes (`cockpit_item::step_item_animation`, eased at both ends; one turned round midway goes on from the
 size it had reached). A used copy of a triple shrinks away where it stands while the others close up
-into the smaller arrangement over the same 0.1 s. Nothing is animated late after first person was off
-while the item changed. Stick steering and
+into the smaller arrangement over the same 0.1 s. Each use of the golden mushroom squeezes it to 75 %
+of its size over 0.1 s and back over 0.1 s; a use before that is done, as when the button is mashed,
+snaps it back to full size and starts again. The game stamps each use in the inventory
+(`Item::Player+0xAC`, written by `UseGoldenMushroom`), which reaches Aurora as
+`AuroraCockpitItem::useMark`. Nothing is animated late after first person was off while the item
+changed. Stick steering and
 the existing item buttons still work. The imported models use their static bind pose; item effects
 and animations are not reproduced in the hand. Each material is drawn from its own data: texture
 layers with their wrap modes, SRT and environment mapping, vertex colours, culling, blending and up

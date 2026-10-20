@@ -12,6 +12,9 @@ struct HeldItem {
     // Items already out, trailed behind or circling the kart (a triple, or a
     // shell or banana held behind): the next press of the item button uses one.
     bool tethered = false;
+    // The golden mushroom's stamp of its last use, which changes with every
+    // use (0 before the first); 0 for any other item.
+    uint32_t use_mark = 0;
     uint64_t race_generation = 0;
 };
 
@@ -26,6 +29,10 @@ namespace detail {
 // has none (UpdateTetheredItems, 0x8079231C, restores that after the last).
 // Item::Player::Update (0x80797928) gives a press to those first, then to the
 // inventory; they stay out while the roulette spins for the next item.
+// Each use of the golden mushroom (UseGoldenMushroom, 0x807A9F64) writes the
+// inventory's +0x24 (Player+0xAC): its timer (+0x20, set to 450 frames by the
+// first use and counted down by PlayerInventory::Update) less 12, so the value
+// is new with every use; PlayerInventory::ClearAll zeroes both.
 template <typename GuestMemory>
 HeldItem ReadHeldItem(uint32_t local_racer, uint64_t race_generation) noexcept {
     HeldItem result{};
@@ -46,6 +53,7 @@ HeldItem ReadHeldItem(uint32_t local_racer, uint64_t race_generation) noexcept {
         result.id = static_cast<uint8_t>(id);
         result.count = static_cast<uint8_t>(count);
         result.valid = true;
+        if (id == 0x0Au) result.use_mark = GuestMemory::Read32(player + 0xACu);
     } catch (const typename GuestMemory::AccessViolation&) {
         return result;
     }

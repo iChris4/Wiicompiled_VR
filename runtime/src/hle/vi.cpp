@@ -713,7 +713,8 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
                               static_cast<uint8_t>(hand == "right" ? 1 : hand == "off" ? 2 : 0),
                               item.valid && hand != "off",
                               static_cast<uint8_t>((mkw::vr::MkwVRCharacterHandActive(0) ? 1u : 0u) |
-                                                   (mkw::vr::MkwVRCharacterHandActive(1) ? 2u : 0u))};
+                                                   (mkw::vr::MkwVRCharacterHandActive(1) ? 2u : 0u)),
+                              item.use_mark};
     }
     // Latch the current policy safety state into this exact Aurora job. The
     // asynchronous worker may ask for an XR packet after the guest has already

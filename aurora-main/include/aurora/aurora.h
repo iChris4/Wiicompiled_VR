@@ -164,7 +164,8 @@ typedef struct {
 // 2 off. A zero-initialised value has no item. characterHands: the hands the
 // game's character model drew in that frame (bit 0 left, bit 1 right; the
 // character body), which the cockpit then does not draw (AuroraCockpitHand
-// characterHand is set from it for the replayed frame).
+// characterHand is set from it for the replayed frame). useMark: changes with
+// each use of an item used several times (the golden mushroom), 0 otherwise.
 typedef struct {
   uint64_t raceGeneration;
   uint8_t id;
@@ -172,6 +173,7 @@ typedef struct {
   uint8_t hand;
   bool valid;
   uint8_t characterHands;
+  uint32_t useMark;
 } AuroraCockpitItem;
 
 typedef struct {

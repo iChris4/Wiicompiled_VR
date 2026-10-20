@@ -552,6 +552,11 @@ inline std::array<float,12> item_from_model(const data::Model& model,float size)
 // second eye never steps it again.
 inline constexpr float kItemAnimationSeconds=0.1f;
 inline constexpr float kTripleCopyShare=0.5f;
+// Each use of an item used several times (the golden mushroom's boosts)
+// squeezes it to kUsePulseScale over kItemAnimationSeconds and back over as
+// long. A use before that is done, as when the button is mashed, snaps it back
+// to full size and starts again.
+inline constexpr float kUsePulseScale=0.75f;
 // The triple mushroom, green shells, red shells and bananas.
 inline bool triple_item(uint8_t id) { return id==5 || (id>=16 && id<=18); }
 // Where copy `slot` of `count` stands in the item frame (+X right, +Y up, +Z
@@ -581,6 +586,10 @@ struct ItemAnimation {
   uint64_t raceGeneration=0;
   std::array<Copy,kMaxCopies> copies{};
   Clock::time_point stepped{};
+  // The item's last use seen (AuroraCockpitItem::useMark) and its squeeze.
+  uint32_t useMark=0;
+  bool pulsing=false;
+  Clock::time_point pulse{};
 };
 struct ItemDraw {
   bool draw=false;uint8_t id=0,hand=0;
@@ -617,6 +626,7 @@ inline ItemDraw step_item_animation(ItemAnimation& state,const AuroraCockpitItem
   if(present && !same) {
     // A new item: every copy grows in at its place.
     state.shown=true;state.id=item.id;state.hand=item.hand;state.raceGeneration=item.raceGeneration;
+    state.useMark=item.useMark;state.pulsing=false;
     for(uint32_t slot=0;slot<kMaxCopies;++slot) {
       const auto at=copy_position(count,slot);
       state.copies[slot]=slot<count?Copy{true,false,now,at,at,now}:Copy{};
@@ -643,6 +653,17 @@ inline ItemDraw step_item_animation(ItemAnimation& state,const AuroraCockpitItem
       }
     }
   }
+  if(same && item.useMark!=state.useMark) {
+    // Used again: squeeze from full size, not late after a gap in drawing.
+    state.useMark=item.useMark;
+    if(item.useMark!=0 && !stale) { state.pulsing=true;state.pulse=now; }
+  }
+  float squeeze=1;
+  if(state.pulsing) {
+    const float t=std::chrono::duration<float>(now-state.pulse).count()/kItemAnimationSeconds;
+    if(t>=2) state.pulsing=false;
+    else squeeze=t<1?1-(1-kUsePulseScale)*item_ease(t):kUsePulseScale+(1-kUsePulseScale)*item_ease(t-1);
+  }
   ItemDraw out{};
   for(uint32_t slot=0;slot<kMaxCopies;++slot) {
     auto& copy=state.copies[slot];
@@ -650,7 +671,7 @@ inline ItemDraw step_item_animation(ItemAnimation& state,const AuroraCockpitItem
     const float done=progress(copy.start);
     if(copy.leaving && done>=1) { copy=Copy{};continue; }
     out.position[out.copies]=position(copy);
-    out.scale[out.copies]=item_ease(copy.leaving?1-done:done);
+    out.scale[out.copies]=item_ease(copy.leaving?1-done:done)*squeeze;
     ++out.copies;
   }
   if(out.copies==0) { state.shown=false;return {}; }

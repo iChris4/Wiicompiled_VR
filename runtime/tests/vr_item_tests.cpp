@@ -72,6 +72,14 @@ int main() {
     }
     Init(); GuestMemory::Write32(player + 0x8cu, 0x0au);
     Check(ReadHeldItem<GuestMemory>(7, 1).valid, "golden mushroom held");
+    Check(ReadHeldItem<GuestMemory>(7, 1).use_mark == 0, "golden mushroom not used yet");
+    GuestMemory::Write32(player + 0xACu, 438); // the first use: 450 - 12
+    Check(ReadHeldItem<GuestMemory>(7, 1).use_mark == 438, "golden mushroom first use");
+    GuestMemory::Write32(player + 0xACu, 401);
+    Check(ReadHeldItem<GuestMemory>(7, 1).use_mark == 401, "golden mushroom next use");
+    GuestMemory::Write32(player + 0x8cu, 0x04);
+    Check(ReadHeldItem<GuestMemory>(7, 1).use_mark == 0, "no use mark for another item");
+    GuestMemory::Write32(player + 0x8cu, 0x0au);
     GuestMemory::Write32(player + 0x90u, 0);
     Check(!ReadHeldItem<GuestMemory>(7, 1).valid, "golden mushroom expiry");
     Init(); GuestMemory::fault = player + 0x8cu;

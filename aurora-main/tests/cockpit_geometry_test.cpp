@@ -638,6 +638,62 @@ TEST(CockpitItemAnimation, TripleCopiesCloseUpAsTheyAreUsed) {
   EXPECT_NEAR(shown.scale[1], 1.0f, 1e-4f);
 }
 
+// Each use of the golden mushroom squeezes it to three quarters and back; a
+// use before that is done (the button mashed) snaps it back to full size and
+// starts again.
+TEST(CockpitItemAnimation, GoldenMushroomSqueezesOnEachUse) {
+  using namespace aurora::gfx::cockpit_item;
+  using Clock = ItemAnimation::Clock;
+  ItemAnimation state;
+  const auto step = [&](const AuroraCockpitItem& current, double seconds) {
+    const auto at = Clock::time_point{} +
+                    std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1000.0 + seconds));
+    return step_item_animation(state, current, true, at).scale[0];
+  };
+  const double d = kItemAnimationSeconds;
+  AuroraCockpitItem golden{};
+  golden.valid = true;
+  golden.id = 10;
+  golden.count = 1;
+  for (double t = 0.0; t <= 1.2 * d; t += 0.2 * d) step(golden, t);
+  EXPECT_NEAR(step(golden, 1.4 * d), 1.0f, 1e-4f) << "grown, not used yet";
+
+  golden.useMark = 438; // the first use
+  const double use = 1.6 * d;
+  EXPECT_NEAR(step(golden, use), 1.0f, 1e-4f) << "the squeeze starts from full size";
+  step(golden, use + 0.2 * d);
+  EXPECT_NEAR(step(golden, use + 0.5 * d), 0.875f, 1e-3f) << "halfway down at half the time";
+  step(golden, use + 0.8 * d);
+  EXPECT_NEAR(step(golden, use + d), kUsePulseScale, 1e-4f) << "three quarters";
+  step(golden, use + 1.2 * d);
+  EXPECT_NEAR(step(golden, use + 1.5 * d), 0.875f, 1e-3f) << "on its way back";
+  step(golden, use + 1.8 * d);
+  EXPECT_NEAR(step(golden, use + 2.1 * d), 1.0f, 1e-4f) << "full size again";
+
+  golden.useMark = 401;
+  const double mash = use + 2.4 * d;
+  step(golden, mash);
+  step(golden, mash + 0.2 * d);
+  EXPECT_NEAR(step(golden, mash + 0.5 * d), 0.875f, 1e-3f);
+  EXPECT_NEAR(step(golden, mash + 0.5 * d), 0.875f, 1e-3f) << "the same use seen again goes on";
+  golden.useMark = 390;
+  EXPECT_NEAR(step(golden, mash + 0.6 * d), 1.0f, 1e-4f) << "mashed: snapped back to full size";
+  step(golden, mash + 0.8 * d);
+  EXPECT_NEAR(step(golden, mash + 1.1 * d), 0.875f, 1e-3f) << "and squeezing again";
+
+  // A use while first person was off (the game's camera) is not shown late.
+  for (double t = mash + 1.2 * d; t <= mash + 3.0 * d; t += 0.2 * d) step(golden, t);
+  golden.useMark = 300;
+  EXPECT_NEAR(step(golden, mash + 3.0 * d + 1.0), 1.0f, 1e-4f) << "no late squeeze";
+  EXPECT_NEAR(step(golden, mash + 3.5 * d + 1.0), 1.0f, 1e-4f);
+
+  // A golden mushroom first seen already used grows in without a squeeze.
+  state = {};
+  golden.useMark = 250;
+  for (double t = 20.0; t <= 20.0 + d; t += 0.2 * d) step(golden, t);
+  EXPECT_NEAR(step(golden, 20.0 + 1.2 * d), 1.0f, 1e-4f) << "no squeeze for a use not seen";
+}
+
 // Where the renderer puts each copy: the triple's three at half the item size,
 // spread by their own size around the item's origin above the palm.
 TEST(CockpitItemPlacement, TripleCopiesStandAroundTheItemsOrigin) {
