@@ -59,6 +59,49 @@ JointPositions Hand(float knuckle, float middle, float end, float side = 1.0f) {
     return joints;
 }
 
+// A row-major 3x4 from its three axes (columns) and origin.
+std::array<float, 12> Frame(const Vec3& x, const Vec3& y, const Vec3& z, const Vec3& origin) {
+    return {x[0], y[0], z[0], origin[0], x[1], y[1], z[1], origin[1], x[2], y[2], z[2], origin[2]};
+}
+
+void CheckAxis(const std::array<float, 12>& m, int column, const Vec3& expected, const char* what) {
+    for (int row = 0; row < 3; ++row) {
+        CheckNear(m[row * 4 + column], expected[row], what);
+    }
+}
+
+void TestGripFromPalm() {
+    // Seat frame: +X right, +Y up, -Z forward. Both hands flat, palms down,
+    // fingers forward: the palm joint's +Y is up, +Z back, so +X is right.
+    const auto flat = Frame({1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0.1f, -0.2f, -0.3f});
+    // OpenXR's grip: +X into the right palm (up here) and away from the left
+    // (down); -Z from the little finger to the thumb, which is left on the
+    // right hand and right on the left; the fingers along -Y.
+    const auto right = GripFromPalm(flat, 1);
+    CheckAxis(right, 0, {0, 1, 0}, "right grip +X goes into the palm");
+    CheckAxis(right, 2, {1, 0, 0}, "right grip -Z runs from the little finger to the thumb");
+    CheckAxis(right, 1, {0, 0, 1}, "right grip: the fingers point along -Y");
+    CheckAxis(right, 3, {0.1f, -0.2f, -0.3f}, "the grip keeps the palm's origin");
+    const auto left = GripFromPalm(flat, 0);
+    CheckAxis(left, 0, {0, -1, 0}, "left grip +X leaves the palm");
+    CheckAxis(left, 2, {-1, 0, 0}, "left grip -Z runs from the little finger to the thumb");
+    CheckAxis(left, 1, {0, 0, 1}, "left grip: the fingers point along -Y");
+    // Hands held mirrored, palms facing each other with the fingers forward,
+    // give both grips the same orientation, as controllers held that way do.
+    const auto right_inward = GripFromPalm(Frame({0, -1, 0}, {1, 0, 0}, {0, 0, 1}, {0.2f, 0, 0}), 1);
+    const auto left_inward = GripFromPalm(Frame({0, 1, 0}, {-1, 0, 0}, {0, 0, 1}, {-0.2f, 0, 0}), 0);
+    for (int column = 0; column < 3; ++column) {
+        CheckAxis(left_inward, column, {right_inward[column], right_inward[4 + column], right_inward[8 + column]},
+                  "mirrored hands carry the same grip orientation");
+    }
+    // A rotation either way: X x Y = Z.
+    for (const auto& grip : {right, left, right_inward, left_inward}) {
+        const Vec3 x{grip[0], grip[4], grip[8]}, y{grip[1], grip[5], grip[9]};
+        CheckAxis(grip, 2, {x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]},
+                  "the grip is right-handed");
+    }
+}
+
 JointPositions Transformed(const JointPositions& joints, float scale, float yaw, const Vec3& offset) {
     JointPositions out{};
     const float c = std::cos(yaw), s = std::sin(yaw);
@@ -317,6 +360,7 @@ int main() {
     TestFlick();
     TestPulse();
     TestBareHandSteers();
+    TestGripFromPalm();
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";
         return 1;

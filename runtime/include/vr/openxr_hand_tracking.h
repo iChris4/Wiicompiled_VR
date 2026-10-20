@@ -81,6 +81,25 @@ inline bool IsFinite(float value) noexcept {
     return (bits & 0x7F800000u) != 0x7F800000u;
 }
 
+// A palm joint (+Y out of the back of the hand, -Z towards the fingertips) in
+// a controller grip's axes, which the character body's palm profiles were
+// recorded against. The OpenXR grip's +X is the palm normal, away from the palm
+// on the left hand and into it on the right, and its -Z runs from the little
+// finger to the thumb, so the fingers lie along grip -Y as along palm -Z: grip
+// X, Y, Z are the palm's s*Y, Z, s*X about the same origin, s -1 on the left
+// hand (0) and +1 on the right.
+inline std::array<float, 12> GripFromPalm(const std::array<float, 12>& seat_from_palm, size_t hand) noexcept {
+    const float s = hand == 0 ? -1.0f : 1.0f;
+    std::array<float, 12> grip{};
+    for (size_t row = 0; row < 3; ++row) {
+        grip[row * 4 + 0] = s * seat_from_palm[row * 4 + 1];
+        grip[row * 4 + 1] = seat_from_palm[row * 4 + 2];
+        grip[row * 4 + 2] = s * seat_from_palm[row * 4 + 0];
+        grip[row * 4 + 3] = seat_from_palm[row * 4 + 3];
+    }
+    return grip;
+}
+
 // The fingers' summed flexion that reads as an open hand, and as a hand closed
 // on the wheel's rim. A relaxed hand bends its three finger joints by roughly
 // 1.0 to 1.6 radians in all, which must stay under the wheel's 0.15 release;

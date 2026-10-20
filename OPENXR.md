@@ -880,8 +880,13 @@ with the sealed guest frame (`AuroraCockpitItem::characterHands`, applied to
 `AuroraCockpitHand::characterHand` for the replayed frame), so a glove is hidden on exactly the
 frames whose character draws that hand. The arm follows the controller pose sampled for the game
 frame, while the held item stays on the controller pose of each displayed frame, so in fast motion
-(a throw swing) the item can lead the character's hand by about a frame. A bare tracked hand keeps
-the tracked-hand mesh, and its character arm stays seated.
+(a throw swing) the item can lead the character's hand by about a frame. A bare tracked hand has no
+controller grip, so with tracked hands on its palm joint stands in for one: turned into the grip's
+axes (`hand_tracking::GripFromPalm`: the fingers lie along grip -Y as along palm -Z, and the grip's
++X is the palm normal, away from the palm on the left hand and into it on the right), it places the
+character's hand by the same palm profiles, and the tracked-hand mesh is hidden like a glove. The
+character's hands are rigid models with no finger bones, so they follow the hand, not its fingers;
+a character without a body (a Mii) keeps the tracked-hand mesh.
 
 The seated skeleton is latched once per driver and model, at the first frame the body is drawn
 (normally the end of the race intro, in the waiting pose). A recenter or a settings change keeps it;

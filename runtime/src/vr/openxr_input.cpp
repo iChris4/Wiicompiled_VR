@@ -1515,11 +1515,18 @@ void OpenXRInput::UpdateDriving(XrTime display_time, const driving::SeatFrame& s
         const bool displays_item = item_hand == (hand == 0 ? "left" : "right");
         out.tracked = (hand_steering || displays_item) && (tracked || joints);
         // Shown or not, a located controller grip is what the character
-        // body's arm reaches for.
+        // body's arm reaches for, and a bare hand's palm in the grip's axes:
+        // the character's own hand then follows the tracked hand, and the
+        // cockpit draws no mesh over a hand the character draws.
         out.grip_valid = tracked;
         out.held = false;
         out.squeeze = squeeze;
         out.seat_from_grip = seat_from_grip;
+        if (bare && joints) {
+            out.grip_valid = true;
+            out.seat_from_grip =
+                hand_tracking::GripFromPalm(m_joint_frame.seat_from_joint[hand][hand_tracking::kPalm], hand);
+        }
         out.joints_valid = joints;
         out.bare = bare;
         out.source = located.source;

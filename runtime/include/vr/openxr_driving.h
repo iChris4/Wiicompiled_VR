@@ -49,7 +49,8 @@ struct DrivingHand {
     bool pinch = false;
     // seat_from_grip is a located controller grip this frame, whether or not
     // the cockpit draws the hand: what the character body's arm reaches for.
-    // A bare or hand-driven hand has none.
+    // A bare hand with joints has its palm there in the grip's axes
+    // (hand_tracking::GripFromPalm); a hand-driven hand without them has none.
     bool grip_valid = false;
 };
 
