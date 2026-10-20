@@ -41,9 +41,10 @@ void Init() {
     GuestMemory::bytes.clear(); GuestMemory::fault = 0;
     GuestMemory::Write32(0x809C3618u, manager);
     GuestMemory::Write32(manager + 0x14u, players);
-    for (uint32_t i = 0; i < 0x94u; ++i) GuestMemory::bytes[player + i] = 0;
+    for (uint32_t i = 0; i < 0xCCu; ++i) GuestMemory::bytes[player + i] = 0;
     GuestMemory::bytes[player + 0x18u] = 7;
     GuestMemory::Write32(player + 0x90u, 1);
+    GuestMemory::Write32(player + 0xC8u, 0x10); // nothing out behind or around the kart
 }
 }
 
@@ -80,5 +81,32 @@ int main() {
     Check(!ReadHeldItem<GuestMemory>(7, 1).valid, "invalid manager");
     Init(); GuestMemory::bytes[player + 0x18u] = 0;
     Check(!ReadHeldItem<GuestMemory>(7, 1).valid, "racer identity mismatch");
+
+    // A triple used, or an item trailed: the inventory is empty and the items
+    // are out, which the item button still uses.
+    Init(); GuestMemory::Write32(player + 0x8cu, 0x14); GuestMemory::Write32(player + 0x90u, 0);
+    Check(!ReadHeldItem<GuestMemory>(7, 1).tethered, "nothing out");
+    GuestMemory::Write32(player + 0xC8u, 0x00); // green shells circling
+    auto out = ReadHeldItem<GuestMemory>(7, 1);
+    Check(out.tethered && !out.valid, "triple out, hand empty");
+    GuestMemory::Write32(player + 0xC8u, 0x02); // bananas trailing
+    Check(ReadHeldItem<GuestMemory>(7, 1).tethered, "bananas trailing");
+    GuestMemory::Write32(player + 0x58u, 1);
+    out = ReadHeldItem<GuestMemory>(7, 1);
+    Check(out.tethered && !out.valid, "still out while the roulette spins");
+    GuestMemory::Write32(player + 0x58u, 0);
+    GuestMemory::Write32(player + 0x8cu, 0x04); GuestMemory::Write32(player + 0x90u, 1);
+    out = ReadHeldItem<GuestMemory>(7, 1);
+    Check(out.tethered && out.valid && out.id == 0x04, "out with a new item in the hand");
+    for (uint32_t type : {0x10u, 0x11u, 0xffffffffu}) {
+        GuestMemory::Write32(player + 0xC8u, type);
+        Check(!ReadHeldItem<GuestMemory>(7, 1).tethered, "no object type or garbage");
+    }
+    Init(); GuestMemory::Write32(player + 0xC8u, 0x00); GuestMemory::bytes[player + 0x18u] = 0;
+    Check(!ReadHeldItem<GuestMemory>(7, 1).tethered, "tethered racer identity mismatch");
+    Init(); GuestMemory::Write32(player + 0xC8u, 0x00); GuestMemory::fault = player + 0xC8u;
+    Check(!ReadHeldItem<GuestMemory>(7, 1).tethered, "tethered read fault");
+    Init(); GuestMemory::Write32(player + 0xC8u, 0x00); GuestMemory::bytes.erase(player + 0xCBu);
+    Check(!ReadHeldItem<GuestMemory>(7, 1).tethered, "player struct out of reach");
     return failures ? 1 : 0;
 }

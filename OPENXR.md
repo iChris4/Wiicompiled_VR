@@ -360,7 +360,10 @@ forward or back, the item button (the left trigger: Z, or the GameCube's L) pres
 while it stays pushed, then the stick handed back. Items used on the press and items thrown on the
 release (a trailed shell or banana) both see the aim. Swinging while holding the item button throws
 the trailed item, and that held button is then ignored until it is let go, so it does not use the
-next item of a triple. Only the stick's Y axis moves, so a held wheel keeps steering. A swing counts
+next item of a triple. Items already out, a triple circling or trailing the kart or a shell or banana
+held behind, leave the hand empty, and a swing throws the next of them, as a press of the item button
+would; with nothing in the hand and nothing out, a swing throws nothing. Only the stick's Y axis moves,
+so a held wheel keeps steering. A swing counts
 when the hand covers enough ground along the seat's forward axis within a short window, mostly
 along that axis, and is still moving that way: with a controller 18 cm forward or 15 cm back within
 0.12 s. A bare hand gets an easier profile, 15 cm forward or 13 cm back within 0.15 s. The headset's

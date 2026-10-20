@@ -1353,10 +1353,11 @@ void OpenXRInput::UpdateItemThrow(float dt_seconds, std::array<wii_remote::HandI
         sample.bare = located.bare;
         sample.position = {pose[3], pose[7], pose[11]};
         direction = m_throw.Update(sample, dt_seconds);
-        // A swing with nothing in the hand throws nothing.
+        // A swing with nothing to throw throws nothing: an item in the hand, or
+        // one already out behind or around the kart, which empties the hand.
         if (direction != item_throw::Direction::None) {
             const HeldItem item = MkwVRFirstPersonGetHeldItem();
-            if (!item.valid || item.count == 0) {
+            if (!item.tethered && (!item.valid || item.count == 0)) {
                 direction = item_throw::Direction::None;
             }
         }
