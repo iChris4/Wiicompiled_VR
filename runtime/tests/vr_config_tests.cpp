@@ -84,6 +84,15 @@ int main() {
     Require(VrRaceViewOf(Parse("[vr]\nflat_screen = true\nimmersive_window = true\n")) == VrRaceView::FlatScreen);
     Require(VrRaceViewOf(Parse("[vr]\nflat_screen = false\nimmersive_window = false\n")) == VrRaceView::Immersive);
 
+    // [vr] flat_race_intro: each race's intro on the menu screen until the
+    // countdown, the default.
+    Require(RuntimeConfigFile::kVrFlatRaceIntroDefault);
+    Require(Parse("[vr]\nflat_race_intro = true\n").vrFlatRaceIntro == true);
+    Require(Parse("[vr]\nflat_race_intro = false\n").vrFlatRaceIntro == false);
+    Require(!Parse("[vr]\n").vrFlatRaceIntro.has_value());
+    Require(!Parse("[vr]\nflat_race_intro = 1\n").vrFlatRaceIntro.has_value());
+    Require(Parse("[vr]\n").vrFlatRaceIntro.value_or(RuntimeConfigFile::kVrFlatRaceIntroDefault));
+
     // [vr] body_ik and body_ik_hands_only: the player's own character in the
     // cockpit seat, or only its hands. The getters read the user's file, so
     // their fallback is checked the way they apply it.

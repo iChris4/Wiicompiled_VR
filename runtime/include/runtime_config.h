@@ -64,6 +64,7 @@ struct RuntimeUserConfig {
     std::optional<bool> vrHudVirtualScreen;
     std::optional<bool> vrFlatScreen;
     std::optional<bool> vrImmersiveWindow;
+    std::optional<bool> vrFlatRaceIntro;
     std::optional<bool> vrPassthrough;
     std::optional<bool> vrDirectPresentation;
     std::optional<bool> vrMultiview;
@@ -216,6 +217,10 @@ inline constexpr float kVrRenderScaleDefault = 1.0f;
 // launcher's settings page (SettingsPage.kt) repeats it.
 inline constexpr float kVrRenderScaleMin = 0.25f;
 inline constexpr float kVrRenderScaleMax = 2.0f;
+
+// A race's intro (the course preview) plays on the menu screen, and the race
+// turns immersive at the countdown. The Quest launcher shows the same default.
+inline constexpr bool kVrFlatRaceIntroDefault = true;
 
 // First-person camera defaults and the range its head offsets accept, in one
 // place: the config getters, the on-disk template and the F10 bar's reset all
@@ -605,6 +610,11 @@ inline void EnsureConfigFile() {
               "# Quest (black elsewhere). Flat Screen mode wins over it.\n"
               "# Changeable live from the F10 menu.\n"
               "immersive_window = false\n"
+              "# Each race's intro, the course preview before the countdown,\n"
+              "# plays on that screen too, and the race turns immersive (or the\n"
+              "# immersive window) at the countdown. False shows the intro as\n"
+              "# the race view does. Changeable live from the F10 menu.\n"
+              "flat_race_intro = true\n"
               "# On the Quest, the eyes are drawn straight into the headset's\n"
               "# swapchain images on Dawn's own Vulkan device (direct presentation).\n"
               "# Off, they cross to a second device through shared buffers, the\n"
@@ -922,6 +932,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.vrHudVirtualScreen = FindConfigValue<bool>(document, "vr", "hud_virtual_screen");
     config.vrFlatScreen = FindConfigValue<bool>(document, "vr", "flat_screen");
     config.vrImmersiveWindow = FindConfigValue<bool>(document, "vr", "immersive_window");
+    config.vrFlatRaceIntro = FindConfigValue<bool>(document, "vr", "flat_race_intro");
     config.vrPassthrough = FindConfigValue<bool>(document, "vr", "passthrough");
     config.vrDirectPresentation = FindConfigValue<bool>(document, "vr", "direct_presentation");
     config.vrMultiview = FindConfigValue<bool>(document, "vr", "multiview");
@@ -1254,6 +1265,11 @@ inline bool SetVrFlatScreen(bool value) {
 inline bool SetVrImmersiveWindow(bool value) {
     Mutable().vrImmersiveWindow = value;
     return WriteSetting("vr", "immersive_window", value ? "true" : "false");
+}
+
+inline bool SetVrFlatRaceIntro(bool value) {
+    Mutable().vrFlatRaceIntro = value;
+    return WriteSetting("vr", "flat_race_intro", value ? "true" : "false");
 }
 
 inline bool SetVrPassthrough(bool value) {
@@ -1822,6 +1838,12 @@ inline bool VrFlatScreen(bool fallback = false) {
 // layer sits on, with the room around it. Flat Screen mode wins over it.
 inline bool VrImmersiveWindow(bool fallback = false) {
     return Get().vrImmersiveWindow.value_or(fallback);
+}
+
+// The race intro on the flat virtual screen until the countdown, whatever the
+// race view (Flat Screen mode keeps the whole race there anyway).
+inline bool VrFlatRaceIntro() {
+    return Get().vrFlatRaceIntro.value_or(kVrFlatRaceIntroDefault);
 }
 
 // The race view the settings present as one choice, kept in the two keys

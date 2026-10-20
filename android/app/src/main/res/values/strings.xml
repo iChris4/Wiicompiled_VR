@@ -528,6 +528,8 @@
     <string name="vr_race_view_immersive">Immersive</string>
     <string name="vr_race_view_window">Immersive window</string>
     <string name="vr_race_view_flat">Flat screen</string>
+    <string name="vr_race_intro">Race intro</string>
+    <string name="vr_race_intro_helper">How each race\'s intro, the course preview before the countdown, is shown. Flat screen plays it on the menu screen, and the race turns immersive at the countdown, as the cockpit camera takes over. Immersive shows it as the race view does.</string>
     <string name="vr_camera">Default camera</string>
     <string name="vr_camera_helper">The camera each race starts on once its intro, which always shows the game\'s camera, is over: ride behind the kart like the game, or sit in the driver\'s seat. Clicking the right thumbstick switches the race in progress; the next race starts on this one again.</string>
     <string name="vr_camera_chase">Game camera</string>

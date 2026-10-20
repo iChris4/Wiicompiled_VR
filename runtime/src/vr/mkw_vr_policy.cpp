@@ -18,6 +18,8 @@ struct PolicyState {
     uint32_t available_bindings = MkwVRBindingNone;
     bool session_active = false;
     bool first_person_engaged = false;
+    // A race begins in its intro, so this is only cleared once one is over.
+    bool race_intro_pending = true;
     uint64_t safety_generation = 1;
 };
 
@@ -81,6 +83,11 @@ bool ObservationsAreCoherent(const MkwVRSceneObservation& scene,
     return newer - older <= 1;
 }
 
+// [vr] flat_race_intro holds the race on the virtual screen until the countdown.
+bool RaceIntroOnScreen(const PolicyState& state) noexcept {
+    return state.config.race_intro_on_screen && state.race_intro_pending;
+}
+
 VRPresentationMode SelectPresentation(const PolicyState& state) noexcept {
     if (!state.config.enabled || !state.session_active) {
         return VRPresentationMode::Desktop;
@@ -90,7 +97,8 @@ VRPresentationMode SelectPresentation(const PolicyState& state) noexcept {
     // incomplete instrumentation. It preserves the unmodified render path.
     if ((state.available_bindings & kMkwVRRequiredImmersiveBindings) !=
         kMkwVRRequiredImmersiveBindings ||
-        !state.config.immersive_races || state.scene.mode != VRSceneMode::Race ||
+        !state.config.immersive_races || RaceIntroOnScreen(state) ||
+        state.scene.mode != VRSceneMode::Race ||
         (state.scene.local_player_count < 1 || state.scene.local_player_count > 4) ||
         !IsFiniteCamera(state.camera) ||
         !ObservationsAreCoherent(state.scene, state.camera)) {
@@ -111,7 +119,8 @@ VRPresentationMode SelectStablePresentation(const PolicyState& state) noexcept {
     // without advancing the generation twice on every healthy race frame.
     if ((state.available_bindings & kMkwVRRequiredImmersiveBindings) !=
             kMkwVRRequiredImmersiveBindings ||
-        !state.config.immersive_races || state.scene.mode != VRSceneMode::Race ||
+        !state.config.immersive_races || RaceIntroOnScreen(state) ||
+        state.scene.mode != VRSceneMode::Race ||
         (state.scene.local_player_count < 1 || state.scene.local_player_count > 4) ||
         !IsFiniteCamera(state.camera)) {
         return VRPresentationMode::VirtualScreen;
@@ -268,6 +277,16 @@ void MkwVRPolicySetImmersiveRaces(bool enabled) noexcept {
     ApplyPolicyMutation([&] { g_policy.config.immersive_races = enabled; });
 }
 
+void MkwVRPolicySetRaceIntroPending(bool pending) noexcept {
+    std::lock_guard<std::mutex> lock(g_policy_mutex);
+    ApplyPolicyMutation([&] { g_policy.race_intro_pending = pending; });
+}
+
+void MkwVRPolicySetRaceIntroOnScreen(bool enabled) noexcept {
+    std::lock_guard<std::mutex> lock(g_policy_mutex);
+    ApplyPolicyMutation([&] { g_policy.config.race_intro_on_screen = enabled; });
+}
+
 MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept {
     std::lock_guard<std::mutex> lock(g_policy_mutex);
     MkwVRPolicySnapshot snapshot;
@@ -277,6 +296,7 @@ MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept {
     snapshot.camera = g_policy.camera;
     snapshot.available_bindings = g_policy.available_bindings;
     snapshot.session_active = g_policy.session_active;
+    snapshot.race_intro_pending = g_policy.race_intro_pending;
     snapshot.first_person_engaged =
         g_policy.first_person_engaged && snapshot.presentation == VRPresentationMode::ImmersiveRace;
     snapshot.safety_generation = g_policy.safety_generation;

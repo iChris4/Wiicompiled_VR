@@ -143,6 +143,15 @@ class SettingsPage(
                     c.setBool("vr", "immersive_window", index == 1)
                 },
             )
+            // runtime_config.h's kVrFlatRaceIntroDefault is on: the intro plays on the menu
+            // screen and the race turns immersive at the countdown.
+            choice(
+                R.string.vr_race_intro, R.string.vr_race_intro_helper,
+                listOf(R.string.vr_race_view_immersive, R.string.vr_race_view_flat),
+                read = { if (it.bool("vr", "flat_race_intro") ?: true) 1 else 0 },
+                write = { c, index -> c.setBool("vr", "flat_race_intro", index == 1) },
+                enabledIf = immersive,
+            )
             // The default camera: each race shows the game's camera through its intro, then this one.
             choice(
                 R.string.vr_camera, R.string.vr_camera_helper,

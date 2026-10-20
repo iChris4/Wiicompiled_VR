@@ -147,6 +147,9 @@ bool g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
 int g_vrRaceView = static_cast<int>(RuntimeConfigFile::GetVrRaceView());
 bool g_vrFlatScreen = g_vrRaceView == static_cast<int>(RuntimeConfigFile::VrRaceView::FlatScreen);
 constexpr std::array<const char*, 3> kVrRaceViewLabels{"Immersive", "Immersive window", "Flat screen"};
+// Race intro: index 1 is [vr] flat_race_intro.
+int g_vrRaceIntroView = RuntimeConfigFile::VrFlatRaceIntro() ? 1 : 0;
+constexpr std::array<const char*, 2> kVrRaceIntroLabels{"Immersive", "Flat screen"};
 #if defined(__ANDROID__)
 bool g_vrPassthrough = RuntimeConfigFile::VrPassthrough();
 bool g_vrHandTracking = RuntimeConfigFile::VrHandTracking();
@@ -1582,6 +1585,23 @@ void DrawVrSettings() {
             "angle and the view shifts as through a real window. Flat screen plays races on "
             "the menu screen through the game's own camera; the Camera settings and the lean-back "
             "angle do not apply to it. Applies immediately.");
+    }
+    // Flat Screen mode keeps the whole race on the screen, its intro included.
+    ImGui::BeginDisabled(g_vrFlatScreen);
+    if (ImGui::Combo("Race intro", &g_vrRaceIntroView, kVrRaceIntroLabels.data(),
+                     static_cast<int>(kVrRaceIntroLabels.size()))) {
+        const bool flat = g_vrRaceIntroView == 1;
+        RuntimeConfigFile::SetVrFlatRaceIntro(flat);
+        mkw::vr::MkwVRPolicySetRaceIntroOnScreen(flat);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "How each race's intro, the course preview before the countdown, is shown. Flat screen "
+            "plays it on the menu screen, and the race turns immersive (or the immersive window) at "
+            "the countdown, as the cockpit camera takes over. Immersive shows it as the race view "
+            "above does. Flat screen as the race view keeps the intro on the screen either way. "
+            "Applies immediately, during an intro too.");
     }
 
     ImGui::Separator();

@@ -1521,8 +1521,12 @@ void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
 void MkwVRFirstPersonReset() noexcept {
     std::lock_guard lock(g_mutex);
     RestoreModelVisibilityLocked();
-    // Race entry and exit: the next race starts from its intro again.
+    // Race entry and exit: the next race starts from its intro again. The exit
+    // observer also fires early in a race the game then goes on drawing (run
+    // logs: "exited RaceScene" before "race intro over"), so the policy is told
+    // the intro is pending on both.
     g_state.race_camera.Reset();
+    MkwVRPolicySetRaceIntroPending(true);
     g_state.bullet_active = false;
     g_state.first_person_active = false;
     g_state.stage_unread_frames = 0;
@@ -1601,6 +1605,9 @@ void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_add
             stage = 1;
         }
         if (g_state.race_camera.Observe(stage_valid, stage, g_state.default_first_person)) {
+            // [vr] flat_race_intro turns the race immersive here, with the
+            // camera. The policy's lock is a leaf, so taking it under ours is safe.
+            MkwVRPolicySetRaceIntroPending(false);
             g_state.local_racer_seen = detail::ReadLocalPlayerKart<Memory>().failed_step == nullptr;
             RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] race intro over (stage " << stage << "): camera = "
                                    << (g_state.race_camera.Selected() == CameraMode::FirstPerson ? "first person"

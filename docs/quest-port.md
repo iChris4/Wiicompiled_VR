@@ -360,7 +360,8 @@ app also declares `com.oculus.software.body_tracking`.
   (created on first use) or pauses it as each presentation arrives, and submits
   it first, under the virtual screen's quad, or alone while there is no image
   yet (startup, a recenter). An immersive race never submits it and pauses the
-  cameras; a `flat_screen` race is a virtual screen, so it keeps the room, and
+  cameras; a `flat_screen` race is a virtual screen, so it keeps the room (as
+  does a race's intro under `flat_race_intro`, until the countdown), and
   so does an `immersive_window` race, whose projection layer is submitted over
   it with `XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT` (Aurora leaves
   each eye transparent outside the window; see OPENXR.md, "The immersive window").

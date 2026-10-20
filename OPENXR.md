@@ -48,6 +48,7 @@ hud_width_meters = 2.4
 hud_virtual_screen = true
 flat_screen = false
 immersive_window = false
+flat_race_intro = true
 first_person = false
 first_person_toggle_click = true
 bullet_bill_camera = "inside"
@@ -213,6 +214,12 @@ immersive stereo view, head tracking and all, but is seen only through a window,
 around it on the Quest; see [The immersive window](#the-immersive-window). `flat_screen` wins when
 both are set. The settings present the three as one choice, **Race view**: Immersive, Immersive
 window or Flat screen.
+`flat_race_intro` (default on) shows each race's intro, the course preview (`RaceManager`'s stage
+0), on that flat screen whatever the race view, and turns the race immersive (or the immersive
+window) at the countdown, on the same frame the default camera takes over (see *Camera modes*
+below). Off, the intro is shown as the race view shows the race, as before. It is live, as
+**F10 → VR → Race intro** (Immersive or Flat screen, greyed out when the race view is Flat screen,
+which keeps the intro on the screen anyway) and the Quest launcher's *Race intro*, mid-intro too.
 `passthrough` (Quest only, default on) shows the room through the headset's cameras around the
 menu screen and every other virtual screen, instead of black: an `XR_FB_passthrough`
 reconstruction layer submitted under the screen's quad, as PPSSPP VR does, with the blend mode
@@ -520,7 +527,8 @@ Both are a matter of taste rather than properties of the game, so the F10 bar ex
 **Camera modes.** After heurazy's
 [Wiicompiled VR PLUS](https://github.com/heurazy/Wiicompiled_VR-PLUS) fork, a race shows one of
 two cameras, the game's or first person. Each race shows the game's own camera through its intro
-(the course preview, `RaceManager`'s stage 0), so the flyover plays as the game made it, then
+(the course preview, `RaceManager`'s stage 0), so the flyover plays as the game made it (on the
+flat screen under `flat_race_intro`), then
 starts on the default camera once the countdown begins: `first_person`, where `true` is first
 person (**F10 → Camera → Default camera**, also the Quest launcher's *Default camera*). During the
 race the camera can be switched for that race only, with the right thumbstick click below or
@@ -944,6 +952,14 @@ The runtime deliberately fails safe instead of guessing which Mario Kart camera 
   however complete the observations are. Changing it advances the safety generation like any
   other change of presentation, and the pacing thread still treats that race as a race: pipeline
   caches are not stored mid-race on the virtual screen either.
+- `flat_race_intro` sets the policy's `race_intro_on_screen`, and a race whose intro is still
+  pending stays on the virtual screen with it. The first-person module publishes the intro state
+  (`MkwVRPolicySetRaceIntroPending`): pending at every RaceScene entry and exit (the exit observer
+  also fires early in a race the game goes on drawing: `exited RaceScene` is logged before
+  `race intro over`), over when
+  `RaceCameraChoice` sees the stage leave the course preview, or when the stage stays unreadable
+  for 300 frames. Both changes advance the safety generation, and the pacing thread counts an
+  intro on the screen as a race for the pipeline-cache store, as it does a `flat_screen` race.
 - `immersive_window` is not a policy state: the race is `ImmersiveRace` either way, and only the
   packet and the layer that shows it carry the window.
 

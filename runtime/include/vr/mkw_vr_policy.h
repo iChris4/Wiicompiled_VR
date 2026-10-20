@@ -73,6 +73,9 @@ struct MkwVRPolicyConfig {
     bool enabled = false;
     // False is Flat Screen mode: races stay on the virtual screen the menus use.
     bool immersive_races = true;
+    // [vr] flat_race_intro: a race's intro (the course preview) stays on that
+    // virtual screen too, and the race turns immersive at the countdown.
+    bool race_intro_on_screen = false;
     float world_units_per_meter = 500.0f;
     float hud_distance_meters = 2.0f;
     // Width of the virtual screen, shared by the menu quad layer and the
@@ -114,6 +117,9 @@ struct MkwVRPolicySnapshot {
     MkwVRCameraObservation camera{};
     uint32_t available_bindings = MkwVRBindingNone;
     bool session_active = false;
+    // The race has not left its intro yet (true outside races as well, since
+    // the next race starts in its own).
+    bool race_intro_pending = true;
     // A first-person camera is actually driving the view this frame. Set by the
     // integration layer once the anchor it publishes to the renderer is valid,
     // so the world scale can never disagree with where the camera is.
@@ -155,6 +161,12 @@ void MkwVRPolicySetFirstPersonUnitsPerMeter(float units_per_meter) noexcept;
 // Flat Screen mode, live from the F10 menu. Unlike the scale above this changes
 // which content is safe to present, so it advances the safety generation.
 void MkwVRPolicySetImmersiveRaces(bool enabled) noexcept;
+// The race intro: pending from RaceScene entry until RaceManager leaves the
+// course preview, as the first-person camera choice reads it (vr_controls.h
+// RaceCameraChoice). Both advance the safety generation when they change what
+// is presented, the second being the live F10 setting.
+void MkwVRPolicySetRaceIntroPending(bool pending) noexcept;
+void MkwVRPolicySetRaceIntroOnScreen(bool enabled) noexcept;
 MkwVRPolicySnapshot MkwVRPolicyGetSnapshot() noexcept;
 
 // This classifier is deliberately structural rather than heuristic: future

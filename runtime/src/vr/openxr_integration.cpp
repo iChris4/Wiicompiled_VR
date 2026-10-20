@@ -70,6 +70,7 @@ void ConfigurePolicy(bool enabled) noexcept {
     MkwVRPolicyConfig config{};
     config.enabled = enabled;
     config.immersive_races = !RuntimeConfigFile::VrFlatScreen();
+    config.race_intro_on_screen = RuntimeConfigFile::VrFlatRaceIntro();
     config.world_units_per_meter = RuntimeConfigFile::VrWorldUnitsPerMeter(500.0f);
     config.hud_distance_meters = RuntimeConfigFile::VrHudDistanceMeters(2.0f);
     config.hud_width_meters = RuntimeConfigFile::VrHudWidthMeters(2.4f);
@@ -964,11 +965,13 @@ private:
 
             // Pipeline caches are stored where their stall is least visible: once when a race
             // ends, and by the compiler itself while the headset shows the virtual screen. Never
-            // mid-race, and a race on the virtual screen (Flat Screen mode) is still a race. The
-            // race-exit store runs on Aurora's thread: this one keeps submitting frames while
-            // Dawn holds its device to serialize, which is still a brief game stall.
-            const bool racing = immersive || (!policy.config.immersive_races &&
-                                              policy.scene.mode == VRSceneMode::Race);
+            // mid-race, and a race on the virtual screen (Flat Screen mode, or its intro under
+            // [vr] flat_race_intro) is still a race. The race-exit store runs on Aurora's thread:
+            // this one keeps submitting frames while Dawn holds its device to serialize, which is
+            // still a brief game stall.
+            const bool race_on_screen = !policy.config.immersive_races ||
+                                        (policy.config.race_intro_on_screen && policy.race_intro_pending);
+            const bool racing = immersive || (race_on_screen && policy.scene.mode == VRSceneMode::Race);
             if (!store_gate_set || racing != store_gate_racing) {
                 const bool left_race = store_gate_set && store_gate_racing && !racing;
                 store_gate_set = true;

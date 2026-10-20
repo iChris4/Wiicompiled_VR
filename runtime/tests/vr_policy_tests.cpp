@@ -89,6 +89,41 @@ int main() {
         check(resumed.presentation == VRPresentationMode::ImmersiveRace, "leaving Flat Screen mode resumes the race");
         check(resumed.content_tag != flat.content_tag, "leaving Flat Screen mode must invalidate screen packets");
     }
+    {
+        // [vr] flat_race_intro: the intro stays on the screen until the countdown.
+        const auto before = MkwVRPolicyGetSnapshot();
+        check(before.race_intro_pending, "a race starts in its intro");
+        check(before.presentation == VRPresentationMode::ImmersiveRace,
+              "without flat_race_intro the intro is immersive");
+        MkwVRPolicySetRaceIntroOnScreen(true);
+        const auto intro = MkwVRPolicyGetSnapshot();
+        check(intro.presentation == VRPresentationMode::VirtualScreen, "flat_race_intro keeps the intro on the screen");
+        check(intro.content_tag != before.content_tag, "flat_race_intro must invalidate immersive packets");
+        check(MkwVRPolicyRouteDraw(VRDrawClass::PerspectiveWorld, intro) == VRDrawRoute::VirtualScreen,
+              "flat_race_intro routes the intro's world to the screen");
+        MkwVRPolicyPublishScene(scene);
+        MkwVRPolicyPublishRaceCamera(camera);
+        check(MkwVRPolicyGetSnapshot().content_tag == intro.content_tag, "steady intro frames keep the same tag");
+        MkwVRPolicySetRaceIntroPending(false);
+        const auto countdown = MkwVRPolicyGetSnapshot();
+        check(countdown.presentation == VRPresentationMode::ImmersiveRace, "the race turns immersive at the countdown");
+        check(countdown.content_tag != intro.content_tag, "the countdown must invalidate screen packets");
+        MkwVRPolicySetRaceIntroPending(false);
+        check(MkwVRPolicyGetSnapshot().content_tag == countdown.content_tag, "a repeated intro end changes nothing");
+        MkwVRPolicySetImmersiveRaces(false);
+        check(MkwVRPolicyGetSnapshot().presentation == VRPresentationMode::VirtualScreen,
+              "Flat Screen mode still keeps the race on the screen after the intro");
+        MkwVRPolicySetImmersiveRaces(true);
+        MkwVRPolicySetRaceIntroPending(true);
+        check(MkwVRPolicyGetSnapshot().presentation == VRPresentationMode::VirtualScreen,
+              "the next race's intro is on the screen again");
+        MkwVRPolicySetRaceIntroOnScreen(false);
+        const auto live = MkwVRPolicyGetSnapshot();
+        check(live.presentation == VRPresentationMode::ImmersiveRace, "turning flat_race_intro off mid-intro is live");
+        MkwVRPolicySetRaceIntroPending(false);
+        check(MkwVRPolicyGetSnapshot().content_tag == live.content_tag,
+              "without flat_race_intro the countdown changes nothing");
+    }
     MkwVRPolicySetSessionActive(false);
     check(MkwVRPolicyGetSnapshot().presentation == VRPresentationMode::Desktop, "inactive session uses desktop");
     return failures == 0 ? 0 : 1;
