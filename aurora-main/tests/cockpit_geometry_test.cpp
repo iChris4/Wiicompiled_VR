@@ -460,51 +460,22 @@ TEST_F(CockpitGeometry, CharacterHandsKeepTheSyntheticWheel) {
       EXPECT_EQ(vertices[i].position[axis], expected[i].position[axis]);
 }
 
-// What the hand carries stays: the held item's count badge is drawn on a hand
-// the character draws, just as on one the overlay draws.
-TEST_F(CockpitGeometry, CharacterHandKeepsTheItemCountBadge) {
+// A hand the character draws gets no glove from the overlay, which still runs
+// for it, so what the hand carries is drawn on it (cockpit_item::render).
+TEST_F(CockpitGeometry, CharacterHandGetsNoGloveButStillCarries) {
   using namespace aurora::gfx;
-  // A stand-in for the triple shells' model (item id 16 shares model 0); the
-  // badge only asks whether the model exists.
-  auto archive = std::make_shared<cockpit_item::data::Archive>();
-  auto& model = archive->models[cockpit_item::data::model_index(16)];
-  model.parts.emplace_back();
-  model.minimum = {-1.0f, 0.0f, -1.0f};
-  model.maximum = {1.0f, 1.0f, 1.0f};
-  archive->loaded = 1;
-  std::shared_ptr<const cockpit_item::data::Archive> previous;
-  {
-    std::lock_guard lock(cockpit_item::archiveMutex);
-    previous = cockpit_item::archive;
-    cockpit_item::archive = archive;
-  }
   AuroraCockpit cockpit{};
   cockpit.nativeWheel = true;
   cockpit.hands[0].tracked = true;
   set_identity(cockpit.hands[0].seatFromGrip, {-0.2f, -0.3f, -0.4f});
-  AuroraCockpitItem item{};
-  item.valid = true;
-  item.id = 16;
-  item.count = 2;
-  item.hand = 0;
   const auto build = [&] {
     std::vector<cockpit::Vertex> vertices;
     cockpit::build_geometry(cockpit, vertices);
-    const size_t hand = vertices.size();
-    cockpit::append_item_badge(cockpit, item, vertices);
-    return std::pair{hand, vertices.size() - hand};
+    return vertices.size();
   };
-  const auto drawn = build();
+  EXPECT_GT(build(), 0u) << "the overlay's glove";
   cockpit.hands[0].characterHand = true;
-  const auto character = build();
-  {
-    std::lock_guard lock(cockpit_item::archiveMutex);
-    cockpit_item::archive = previous;
-  }
-  EXPECT_GT(drawn.first, 0u) << "the overlay's glove";
-  EXPECT_EQ(character.first, 0u) << "no glove on the character's hand";
-  EXPECT_GT(drawn.second, 0u) << "a count badge";
-  EXPECT_EQ(character.second, drawn.second) << "the same badge on the character's hand";
+  EXPECT_EQ(build(), 0u) << "no glove on the character's hand";
   EXPECT_TRUE(cockpit::carries_hand(cockpit)) << "the overlay still draws for the item's hand";
   cockpit.hands[0].tracked = false;
   EXPECT_FALSE(cockpit::carries_hand(cockpit));
@@ -536,12 +507,13 @@ TEST(CockpitItemAnimation, GrowsInAndShrinksAway) {
   ASSERT_TRUE(shown.draw);
   EXPECT_EQ(shown.id, 16);
   EXPECT_EQ(shown.hand, 1);
-  EXPECT_NEAR(shown.scale, 0.0f, 1e-4f) << "it starts from nothing";
+  EXPECT_EQ(shown.copies, 3u) << "a triple shows three";
+  for (uint32_t copy = 0; copy < 3; ++copy) EXPECT_NEAR(shown.scale[copy], 0.0f, 1e-4f) << "it starts from nothing";
   step(item, 0.2 * d);
-  EXPECT_NEAR(step(item, 0.5 * d).scale, 0.5f, 1e-3f) << "halfway at half the time";
+  EXPECT_NEAR(step(item, 0.5 * d).scale[0], 0.5f, 1e-3f) << "halfway at half the time";
   step(item, 0.8 * d);
-  EXPECT_NEAR(step(item, d).scale, 1.0f, 1e-4f) << "full size when the time is up";
-  EXPECT_NEAR(step(item, 1.2 * d).scale, 1.0f, 1e-4f);
+  EXPECT_NEAR(step(item, d).scale[0], 1.0f, 1e-4f) << "full size when the time is up";
+  EXPECT_NEAR(step(item, 1.2 * d).scale[0], 1.0f, 1e-4f);
 
   // Used: the same item keeps being drawn on the same hand, shrinking.
   const double used = 1.4 * d;
@@ -549,9 +521,10 @@ TEST(CockpitItemAnimation, GrowsInAndShrinksAway) {
   ASSERT_TRUE(shown.draw);
   EXPECT_EQ(shown.id, 16);
   EXPECT_EQ(shown.hand, 1);
-  EXPECT_NEAR(shown.scale, 1.0f, 1e-4f) << "the shrink starts from full size";
+  EXPECT_EQ(shown.copies, 3u) << "all three shrink";
+  EXPECT_NEAR(shown.scale[2], 1.0f, 1e-4f) << "the shrink starts from full size";
   step(none, used + 0.2 * d);
-  EXPECT_NEAR(step(none, used + 0.5 * d).scale, 0.5f, 1e-3f);
+  EXPECT_NEAR(step(none, used + 0.5 * d).scale[2], 0.5f, 1e-3f);
   step(none, used + 0.8 * d);
   EXPECT_FALSE(step(none, used + 1.1 * d).draw) << "gone once the time is up";
 
@@ -560,12 +533,12 @@ TEST(CockpitItemAnimation, GrowsInAndShrinksAway) {
   item.id = 5;
   step(item, 2.0);
   step(item, 2.0 + 0.2 * d);
-  const float reached = step(item, 2.0 + 0.4 * d).scale;
+  const float reached = step(item, 2.0 + 0.4 * d).scale[0];
   EXPECT_NEAR(reached, item_ease(0.4f), 1e-3f);
-  EXPECT_NEAR(step(none, 2.0 + 0.4 * d).scale, reached, 1e-3f) << "no jump when it starts to shrink";
-  const float shrunk = step(none, 2.0 + 0.6 * d).scale;
+  EXPECT_NEAR(step(none, 2.0 + 0.4 * d).scale[0], reached, 1e-3f) << "no jump when it starts to shrink";
+  const float shrunk = step(none, 2.0 + 0.6 * d).scale[0];
   EXPECT_LT(shrunk, reached);
-  EXPECT_NEAR(step(item, 2.0 + 0.6 * d).scale, shrunk, 1e-3f) << "no jump when it grows again";
+  EXPECT_NEAR(step(item, 2.0 + 0.6 * d).scale[0], shrunk, 1e-3f) << "no jump when it grows again";
 
   // Not drawn for over a second (the game's camera) while the item went: it is
   // not shrunk late when first person comes back.
@@ -574,64 +547,148 @@ TEST(CockpitItemAnimation, GrowsInAndShrinksAway) {
 
   // A new race's item grows in again even when it is the same item.
   for (double t = 6.0; t <= 6.0 + 1.2 * d; t += 0.2 * d) step(item, t);
-  EXPECT_NEAR(step(item, 6.0 + 1.5 * d).scale, 1.0f, 1e-4f);
+  EXPECT_NEAR(step(item, 6.0 + 1.5 * d).scale[0], 1.0f, 1e-4f);
   item.raceGeneration = 8;
-  EXPECT_NEAR(step(item, 6.0 + 1.6 * d).scale, 0.0f, 1e-4f);
+  EXPECT_NEAR(step(item, 6.0 + 1.6 * d).scale[0], 0.0f, 1e-4f);
 
   ItemAnimation fresh;
   EXPECT_FALSE(step_item_animation(fresh, item, false, Clock::now()).draw) << "an item without a model draws nothing";
 }
 
-// The count badge keeps beside the held item as [vr] cockpit_item_size grows
-// it, the same distance out from its side and a quarter of its size up.
-TEST_F(CockpitGeometry, ItemCountBadgeStaysBesideTheItemsSize) {
-  using namespace aurora::gfx;
-  auto archive = std::make_shared<cockpit_item::data::Archive>();
-  auto& model = archive->models[cockpit_item::data::model_index(16)];
-  model.parts.emplace_back();
-  model.minimum = {-1.0f, 0.0f, -1.0f};
-  model.maximum = {1.0f, 1.0f, 1.0f};
-  archive->loaded = 1;
-  std::shared_ptr<const cockpit_item::data::Archive> previous;
-  {
-    std::lock_guard lock(cockpit_item::archiveMutex);
-    previous = cockpit_item::archive;
-    cockpit_item::archive = archive;
-  }
-  AuroraCockpit cockpit{};
-  cockpit.hands[1].tracked = true;
-  set_identity(cockpit.hands[1].seatFromGrip, {0.2f, -0.3f, -0.4f});
+// A triple shows its items as copies half the item's size, three in a
+// triangle; one used shrinks away where it stands while the others close up.
+TEST(CockpitItemAnimation, TripleCopiesCloseUpAsTheyAreUsed) {
+  using namespace aurora::gfx::cockpit_item;
+  using Clock = ItemAnimation::Clock;
+  ItemAnimation state;
+  const auto step = [&](const AuroraCockpitItem& current, double seconds) {
+    const auto at = Clock::time_point{} +
+                    std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1000.0 + seconds));
+    return step_item_animation(state, current, true, at);
+  };
+  const auto expect_at = [](const ItemDraw& shown, uint32_t copy, std::array<float, 3> where, const char* what) {
+    for (int axis = 0; axis < 3; ++axis) EXPECT_NEAR(shown.position[copy][axis], where[axis], 1e-3f) << what;
+  };
+  const double d = kItemAnimationSeconds;
   AuroraCockpitItem item{};
   item.valid = true;
   item.id = 16;
   item.count = 3;
-  item.hand = 1;
-  // The badge's centre, from the item's origin just above the palm.
-  const auto offset = [&](float size) {
-    cockpit.itemSize = size;
-    std::vector<cockpit::Vertex> vertices;
-    cockpit::append_item_badge(cockpit, item, vertices);
-    std::array<float, 3> centre{};
-    for (const auto& vertex : vertices)
-      for (int axis = 0; axis < 3; ++axis) centre[axis] += vertex.position[axis] / vertices.size();
-    return std::array<float, 3>{std::hypot(centre[0] - 0.2f, centre[2] + 0.4f), centre[1] - (-0.3f + 0.05f),
-                                static_cast<float>(vertices.size())};
-  };
-  const auto small = offset(0.14f);
-  const auto large = offset(0.42f);
-  const auto fallback = offset(0.0f);
-  const auto defaulted = offset(cockpit_item::kDefaultItemSize);
-  {
-    std::lock_guard lock(cockpit_item::archiveMutex);
-    cockpit_item::archive = previous;
+  for (double t = 0.0; t <= 1.2 * d; t += 0.2 * d) step(item, t);
+  auto shown = step(item, 1.4 * d);
+  ASSERT_EQ(shown.copies, 3u);
+  EXPECT_FLOAT_EQ(shown.share, kTripleCopyShare);
+  expect_at(shown, 0, {-0.5f, 0.12f, -0.3f}, "back left");
+  expect_at(shown, 1, {0.5f, 0.12f, -0.3f}, "back right");
+  expect_at(shown, 2, {0.0f, 0.0f, 0.3f}, "in front, nearest the player");
+  for (uint32_t copy = 0; copy < 3; ++copy) EXPECT_NEAR(shown.scale[copy], 1.0f, 1e-4f);
+
+  // One used: the front one shrinks where it is, the back two come forward
+  // and down to stand side by side.
+  item.count = 2;
+  const double used = 1.6 * d;
+  shown = step(item, used);
+  ASSERT_EQ(shown.copies, 3u);
+  expect_at(shown, 0, {-0.5f, 0.12f, -0.3f}, "no jump when it sets off");
+  EXPECT_NEAR(shown.scale[2], 1.0f, 1e-4f);
+  step(item, used + 0.2 * d);
+  shown = step(item, used + 0.5 * d);
+  ASSERT_EQ(shown.copies, 3u);
+  expect_at(shown, 0, {-0.5f, 0.06f, -0.15f}, "halfway at half the time");
+  expect_at(shown, 2, {0.0f, 0.0f, 0.3f}, "the used one stays put");
+  EXPECT_NEAR(shown.scale[2], 0.5f, 1e-3f);
+  EXPECT_NEAR(shown.scale[0], 1.0f, 1e-4f) << "the others keep their size";
+  step(item, used + 0.8 * d);
+  shown = step(item, used + 1.1 * d);
+  ASSERT_EQ(shown.copies, 2u);
+  expect_at(shown, 0, {-0.5f, 0.0f, 0.0f}, "two side by side");
+  expect_at(shown, 1, {0.5f, 0.0f, 0.0f}, "two side by side");
+
+  // Another: the right one goes, the left one comes to the middle.
+  item.count = 1;
+  const double again = used + 1.3 * d;
+  step(item, again);
+  step(item, again + 0.5 * d);
+  shown = step(item, again + 1.1 * d);
+  ASSERT_EQ(shown.copies, 1u);
+  expect_at(shown, 0, {0.0f, 0.0f, 0.0f}, "the last one in the middle");
+  EXPECT_FLOAT_EQ(shown.share, kTripleCopyShare) << "still one of the three, not a whole item";
+
+  // A single item is the whole size, in the middle.
+  AuroraCockpitItem single{};
+  single.valid = true;
+  single.id = 4;
+  single.count = 1;
+  ItemAnimation fresh;
+  shown = step_item_animation(fresh, single, true, Clock::now());
+  ASSERT_EQ(shown.copies, 1u);
+  EXPECT_FLOAT_EQ(shown.share, 1.0f);
+  expect_at(shown, 0, {0.0f, 0.0f, 0.0f}, "a single item");
+
+  // Not drawn for a while (the game's camera) while one was used: when first
+  // person comes back, the used one is gone and the others already moved.
+  item.count = 3;
+  item.raceGeneration = 2;
+  for (double t = 10.0; t <= 10.0 + 1.2 * d; t += 0.2 * d) step(item, t);
+  item.count = 2;
+  shown = step(item, 12.0);
+  ASSERT_EQ(shown.copies, 2u);
+  expect_at(shown, 0, {-0.5f, 0.0f, 0.0f}, "no late glide");
+  expect_at(shown, 1, {0.5f, 0.0f, 0.0f}, "no late glide");
+  EXPECT_NEAR(shown.scale[1], 1.0f, 1e-4f);
+}
+
+// Where the renderer puts each copy: the triple's three at half the item size,
+// spread by their own size around the item's origin above the palm.
+TEST(CockpitItemPlacement, TripleCopiesStandAroundTheItemsOrigin) {
+  using namespace aurora::gfx::cockpit_item;
+  using Clock = ItemAnimation::Clock;
+  auto archive = std::make_shared<data::Archive>();
+  for (uint8_t id : {uint8_t{4}, uint8_t{16}}) {
+    auto& model = archive->models[data::model_index(id)];
+    model.parts.emplace_back();
+    model.minimum = {-1.0f, 0.0f, -1.0f};
+    model.maximum = {1.0f, 1.0f, 1.0f};
   }
-  ASSERT_GT(small[2], 0.0f) << "a count badge";
-  EXPECT_NEAR(small[0], 0.095f, 0.01f) << "beside a 14 cm item, where it always was";
-  EXPECT_NEAR(small[1], 0.035f, 0.01f);
-  EXPECT_NEAR(large[0] - small[0], 0.14f, 0.005f) << "out by half the item's growth";
-  EXPECT_NEAR(large[1] - small[1], 0.07f, 0.005f) << "up by a quarter of it";
-  EXPECT_NEAR(fallback[0], defaulted[0], 1e-5f) << "no size is the default size";
-  EXPECT_NEAR(fallback[1], defaulted[1], 1e-5f);
+  archive->loaded = 1;
+  const auto previousArchive = gpuArchive;
+  const auto previousAnimation = itemAnimation;
+  gpuArchive = archive;
+  aurora::gfx::StereoReplayFrame frame{};
+  frame.cockpit.itemSize = 0.28f;
+  frame.cockpit.hands[1].tracked = true;
+  set_identity(frame.cockpit.hands[1].seatFromGrip, {0.2f, -0.3f, -0.4f});
+  frame.cockpitItem.valid = true;
+  frame.cockpitItem.id = 16;
+  frame.cockpitItem.count = 3;
+  frame.cockpitItem.hand = 1;
+  // Grown long ago.
+  itemAnimation = {};
+  step_item_animation(itemAnimation, frame.cockpitItem, true, Clock::now() - std::chrono::seconds(1));
+  const auto triple = place_item(frame);
+  frame.cockpitItem.id = 4;
+  frame.cockpitItem.count = 1;
+  itemAnimation = {};
+  step_item_animation(itemAnimation, frame.cockpitItem, true, Clock::now() - std::chrono::seconds(1));
+  const auto single = place_item(frame);
+  gpuArchive = previousArchive;
+  itemAnimation = previousAnimation;
+
+  // The item frame faces the player (+Z towards them) with its origin 5 cm
+  // above the palm; each copy is 14 cm across, a 2-unit model at 0.07.
+  ASSERT_EQ(triple.copies, 3u);
+  const float origin[3]{0.2f, -0.25f, -0.4f};
+  const float expected[3][3]{{-0.07f, 0.0168f, -0.042f}, {0.07f, 0.0168f, -0.042f}, {0.0f, 0.0f, 0.042f}};
+  for (uint32_t copy = 0; copy < 3; ++copy) {
+    EXPECT_NEAR(triple.modelScale[copy], 0.07f, 1e-5f);
+    EXPECT_NEAR(triple.seatFromModel[copy][0], 0.07f, 1e-5f);
+    for (int axis = 0; axis < 3; ++axis)
+      EXPECT_NEAR(triple.seatFromModel[copy][axis * 4 + 3], origin[axis] + expected[copy][axis], 1e-5f)
+          << "copy " << copy << " axis " << axis;
+  }
+  ASSERT_EQ(single.copies, 1u);
+  EXPECT_NEAR(single.modelScale[0], 0.14f, 1e-5f) << "a single item is the whole 28 cm";
+  for (int axis = 0; axis < 3; ++axis) EXPECT_NEAR(single.seatFromModel[0][axis * 4 + 3], origin[axis], 1e-5f);
 }
 
 } // namespace

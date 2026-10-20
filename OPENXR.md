@@ -341,12 +341,17 @@ available in F10 > VR. In cockpit view, the selected tracked hand holds one item
 game's `Race/Common.szs` after the roulette settles. The item stands upright just above the palm
 with its front toward the player, `cockpit_item_size` metres across its largest side (0.28 by
 default, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
-hand never tips it over. Triple items show their remaining inventory count beside the model, facing
-the player. The display follows player 1's inventory: using, losing, or deploying the
-item removes it from the hand even if a deployed object remains near the kart. The model grows into
-the hand over 0.2 s when it arrives and shrinks away over 0.2 s when it goes
-(`cockpit_item::step_item_animation`, eased at both ends; one turned round midway goes on from the
-size it had reached). It is not shrunk late after first person was off while the item went. Stick steering and
+hand never tips it over. A triple (mushrooms, green or red shells, bananas) shows what is left of it
+as copies of the single item at half the item size, drawn as instances of one model: three in a
+triangle, two at the back and a little higher with the third in front of them, then two side by
+side, then one in the middle. The display follows player 1's inventory: using, losing, or deploying the
+item removes it from the hand even if a deployed object remains near the kart, so a triple of shells
+or bananas leaves the hand together once it circles or trails the kart, while triple mushrooms go one
+at a time. The model grows into the hand over 0.1 s when it arrives and shrinks away over 0.1 s when it
+goes (`cockpit_item::step_item_animation`, eased at both ends; one turned round midway goes on from the
+size it had reached). A used copy of a triple shrinks away where it stands while the others close up
+into the smaller arrangement over the same 0.1 s. Nothing is animated late after first person was off
+while the item changed. Stick steering and
 the existing item buttons still work. The imported models use their static bind pose; item effects
 and animations are not reproduced in the hand. Each material is drawn from its own data: texture
 layers with their wrap modes, SRT and environment mapping, vertex colours, culling, blending and up
@@ -892,7 +897,7 @@ see them. Being a new native registration, it needs both games retranslated, as
 `Launcher/LocalBuild.ps1` does.
 
 **Hands.** The cockpit draws no VR glove or hand mesh for a hand the character draws, but still
-draws what that hand carries, the held item and its count. Which hands the character drew travels
+draws what that hand carries, the held item. Which hands the character drew travels
 with the sealed guest frame (`AuroraCockpitItem::characterHands`, applied to
 `AuroraCockpitHand::characterHand` for the replayed frame), so a glove is hidden on exactly the
 frames whose character draws that hand. The arm follows the controller pose sampled for the game

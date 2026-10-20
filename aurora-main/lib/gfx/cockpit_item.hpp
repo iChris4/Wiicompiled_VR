@@ -56,8 +56,13 @@ inline bool has_model(uint8_t id) {
 struct GpuStage { uint32_t color[4],colorOp[4],alpha[4],alphaOp[4],misc[4];float konst[4],texGen[2][4]; };
 struct GpuMaterial { GpuStage stages[4];float registers[4][4],materialColor[4];uint32_t info[4]; };
 static_assert(sizeof(GpuMaterial)==608);
-struct GpuFrame { float eyeFromModel[12],seatFromModel[12],projection[4],depth[4]; };
-static_assert(sizeof(GpuFrame)==128);
+// One instance per copy of the item (a triple shows three); scale[0] is the
+// model's scale, which billboard offsets take.
+inline constexpr uint32_t kMaxCopies=3;
+struct GpuCopy { float eyeFromModel[12],seatFromModel[12],scale[4]; };
+static_assert(sizeof(GpuCopy)==112);
+struct GpuFrame { GpuCopy copies[kMaxCopies];float projection[4],depth[4]; };
+static_assert(sizeof(GpuFrame)==368);
 // Static per-model vertices: billboards keep their origin in position (w=1)
 // and their bone-local offset, which the vertex shader turns to face the eye.
 struct GpuVertex { float position[4],offset[4],normal[4],color[4],uv[4]; };
@@ -147,8 +152,8 @@ inline constexpr const char* tevShader=R"(
   struct Stage { color: vec4u, colorOp: vec4u, alpha: vec4u, alphaOp: vec4u, misc: vec4u, konst: vec4f,
                  texGen0: vec4f, texGen1: vec4f };
   struct Material { stages: array<Stage, 4>, registers: array<vec4f, 4>, materialColor: vec4f, info: vec4u };
-  struct Frame { eye0: vec4f, eye1: vec4f, eye2: vec4f, seat0: vec4f, seat1: vec4f, seat2: vec4f,
-                 projection: vec4f, depth: vec4f };
+  struct Copy { eye0: vec4f, eye1: vec4f, eye2: vec4f, seat0: vec4f, seat1: vec4f, seat2: vec4f, scale: vec4f };
+  struct Frame { copies: array<Copy, 3>, projection: vec4f, depth: vec4f };
   @group(0) @binding(0) var<uniform> material: Material;
   @group(0) @binding(1) var sampler0: sampler;
   @group(0) @binding(2) var texture0: texture_2d<f32>;
@@ -170,17 +175,18 @@ inline constexpr const char* tevShader=R"(
     if (g0.w > 0.5) { base = vec2f(0.5 * normal.x + 0.5, -0.5 * normal.y + 0.5); }
     return vec2f(dot(g0.xyz, vec3f(base, 1.0)), dot(g1.xyz, vec3f(base, 1.0)));
   }
-  @vertex fn vs(@location(0) position: vec4f, @location(1) offset: vec4f, @location(2) normal: vec4f,
-                @location(3) color: vec4f, @location(4) uv: vec4f) -> Out {
+  @vertex fn vs(@builtin(instance_index) copyIndex: u32, @location(0) position: vec4f, @location(1) offset: vec4f,
+                @location(2) normal: vec4f, @location(3) color: vec4f, @location(4) uv: vec4f) -> Out {
     let p4 = vec4f(position.xyz, 1.0);
-    let p = vec3f(dot(frame.eye0, p4), dot(frame.eye1, p4), dot(frame.eye2, p4)) + offset.xyz * frame.depth.z;
+    let placed = frame.copies[min(copyIndex, 2u)];
+    let p = vec3f(dot(placed.eye0, p4), dot(placed.eye1, p4), dot(placed.eye2, p4)) + offset.xyz * placed.scale.x;
     let billboard = position.w > 0.5;
     let n = normal.xyz;
-    let eyeNormal = select(unit(vec3f(dot(frame.eye0.xyz, n), dot(frame.eye1.xyz, n), dot(frame.eye2.xyz, n))),
+    let eyeNormal = select(unit(vec3f(dot(placed.eye0.xyz, n), dot(placed.eye1.xyz, n), dot(placed.eye2.xyz, n))),
                            vec3f(0.0, 0.0, 1.0), billboard);
     var lit = 1.0;
     if (!billboard && (material.info.z & 2u) != 0u) {
-      let seatNormal = unit(vec3f(dot(frame.seat0.xyz, n), dot(frame.seat1.xyz, n), dot(frame.seat2.xyz, n)));
+      let seatNormal = unit(vec3f(dot(placed.seat0.xyz, n), dot(placed.seat1.xyz, n), dot(placed.seat2.xyz, n)));
       lit = 0.55 + 0.45 * abs(dot(seatNormal, vec3f(0.3, 0.8, 0.5)));
     }
     var o: Out;
@@ -337,7 +343,8 @@ inline void prepare_layout() {
       if(at!=std::string::npos) code.replace(at,std::strlen(from),to);
     };
     replace("@group(1) @binding(0) var<uniform> frame: Frame;","@group(1) @binding(0) var<uniform> frames: array<Frame, 2>;");
-    replace("@vertex fn vs(@location(0) position: vec4f,","@vertex fn vs(@builtin(view_index) view: u32, @location(0) position: vec4f,");
+    replace("@vertex fn vs(@builtin(instance_index) copyIndex: u32,",
+            "@vertex fn vs(@builtin(view_index) view: u32, @builtin(instance_index) copyIndex: u32,");
     replace("    let p4 = vec4f(position.xyz, 1.0);","    let frame = &frames[view];\n    let p4 = vec4f(position.xyz, 1.0);");
     code="enable chromium_experimental_multiview;\n"+code;
     wgpu::ShaderSourceWGSL sourceMultiview{};
@@ -539,59 +546,193 @@ inline std::array<float,12> item_from_model(const data::Model& model,float size)
 
 // The held item grows into the hand when it arrives and shrinks away when it
 // is used or lost, over kItemAnimationSeconds, instead of popping in and out.
-// Each draw of a displayed frame steps the one render-thread state with the
-// same item, so the second eye never steps it again.
-inline constexpr float kItemAnimationSeconds=0.2f;
+// A triple shows its items as copies of the single item, kTripleCopyShare of
+// its size: each one used shrinks away while the rest close up. Each draw of a
+// displayed frame steps the one render-thread state with the same item, so the
+// second eye never steps it again.
+inline constexpr float kItemAnimationSeconds=0.1f;
+inline constexpr float kTripleCopyShare=0.5f;
+// The triple mushroom, green shells, red shells and bananas.
+inline bool triple_item(uint8_t id) { return id==5 || (id>=16 && id<=18); }
+// Where copy `slot` of `count` stands in the item frame (+X right, +Y up, +Z
+// towards the player), in copy sizes: three in a triangle, the first two at
+// the back and a little higher with the third in front between them, two side
+// by side, one in the middle. The copy used is always the last, so the others
+// close up.
+inline std::array<float,3> copy_position(uint32_t count,uint32_t slot) {
+  constexpr float three[3][3]{{-0.5f,0.12f,-0.3f},{0.5f,0.12f,-0.3f},{0.0f,0.0f,0.3f}};
+  if(count>=3 && slot<3) return {three[slot][0],three[slot][1],three[slot][2]};
+  if(count==2 && slot<2) return {slot==0?-0.5f:0.5f,0.0f,0.0f};
+  return {0.0f,0.0f,0.0f};
+}
 struct ItemAnimation {
   using Clock=std::chrono::steady_clock;
-  bool shown=false,leaving=false;
+  struct Copy {
+    bool shown=false,leaving=false;
+    // When a whole grow or shrink would have begun: one turned round midway
+    // goes on from the size it had reached.
+    Clock::time_point start{};
+    // Closing up, from where to where and since when.
+    std::array<float,3> from{},to{};
+    Clock::time_point moved{};
+  };
+  bool shown=false;
   uint8_t id=0,hand=0;
   uint64_t raceGeneration=0;
-  // When a whole grow or shrink would have begun: one turned round midway goes
-  // on from the size it had reached.
-  Clock::time_point start{};
+  std::array<Copy,kMaxCopies> copies{};
   Clock::time_point stepped{};
 };
-struct ItemDraw { bool draw=false;uint8_t id=0,hand=0;float scale=0; };
+struct ItemDraw {
+  bool draw=false;uint8_t id=0,hand=0;
+  float share=1; // each copy's size, as a share of the item size
+  uint32_t copies=0;
+  std::array<std::array<float,3>,kMaxCopies> position{}; // in copy sizes
+  std::array<float,kMaxCopies> scale{};
+};
 // Smooth at both ends, and symmetric: ease(1-t) is 1-ease(t).
 inline float item_ease(float t) { t=std::clamp(t,0.0f,1.0f);return t*t*(3-2*t); }
 inline ItemDraw step_item_animation(ItemAnimation& state,const AuroraCockpitItem& item,bool hasModel,
                                     ItemAnimation::Clock::time_point now) {
   using Clock=ItemAnimation::Clock;
-  const auto progress=[&] {
-    return std::clamp(std::chrono::duration<float>(now-state.start).count()/kItemAnimationSeconds,0.0f,1.0f);
+  using Copy=ItemAnimation::Copy;
+  const auto progress=[&](Clock::time_point since) {
+    return std::clamp(std::chrono::duration<float>(now-since).count()/kItemAnimationSeconds,0.0f,1.0f);
   };
   const auto startedAt=[&](float done) {
     return now-std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(done*kItemAnimationSeconds));
   };
-  // Not drawn for a while (the game's camera, a menu): an item that went in
-  // the meantime is not shrunk late.
+  const auto position=[&](const Copy& copy) {
+    const float t=item_ease(progress(copy.moved));
+    return std::array<float,3>{copy.from[0]+(copy.to[0]-copy.from[0])*t,copy.from[1]+(copy.to[1]-copy.from[1])*t,
+                               copy.from[2]+(copy.to[2]-copy.from[2])*t};
+  };
+  // Not drawn for a while (the game's camera, a menu): what changed in the
+  // meantime is not animated late.
   const bool stale=state.shown && now-state.stepped>std::chrono::milliseconds(250);
   state.stepped=now;
   const bool present=item.valid && item.hand<=1 && item.count>=1 && item.count<=3 && hasModel;
-  if(present) {
-    const bool same=state.shown && state.id==item.id && state.hand==item.hand &&
-                    state.raceGeneration==item.raceGeneration;
-    if(!same) {
-      state.shown=true;state.leaving=false;state.id=item.id;state.hand=item.hand;
-      state.raceGeneration=item.raceGeneration;state.start=now;
-    } else if(state.leaving) {
-      // Back before it had gone: grow again from the size it shrank to.
-      const float done=progress();
-      state.leaving=false;state.start=startedAt(1-done);
+  const uint32_t count=present?(triple_item(item.id)?item.count:1u):0u;
+  const bool same=present && state.shown && state.id==item.id && state.hand==item.hand &&
+                  state.raceGeneration==item.raceGeneration;
+  if(present && !same) {
+    // A new item: every copy grows in at its place.
+    state.shown=true;state.id=item.id;state.hand=item.hand;state.raceGeneration=item.raceGeneration;
+    for(uint32_t slot=0;slot<kMaxCopies;++slot) {
+      const auto at=copy_position(count,slot);
+      state.copies[slot]=slot<count?Copy{true,false,now,at,at,now}:Copy{};
     }
-  } else if(state.shown && stale) {
-    state.shown=false;state.leaving=false;
-  } else if(state.shown && !state.leaving) {
-    const float done=progress();
-    state.leaving=true;state.start=startedAt(1-done);
+  } else if(state.shown) {
+    // The same item with fewer copies (or more), or gone.
+    for(uint32_t slot=0;slot<kMaxCopies;++slot) {
+      auto& copy=state.copies[slot];
+      if(slot<count) {
+        const auto at=copy_position(count,slot);
+        if(!copy.shown) { copy=Copy{true,false,now,at,at,now};continue; }
+        if(copy.leaving) {
+          // Back before it had gone: grow again from the size it shrank to.
+          copy.leaving=false;copy.start=startedAt(1-progress(copy.start));
+        }
+        if(copy.to!=at) { copy.from=stale?at:position(copy);copy.to=at;copy.moved=now; }
+      } else if(copy.shown && stale) {
+        copy=Copy{};
+      } else if(copy.shown && !copy.leaving) {
+        // It shrinks where it is.
+        const auto here=position(copy);
+        copy.from=here;copy.to=here;
+        copy.leaving=true;copy.start=startedAt(1-progress(copy.start));
+      }
+    }
   }
-  if(!state.shown) return {};
-  const float done=progress();
-  if(state.leaving && done>=1) { state.shown=false;state.leaving=false;return {}; }
-  return {true,state.id,state.hand,state.leaving?item_ease(1-done):item_ease(done)};
+  ItemDraw out{};
+  for(uint32_t slot=0;slot<kMaxCopies;++slot) {
+    auto& copy=state.copies[slot];
+    if(!copy.shown) continue;
+    const float done=progress(copy.start);
+    if(copy.leaving && done>=1) { copy=Copy{};continue; }
+    out.position[out.copies]=position(copy);
+    out.scale[out.copies]=item_ease(copy.leaving?1-done:done);
+    ++out.copies;
+  }
+  if(out.copies==0) { state.shown=false;return {}; }
+  out.draw=true;out.id=state.id;out.hand=state.hand;
+  out.share=triple_item(state.id)?kTripleCopyShare:1.0f;
+  return out;
 }
 inline ItemAnimation itemAnimation;
+
+// What a displayed frame draws of the held item: its model, and each copy's
+// seat-from-model transform and model scale. Steps the animation.
+struct ItemPlacement {
+  int index=-1;
+  uint32_t copies=0;
+  std::array<std::array<float,12>,kMaxCopies> seatFromModel{};
+  std::array<float,kMaxCopies> modelScale{};
+};
+inline ItemPlacement place_item(const StereoReplayFrame& frame) {
+  ItemPlacement out;
+  const auto& item=frame.cockpitItem;
+  const int itemIndex=data::model_index(item.id);
+  const auto shown=step_item_animation(itemAnimation,item,itemIndex>=0 && gpuArchive->models[itemIndex].valid(),
+                                       ItemAnimation::Clock::now());
+  if(!shown.draw) return out;
+  const int index=data::model_index(shown.id);
+  if(index<0 || !gpuArchive->models[index].valid()) return out;
+  const auto& hand=frame.cockpit.hands[shown.hand];
+  std::array<float,12> seatFromItem;
+  if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return out;
+  const auto& model=gpuArchive->models[index];
+  const float size=item_size(frame.cockpit)*shown.share;
+  for(uint32_t copy=0;copy<shown.copies;++copy) {
+    if(!(shown.scale[copy]>0.01f)) continue;
+    auto itemFromModel=item_from_model(model,size*shown.scale[copy]);
+    if(!(itemFromModel[0]>0)) continue;
+    for(int axis=0;axis<3;++axis) itemFromModel[axis*4+3]+=size*shown.position[copy][axis];
+    compose(seatFromItem.data(),itemFromModel.data(),out.seatFromModel[out.copies].data());
+    out.modelScale[out.copies]=itemFromModel[0];
+    ++out.copies;
+  }
+  if(out.copies) out.index=index;
+  return out;
+}
+inline GpuFrame gpu_frame(const ItemPlacement& placed,const StereoReplayFrame& frame,uint32_t eye,
+                          float sceneZ,float sceneConstant) {
+  GpuFrame uniform{};
+  for(uint32_t copy=0;copy<placed.copies;++copy) {
+    auto& out=uniform.copies[copy];
+    std::memcpy(out.seatFromModel,placed.seatFromModel[copy].data(),sizeof(out.seatFromModel));
+    compose(frame.cockpit.eyeFromSeat[eye],out.seatFromModel,out.eyeFromModel);
+    out.scale[0]=placed.modelScale[copy];
+  }
+  const auto& projection=frame.eyes[eye].projection;
+  const float projectionRow[4]{projection.m0[0],projection.m0[2],projection.m1[1],projection.m1[2]};
+  const float depth[4]{sceneZ,sceneConstant/std::max(frame.cockpit.unitsPerMeter,0.001f),0,0};
+  std::memcpy(uniform.projection,projectionRow,sizeof(projectionRow));
+  std::memcpy(uniform.depth,depth,sizeof(depth));
+  return uniform;
+}
+// Every copy in one instanced draw per part.
+inline void draw_parts(const wgpu::RenderPassEncoder& pass,const ItemPlacement& placed,const StereoReplayFrame& frame,
+                       uint32_t eye,bool reversed,bool multiview) {
+  const auto& model=gpuArchive->models[placed.index];
+  const auto& gpu=gpuModels[placed.index];
+  pass.SetVertexBuffer(0,gpu.vertices);
+  uint32_t start=0;
+  for(const auto& part:model.parts) {
+    const auto count=static_cast<uint32_t>(part.vertices.size());
+    const auto& material=model.materials[part.material];
+    if(material.cull!=3) {
+      const PipelineKey key{material.cull,material.blendSrc,material.blendDst,material.blend,material.subtract,
+                            material.depthWrite};
+      const auto& pipe=pipeline(key,frame,eye,reversed,multiview);
+      if(pipe) {
+        pass.SetPipeline(pipe);
+        pass.SetBindGroup(0,gpu.materials[part.material],0,nullptr);
+        pass.Draw(count,placed.copies,start,0);
+      }
+    }
+    start+=count;
+  }
+}
 
 inline void render(const wgpu::RenderPassEncoder& pass,const StereoReplayFrame& frame,uint32_t eye,
                    float sceneZ,float sceneConstant) {
@@ -603,45 +744,12 @@ inline void render(const wgpu::RenderPassEncoder& pass,const StereoReplayFrame& 
   // item does not pause the frame on texture uploads.
   for(size_t i=0;i<gpuArchive->models.size();++i)
     if(!gpuReady[i] && gpuArchive->models[i].valid()) prepare_model(i);
-  const auto& item=frame.cockpitItem;
-  const int itemIndex=data::model_index(item.id);
-  const auto shown=step_item_animation(itemAnimation,item,itemIndex>=0 && gpuArchive->models[itemIndex].valid(),
-                                       ItemAnimation::Clock::now());
-  if(!shown.draw || !(shown.scale>0.01f)) return;
-  const int index=data::model_index(shown.id);
-  if(index<0 || !gpuArchive->models[index].valid()) return;
-  const auto& hand=frame.cockpit.hands[shown.hand];
-  std::array<float,12> seatFromItem;
-  if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return;
-  const auto& model=gpuArchive->models[index];
-  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit)*shown.scale);
-  if(!(itemFromModel[0]>0)) return;
-  GpuFrame uniform{};
-  compose(seatFromItem.data(),itemFromModel.data(),uniform.seatFromModel);
-  compose(frame.cockpit.eyeFromSeat[eye],uniform.seatFromModel,uniform.eyeFromModel);
-  const auto& projection=frame.eyes[eye].projection;
-  const float projectionRow[4]{projection.m0[0],projection.m0[2],projection.m1[1],projection.m1[2]};
-  const float depth[4]{sceneZ,sceneConstant/std::max(frame.cockpit.unitsPerMeter,0.001f),itemFromModel[0],0};
-  std::memcpy(uniform.projection,projectionRow,sizeof(projectionRow));
-  std::memcpy(uniform.depth,depth,sizeof(depth));
+  const auto placed=place_item(frame);
+  if(!placed.copies) return;
+  const auto uniform=gpu_frame(placed,frame,eye,sceneZ,sceneConstant);
   webgpu::g_queue.WriteBuffer(frameBuffers[eye],0,&uniform,sizeof(uniform));
-  const auto& gpu=gpuModels[index];
-  pass.SetVertexBuffer(0,gpu.vertices);
   pass.SetBindGroup(1,frameGroups[eye],0,nullptr);
-  const bool reversed=sceneConstant>0;
-  uint32_t start=0;
-  for(const auto& part:model.parts) {
-    const auto count=static_cast<uint32_t>(part.vertices.size());
-    const auto& material=model.materials[part.material];
-    if(material.cull!=3) {
-      const PipelineKey key{material.cull,material.blendSrc,material.blendDst,material.blend,material.subtract,
-                            material.depthWrite};
-      pass.SetPipeline(pipeline(key,frame,eye,reversed));
-      pass.SetBindGroup(0,gpu.materials[part.material],0,nullptr);
-      pass.Draw(count,1,start,0);
-    }
-    start+=count;
-  }
+  draw_parts(pass,placed,frame,eye,sceneConstant>0,false);
 }
 
 // Both eyes at once inside a multiview pass (gfx/stereo_multiview.hpp): the two eyes' frames in one
@@ -655,50 +763,13 @@ inline void render_multiview(const wgpu::RenderPassEncoder& pass,const StereoRep
   if(!frameGroupMultiview || !shaderMultiview) return;
   for(size_t i=0;i<gpuArchive->models.size();++i)
     if(!gpuReady[i] && gpuArchive->models[i].valid()) prepare_model(i);
-  const auto& item=frame.cockpitItem;
-  const int itemIndex=data::model_index(item.id);
-  const auto shown=step_item_animation(itemAnimation,item,itemIndex>=0 && gpuArchive->models[itemIndex].valid(),
-                                       ItemAnimation::Clock::now());
-  if(!shown.draw || !(shown.scale>0.01f)) return;
-  const int index=data::model_index(shown.id);
-  if(index<0 || !gpuArchive->models[index].valid()) return;
-  const auto& hand=frame.cockpit.hands[shown.hand];
-  std::array<float,12> seatFromItem;
-  if(!hand.tracked || !seat_from_item(hand,seatFromItem)) return;
-  const auto& model=gpuArchive->models[index];
-  const auto itemFromModel=item_from_model(model,item_size(frame.cockpit)*shown.scale);
-  if(!(itemFromModel[0]>0)) return;
-  std::array<GpuFrame,2> uniforms{};
-  for(uint32_t eye=0;eye<2;++eye) {
-    auto& uniform=uniforms[eye];
-    compose(seatFromItem.data(),itemFromModel.data(),uniform.seatFromModel);
-    compose(frame.cockpit.eyeFromSeat[eye],uniform.seatFromModel,uniform.eyeFromModel);
-    const auto& projection=frame.eyes[eye].projection;
-    const float projectionRow[4]{projection.m0[0],projection.m0[2],projection.m1[1],projection.m1[2]};
-    const float depth[4]{sceneZ,sceneConstant/std::max(frame.cockpit.unitsPerMeter,0.001f),itemFromModel[0],0};
-    std::memcpy(uniform.projection,projectionRow,sizeof(projectionRow));
-    std::memcpy(uniform.depth,depth,sizeof(depth));
-  }
+  const auto placed=place_item(frame);
+  if(!placed.copies) return;
+  const std::array<GpuFrame,2> uniforms{gpu_frame(placed,frame,0,sceneZ,sceneConstant),
+                                        gpu_frame(placed,frame,1,sceneZ,sceneConstant)};
   webgpu::g_queue.WriteBuffer(frameBufferMultiview,0,uniforms.data(),sizeof(uniforms));
-  const auto& gpu=gpuModels[index];
-  pass.SetVertexBuffer(0,gpu.vertices);
   pass.SetBindGroup(1,frameGroupMultiview,0,nullptr);
-  const bool reversed=sceneConstant>0;
-  uint32_t start=0;
-  for(const auto& part:model.parts) {
-    const auto count=static_cast<uint32_t>(part.vertices.size());
-    const auto& material=model.materials[part.material];
-    if(material.cull!=3) {
-      const PipelineKey key{material.cull,material.blendSrc,material.blendDst,material.blend,material.subtract,
-                            material.depthWrite};
-      const auto& pipe=pipeline(key,frame,0,reversed,true);
-      if(!pipe) { start+=count; continue; }
-      pass.SetPipeline(pipe);
-      pass.SetBindGroup(0,gpu.materials[part.material],0,nullptr);
-      pass.Draw(count,1,start,0);
-    }
-    start+=count;
-  }
+  draw_parts(pass,placed,frame,0,sceneConstant>0,true);
 }
 
 } // namespace aurora::gfx::cockpit_item
