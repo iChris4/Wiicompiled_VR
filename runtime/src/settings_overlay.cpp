@@ -1328,7 +1328,7 @@ void DrawVrSteeringWheelSettings() {
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Show Player 1's settled inventory item above this palm. "
-                          "Triple items show their remaining count. Using or losing the item hides it.");
+                          "A triple shows what is left of it as copies. Using or losing the item hides it.");
     }
     ImGui::BeginDisabled(g_vrCockpitItemHand == 2);
     if (ImGui::Checkbox("Throw the item by swinging that hand", &g_vrCockpitItemThrow)) {

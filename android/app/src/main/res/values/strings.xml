@@ -569,7 +569,7 @@
     <string name="vr_wheel_bike_sensitivity">Hand steering sensitivity (bike)</string>
     <string name="vr_wheel_bike_sensitivity_helper">How far you turn the bike\'s handlebar with your hands for full steering (default 45°). Lower is more sensitive: less turning. The stick steers as before; at full stick the handlebar shows this angle. Needs Hand steering.</string>
     <string name="vr_cockpit_item_hand">Item in cockpit hand</string>
-    <string name="vr_cockpit_item_hand_helper">Show Player 1\'s settled inventory item above the selected palm. Triple items show the remaining count. Using or losing the item hides it.</string>
+    <string name="vr_cockpit_item_hand_helper">Show Player 1\'s settled inventory item above the selected palm. A triple shows what is left of it as copies. Using or losing the item hides it.</string>
     <string name="vr_item_left">Left</string>
     <string name="vr_item_right">Right</string>
     <string name="vr_item_off">Off</string>
