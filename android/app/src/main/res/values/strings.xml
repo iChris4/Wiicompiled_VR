@@ -473,6 +473,7 @@
 
     <!-- Settings shell -->
     <string name="settings_tab_vr">VR</string>
+    <string name="settings_tab_camera">Camera</string>
     <string name="settings_tab_graphics">Graphics</string>
     <string name="settings_tab_controls">Controls</string>
     <string name="settings_tab_audio">Audio</string>
@@ -521,7 +522,7 @@
     <string name="settings_write_failed">Could not save Config.toml.</string>
     <string name="settings_custom_value">Custom (%1$s)</string>
 
-    <!-- VR tab -->
+    <!-- Camera tab -->
     <string name="section_vr_camera">Camera</string>
     <string name="vr_race_view">Race view</string>
     <string name="vr_race_view_helper">Immersive plays races all around you in stereo. Immersive window keeps that stereo view but shows it only through a window where the menu screen sits, with your room around it. Flat screen plays races on the menu screen; the camera settings below do not apply to it.</string>
@@ -581,6 +582,7 @@
     <string name="vr_lean_back">Lean back angle</string>
     <string name="vr_lean_back_helper">Tilts the race view back for playing reclined. 0 applies no tilt.</string>
 
+    <!-- VR tab -->
     <string name="section_vr_headset">Headset</string>
     <string name="vr_render_scale">Headset render scale</string>
     <string name="vr_render_scale_helper">Scales the eye resolution the headset recommends. Higher is sharper and costs GPU time; lower it if races stutter.</string>

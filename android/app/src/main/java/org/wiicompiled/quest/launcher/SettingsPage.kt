@@ -46,6 +46,7 @@ class SettingsPage(
 
     enum class Tab(val label: Int) {
         Vr(R.string.settings_tab_vr),
+        Camera(R.string.settings_tab_camera),
         Graphics(R.string.settings_tab_graphics),
         Controls(R.string.settings_tab_controls),
         Audio(R.string.settings_tab_audio),
@@ -104,6 +105,7 @@ class SettingsPage(
         }
         when (tab) {
             Tab.Vr -> buildVr()
+            Tab.Camera -> buildCamera()
             Tab.Graphics -> buildGraphics()
             Tab.Controls -> buildControls()
             Tab.Audio -> buildAudio()
@@ -113,11 +115,82 @@ class SettingsPage(
         updateDependents(current)
     }
 
+    // Flat Screen mode keeps races on the menu screen, which none of the race view rows reach.
+    private val immersive = { c: TomlConfig -> !(c.bool("vr", "flat_screen") ?: false) }
+
+    // The immersive window is still the stereo race view, seen through the race HUD's screen.
+    private val window = { c: TomlConfig -> immersive(c) && (c.bool("vr", "immersive_window") ?: false) }
+
     private fun buildVr() {
-        // Flat Screen mode keeps races on the menu screen, which none of the race view rows reach.
-        val immersive = { c: TomlConfig -> !(c.bool("vr", "flat_screen") ?: false) }
-        // The immersive window is still the stereo race view, seen through the race HUD's screen.
-        val window = { c: TomlConfig -> immersive(c) && (c.bool("vr", "immersive_window") ?: false) }
+        section(R.string.section_vr_headset) {
+            slider(
+                R.string.vr_render_scale, R.string.vr_render_scale_helper, 0.25, 2.0, 0.05,
+                read = { number(it, "vr", "render_scale", 0.25, 2.0, GameStorage.DEFAULT_RENDER_SCALE) },
+                format = { "%.2f×".format(it) },
+                write = { c, value -> c.setFloat("vr", "render_scale", value) },
+            )
+            choice(
+                R.string.vr_performance_level, R.string.vr_performance_level_helper,
+                listOf(
+                    R.string.vr_performance_level_boost, R.string.vr_performance_level_sustained_high,
+                    R.string.vr_performance_level_sustained_low, R.string.vr_performance_level_power_savings,
+                    R.string.vr_performance_level_default,
+                ),
+                read = { stringIndex(it, "vr", "performance_level", PERFORMANCE_LEVELS) },
+                write = { c, index -> c.setString("vr", "performance_level", PERFORMANCE_LEVELS[index]) },
+            )
+            choice(
+                R.string.vr_foveation, R.string.vr_foveation_helper,
+                listOf(
+                    R.string.vr_foveation_off, R.string.vr_foveation_low,
+                    R.string.vr_foveation_medium, R.string.vr_foveation_high,
+                ),
+                read = { stringIndex(it, "vr", "foveation", FOVEATION_LEVELS, FOVEATION_DEFAULT) },
+                write = { c, index -> c.setString("vr", "foveation", FOVEATION_LEVELS[index]) },
+            )
+            choice(
+                R.string.vr_interpolation, R.string.vr_interpolation_helper,
+                listOf(activity.getString(R.string.vr_interpolation_off), activity.getString(R.string.vr_interpolation_auto), "72 FPS", "90 FPS", "120 FPS"),
+                read = { INTERPOLATION_FPS.indexOf(vrInterpolationFps(it)) },
+                write = { c, index -> c.setInteger("vr", "frame_interpolation_fps", INTERPOLATION_FPS[index]) },
+            )
+            choice(
+                R.string.vr_refresh_rate, R.string.vr_refresh_rate_helper,
+                listOf(activity.getString(R.string.vr_refresh_rate_default), "72 Hz", "80 Hz", "90 Hz", "120 Hz"),
+                read = { REFRESH_RATES.indexOf(it.integer("vr", "refresh_rate") ?: 0L) },
+                write = { c, index -> c.setInteger("vr", "refresh_rate", REFRESH_RATES[index]) },
+                custom = { "${it.integer("vr", "refresh_rate")} Hz" },
+            )
+        }
+        section(R.string.section_vr_screen) {
+            // The immersive window is that screen and always carries the HUD.
+            toggle(
+                R.string.vr_hud_screen, R.string.vr_hud_screen_helper,
+                read = { it.bool("vr", "hud_virtual_screen") ?: true },
+                write = { c, value -> c.setBool("vr", "hud_virtual_screen", value) },
+                enabledIf = { immersive(it) && !window(it) },
+            )
+            slider(
+                R.string.vr_hud_distance, R.string.vr_hud_distance_helper, 0.5, 5.0, 0.1,
+                read = { number(it, "vr", "hud_distance_meters", 0.25, 10.0, 2.0) },
+                format = { "%.1f m".format(it) },
+                write = { c, value -> c.setFloat("vr", "hud_distance_meters", value) },
+            )
+            slider(
+                R.string.vr_hud_width, R.string.vr_hud_width_helper, 1.0, 6.0, 0.1,
+                read = { number(it, "vr", "hud_width_meters", 0.25, 20.0, 2.4) },
+                format = { "%.1f m".format(it) },
+                write = { c, value -> c.setFloat("vr", "hud_width_meters", value) },
+            )
+            toggle(
+                R.string.vr_passthrough, R.string.vr_passthrough_helper,
+                read = { it.bool("vr", "passthrough") ?: true },
+                write = { c, value -> c.setBool("vr", "passthrough", value) },
+            )
+        }
+    }
+
+    private fun buildCamera() {
         // first_person is only the camera a race starts on: a click switches any race into first
         // person, so its rows apply whichever default is chosen.
         val firstPerson = immersive
@@ -298,72 +371,6 @@ class SettingsPage(
                 format = { "%.0f°".format(it) },
                 write = { c, value -> c.setFloat("vr", "lean_back_degrees", value) },
                 enabledIf = immersive,
-            )
-        }
-        section(R.string.section_vr_headset) {
-            slider(
-                R.string.vr_render_scale, R.string.vr_render_scale_helper, 0.25, 2.0, 0.05,
-                read = { number(it, "vr", "render_scale", 0.25, 2.0, GameStorage.DEFAULT_RENDER_SCALE) },
-                format = { "%.2f×".format(it) },
-                write = { c, value -> c.setFloat("vr", "render_scale", value) },
-            )
-            choice(
-                R.string.vr_performance_level, R.string.vr_performance_level_helper,
-                listOf(
-                    R.string.vr_performance_level_boost, R.string.vr_performance_level_sustained_high,
-                    R.string.vr_performance_level_sustained_low, R.string.vr_performance_level_power_savings,
-                    R.string.vr_performance_level_default,
-                ),
-                read = { stringIndex(it, "vr", "performance_level", PERFORMANCE_LEVELS) },
-                write = { c, index -> c.setString("vr", "performance_level", PERFORMANCE_LEVELS[index]) },
-            )
-            choice(
-                R.string.vr_foveation, R.string.vr_foveation_helper,
-                listOf(
-                    R.string.vr_foveation_off, R.string.vr_foveation_low,
-                    R.string.vr_foveation_medium, R.string.vr_foveation_high,
-                ),
-                read = { stringIndex(it, "vr", "foveation", FOVEATION_LEVELS, FOVEATION_DEFAULT) },
-                write = { c, index -> c.setString("vr", "foveation", FOVEATION_LEVELS[index]) },
-            )
-            choice(
-                R.string.vr_interpolation, R.string.vr_interpolation_helper,
-                listOf(activity.getString(R.string.vr_interpolation_off), activity.getString(R.string.vr_interpolation_auto), "72 FPS", "90 FPS", "120 FPS"),
-                read = { INTERPOLATION_FPS.indexOf(vrInterpolationFps(it)) },
-                write = { c, index -> c.setInteger("vr", "frame_interpolation_fps", INTERPOLATION_FPS[index]) },
-            )
-            choice(
-                R.string.vr_refresh_rate, R.string.vr_refresh_rate_helper,
-                listOf(activity.getString(R.string.vr_refresh_rate_default), "72 Hz", "80 Hz", "90 Hz", "120 Hz"),
-                read = { REFRESH_RATES.indexOf(it.integer("vr", "refresh_rate") ?: 0L) },
-                write = { c, index -> c.setInteger("vr", "refresh_rate", REFRESH_RATES[index]) },
-                custom = { "${it.integer("vr", "refresh_rate")} Hz" },
-            )
-        }
-        section(R.string.section_vr_screen) {
-            // The immersive window is that screen and always carries the HUD.
-            toggle(
-                R.string.vr_hud_screen, R.string.vr_hud_screen_helper,
-                read = { it.bool("vr", "hud_virtual_screen") ?: true },
-                write = { c, value -> c.setBool("vr", "hud_virtual_screen", value) },
-                enabledIf = { immersive(it) && !window(it) },
-            )
-            slider(
-                R.string.vr_hud_distance, R.string.vr_hud_distance_helper, 0.5, 5.0, 0.1,
-                read = { number(it, "vr", "hud_distance_meters", 0.25, 10.0, 2.0) },
-                format = { "%.1f m".format(it) },
-                write = { c, value -> c.setFloat("vr", "hud_distance_meters", value) },
-            )
-            slider(
-                R.string.vr_hud_width, R.string.vr_hud_width_helper, 1.0, 6.0, 0.1,
-                read = { number(it, "vr", "hud_width_meters", 0.25, 20.0, 2.4) },
-                format = { "%.1f m".format(it) },
-                write = { c, value -> c.setFloat("vr", "hud_width_meters", value) },
-            )
-            toggle(
-                R.string.vr_passthrough, R.string.vr_passthrough_helper,
-                read = { it.bool("vr", "passthrough") ?: true },
-                write = { c, value -> c.setBool("vr", "passthrough", value) },
             )
         }
     }
