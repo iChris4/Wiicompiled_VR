@@ -377,6 +377,32 @@ struct SeatedEyeReference {
     }
 };
 
+// Which calls latch the race frame's seat (MkwVRFirstPersonUpdate). The race
+// draw observer latches once per draw, unless the character body's
+// ScnRoot::CalcView wrapper already latched for that draw. Every CalcView call
+// latches: a frame the game catches up on runs the simulation and CalcView
+// twice before it draws once, and its draws show the second step. Keyed to
+// draws, not to the display copy that commits the seat.
+struct SeatLatchClock {
+    uint64_t draws = 0;         // race draw observer calls so far
+    uint64_t latched_draw = 0;  // the draw the current latch was made for
+    uint64_t serial = 0;        // latches made, for work cached per latch
+    // `armed`: a latch is waiting for its commit; `same_camera`: it was made
+    // for the camera this call carries. True when the call latches.
+    bool Observe(bool draw_observer, bool armed, bool same_camera) noexcept {
+        const uint64_t draw = draws;
+        if (draw_observer) {
+            ++draws;
+            if (armed && same_camera && latched_draw == draw) {
+                return false;
+            }
+        }
+        latched_draw = draw;
+        ++serial;
+        return true;
+    }
+};
+
 // Neutral authored hand targets, transformed by the stabilised cockpit body. Do
 // not use the animated hand IK targets: feeding their steering rotation back
 // into the controller angle would make the input chase its own animation.
@@ -555,11 +581,14 @@ void MkwVRFirstPersonConfigure(bool enabled, const FirstPersonHeadOffsets& offse
 // interpreted, shared by startup and the F10 settings bar.
 void MkwVRFirstPersonApplyConfiguredSettings() noexcept;
 
-// Arms the anchor for this guest frame. Call once per frame from the race draw
-// boundary, with the frame's own RaceCamera, or zero if none was seen. This
-// only latches; the anchor itself is computed by Commit below, because the
-// scene's camera matrix for the frame is not set until the draws run.
-void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_address) noexcept;
+// Arms the anchor for this guest frame. Call from the race draw boundary, with
+// the frame's own RaceCamera, or zero if none was seen. This only latches; the
+// anchor itself is computed by Commit below, because the scene's camera matrix
+// for the frame is not set until the draws run. `draw_observer` is false for
+// the character body's ScnRoot::CalcView call, which comes first and latches
+// every time it runs (SeatLatchClock).
+void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_address,
+                            bool draw_observer = true) noexcept;
 
 // Computes and publishes the anchor from the values the frame was drawn with.
 // Call from the producer's frame seal, after the draws and before the sealed

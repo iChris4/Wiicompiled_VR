@@ -568,6 +568,16 @@ the renderer composes it onto every perspective draw's model-view matrix, alongs
 own per-eye delta. The kart's *physics* pose is used deliberately, not the animated model: an
 animated frame would bob and lurch the camera.
 
+The kart is read at the race draw boundary (`ScnMgrRace::Draw`, or the character body's
+`ScnRoot::CalcView` wrapper just before it), and the transform is finished at the frame's
+`GXCopyDisp`, once the scene camera the draws used is set. When the game falls behind it catches up
+by running a second simulation step before it draws: CalcView runs twice and the draws show the
+second step, so every CalcView reads the kart again (`SeatLatchClock`, covered by
+`mkw_vr_first_person_tests`). Keeping the first reading put the seat a whole kart step, up to a
+metre in the cockpit, away from the drawn kart on those frames. Without VR frame interpolation that
+showed for a single displayed frame; with it, the error was blended across the displayed frames on
+either side, and the kart visibly jumped in busy scenes.
+
 `first_person_rotation` decides where the view's orientation comes from, mirroring DolphinXR's
 camera-anchor modes. `"yaw"` keeps the horizon level through a chase-camera tilt or a banked corner.
 `"yaw_pitch"`, the default, adds the kart's climb, so a slope or a wheelie tips the view while a
@@ -924,8 +934,10 @@ a character without a body (a Mii) keeps the tracked-hand mesh.
 
 The seated skeleton is latched once per driver and model, at the first frame the body is drawn
 (normally the end of the race intro, in the waiting pose). A recenter or a settings change keeps it;
-a new race, a driver change or a new kart takes it again. If CalcView runs more than once in a guest
-frame, the pose is solved once and only the palette is set again around each call.
+a new race, a driver change or a new kart takes it again. The pose is solved once per seat latch
+(see when the seat is read in [The first-person camera](#the-first-person-camera)): further CalcView
+calls under the same latch only set the palette again, and a frame the game catches up on, which
+latches twice, poses the body again for the simulation step its draws show.
 
 `mkw_vr_body_ik_tests` covers the leg-animation gate, the seated limbs, the profile keys and all 24
 palm profiles, the reach fit, the IK solve, the wrist placement, segment thinning, alignment and

@@ -146,7 +146,7 @@ void MkwVRFirstPersonUpdateForCurrentFrame() noexcept {
     // passes, so its own Update call for the frame finds it already latched.
     const uint32_t camera = FirstCamera(frame);
     if (camera != 0) {
-        MkwVRFirstPersonUpdate(frame, camera);
+        MkwVRFirstPersonUpdate(frame, camera, false);
     }
 }
 

@@ -421,6 +421,8 @@ struct FirstPersonState {
     // Armed by the draw boundary, consumed by the frame seal.
     bool armed = false;
     uint64_t armed_frame = 0;
+    // Which calls latch; its serial keys the character body's pose.
+    SeatLatchClock latch_clock{};
     // The scene matrix as it stood before this frame's draws, kept only to
     // report how far it had moved by the time the frame was sealed.
     Mtx34 armed_view = kIdentityMtx34;
@@ -1570,14 +1572,19 @@ bool MkwVRReadSceneView(Mtx34& view) noexcept {
     return ReadSceneViewMatrix(view);
 }
 
-void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_address) noexcept {
+void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_address,
+                            bool draw_observer) noexcept {
     std::lock_guard lock(g_mutex);
     // The character body's ScnRoot::CalcView wrapper latches the frame before
-    // the race draw observer gets here. A second call for the same frame must
+    // the race draw observer gets here; the observer's call for that draw must
     // not run the comfort filters again or drop the wheel copies, hidden arrays
-    // and item already prepared for it.
-    if (g_state.armed && g_state.armed_frame == guest_frame_index &&
-        g_state.camera_address == race_camera_address) {
+    // and item already prepared for it. A frame the game catches up on calls
+    // CalcView twice, and the seat is latched again after the step its draws
+    // show: keeping the first, the seat sat a whole kart step (up to a metre in
+    // the cockpit) away from the drawn kart, which VR frame interpolation then
+    // blended into a jump.
+    if (!g_state.latch_clock.Observe(draw_observer, g_state.armed,
+                                     g_state.camera_address == race_camera_address)) {
         return;
     }
     g_state.held_item = {};

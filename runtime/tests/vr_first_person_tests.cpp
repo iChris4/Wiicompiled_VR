@@ -304,9 +304,62 @@ void TestYawOnlyIgnoresKartRoll() {
     CheckNear(rolled[5], 1.0f, "yaw-only keeps the horizon level");
 }
 
+// One race frame's calls into MkwVRFirstPersonUpdate and the seal, as the
+// guest makes them: 'C' the character body's CalcView, 'O' the race draw
+// observer, 'P' the display copy that commits the latch. Returns the latches.
+int Latches(mkw::vr::SeatLatchClock& clock, const char* calls, bool same_camera = true) {
+    bool armed = false;
+    int latched = 0;
+    for (const char* call = calls; *call != '\0'; ++call) {
+        if (*call == 'P') {
+            armed = false;
+            continue;
+        }
+        const uint64_t before = clock.serial;
+        if (clock.Observe(*call == 'O', armed, same_camera)) {
+            armed = true;
+            ++latched;
+            Check(clock.serial == before + 1, "a latch advances the serial once");
+        } else {
+            Check(clock.serial == before, "a call that stands down keeps the serial");
+        }
+    }
+    return latched;
+}
+
+void TestSeatLatchesOncePerDrawWithTheCharacterBody() {
+    mkw::vr::SeatLatchClock clock;
+    Check(Latches(clock, "COP") == 1, "CalcView latches and the draw observer stands down for its draw");
+    Check(Latches(clock, "COPCOPCOP") == 3, "each frame latches once again");
+}
+
+void TestCatchUpFrameLatchesAtTheSecondCalcView() {
+    mkw::vr::SeatLatchClock clock;
+    Check(Latches(clock, "COP") == 1, "a normal frame first");
+    // The game simulated twice before drawing once: the draws show the second
+    // step, so the second CalcView must not stand down behind the first.
+    Check(Latches(clock, "CCOP") == 2, "a catch-up frame's second CalcView latches again");
+    Check(Latches(clock, "COP") == 1, "and the next frame is back to one latch");
+}
+
+void TestDrawObserverLatchesEachDrawWithoutTheBody() {
+    mkw::vr::SeatLatchClock clock;
+    Check(Latches(clock, "OPOP") == 2, "without the body each draw latches");
+    Check(Latches(clock, "OOP") == 2, "a draw repeated before the copy latches again");
+}
+
+void TestDrawObserverLatchesForAnotherCamera() {
+    mkw::vr::SeatLatchClock clock;
+    Check(Latches(clock, "COP", false) == 2, "a draw for another camera than the latch's latches anew");
+}
+
 } // namespace
 
 int main() {
+    TestSeatLatchesOncePerDrawWithTheCharacterBody();
+    TestCatchUpFrameLatchesAtTheSecondCalcView();
+    TestDrawObserverLatchesEachDrawWithoutTheBody();
+    TestDrawObserverLatchesForAnotherCamera();
     TestNeutralInputsProduceIdentity();
     TestLevelCameraGivesPureTranslation();
     TestLevellingRemovesCameraPitch();

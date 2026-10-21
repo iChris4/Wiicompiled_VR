@@ -36,11 +36,11 @@ struct CharacterRig {
     std::vector<Mtx34> seated_pose;
     std::array<float, 3> seated_scale{1.0f, 1.0f, 1.0f};
     body_ik::LegAnimationGate leg_animation;
-    // This guest frame's pose, for a second CalcView in the same frame.
+    // The pose for the current seat latch, for a second CalcView under it.
     std::vector<Mtx34> posed;
     Mtx34 posed_hide = kIdentityMtx34;
     unsigned posed_hands = 0;
-    uint64_t posed_frame = 0;
+    uint64_t posed_latch = 0;
     bool posed_valid = false;
 };
 
@@ -584,9 +584,11 @@ unsigned PrepareCharacterBody(const CpuContext* context, CharacterPalette& saved
         !SavePalette(saved, palette, attributes, count)) {
         return 0;
     }
-    // CalcView can run more than once in a guest frame (another scene root or
-    // camera): the pose is the same, only the palette is set again.
-    if (!rig.posed_valid || rig.posed_frame != g_state.armed_frame || rig.posed.size() != count) {
+    // CalcView can run more than once under one seat latch (another scene root
+    // or camera): the pose is the same, only the palette is set again. A frame
+    // the game catches up on re-latches between its two CalcViews, and the
+    // body is posed again for the simulation step the draws show.
+    if (!rig.posed_valid || rig.posed_latch != g_state.latch_clock.serial || rig.posed.size() != count) {
         const unsigned posed = PoseCharacterLocked(saved.original, rig.posed, rig.posed_hide);
         if (posed == kNotPosed) {
             rig.posed_valid = false;
@@ -595,7 +597,7 @@ unsigned PrepareCharacterBody(const CpuContext* context, CharacterPalette& saved
             return 0;
         }
         rig.posed_valid = true;
-        rig.posed_frame = g_state.armed_frame;
+        rig.posed_latch = g_state.latch_clock.serial;
         rig.posed_hands = posed;
     }
     const auto& modified = rig.posed;
