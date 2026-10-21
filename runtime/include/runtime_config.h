@@ -1147,15 +1147,44 @@ inline std::optional<std::string> UpdateSettingText(const std::string& text, std
     }
 }
 
-// Update one TOML value without discarding unrelated settings or user-specific paths. This is
-// used by the in-game F10 settings bar. An unparseable file is left untouched.
-inline bool WriteSetting(std::string_view section, std::string_view key, std::string_view value) {
+// Removes the named keys of one top-level section, and the comments above them, keeping the rest
+// of the document. A document without the section comes back unchanged; nullopt when it does not
+// parse or the section is not a table.
+template <typename Keys>
+inline std::optional<std::string> RemoveSettingsText(const std::string& text, std::string_view section,
+                                                     const Keys& keys) {
+    try {
+        auto root = toml::parse_str<toml::ordered_type_config>(text);
+        auto& tables = root.as_table();
+        const auto found = tables.find(std::string(section));
+        if (found == tables.end()) {
+            return text;
+        }
+        if (!found->second.is_table()) {
+            return std::nullopt;
+        }
+        auto& table = found->second.as_table();
+        for (const auto key : keys) {
+            if (const auto slot = table.find(std::string(key)); slot != table.end()) {
+                table.erase(slot);
+            }
+        }
+        return toml::format(root);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+// Rewrites the config file with edit's result; an unparseable file (edit returns nullopt) is left
+// untouched.
+template <typename Edit>
+inline bool EditConfigFile(Edit&& edit) {
     const auto path = ResolveConfigPath();
     std::ostringstream existing;
     if (std::ifstream input(path, std::ios::binary); input) {
         existing << input.rdbuf();
     }
-    const auto updated = UpdateSettingText(existing.str(), section, key, value);
+    const std::optional<std::string> updated = edit(existing.str());
     if (!updated) {
         std::cerr << "[runtime-config] Not updating invalid " << PathToUtf8(path) << std::endl;
         return false;
@@ -1172,6 +1201,12 @@ inline bool WriteSetting(std::string_view section, std::string_view key, std::st
     }
     output << *updated;
     return static_cast<bool>(output);
+}
+
+// Update one TOML value without discarding unrelated settings or user-specific paths. This is
+// used by the in-game F10 settings bar. An unparseable file is left untouched.
+inline bool WriteSetting(std::string_view section, std::string_view key, std::string_view value) {
+    return EditConfigFile([&](const std::string& text) { return UpdateSettingText(text, section, key, value); });
 }
 
 inline std::string FormatString(std::string_view value) {
@@ -1520,6 +1555,82 @@ inline bool SetVrFirstPersonHeadRightMeters(float value) {
     std::ostringstream formatted;
     formatted << value;
     return WriteSetting("vr", "first_person_head_right_meters", formatted.str());
+}
+
+// The [vr] preferences of the settings panel's VR and Camera tabs and the launchers' VR and Camera
+// tabs: what "Reset VR settings" puts back to its default. Not enabled, required or controller_mode,
+// nor direct_presentation and multiview, which the Quest launcher shows under Graphics.
+// frame_interpolation is frame_interpolation_fps's older spelling, which would otherwise stand in
+// for it at the next launch. The Quest launcher (SettingsPage.kt) and WheelWizard VR keep copies.
+inline constexpr std::string_view kVrPreferenceKeys[] = {
+    // VR
+    "flat_screen", "immersive_window", "flat_race_intro", "render_scale", "performance_level", "foveation",
+    "frame_interpolation_fps", "frame_interpolation", "refresh_rate", "passthrough", "mirror_view", "recenter_key",
+    "hud_virtual_screen", "hud_distance_meters", "hud_width_meters",
+    // Camera
+    "lean_back_degrees", "first_person", "first_person_toggle_click", "bullet_bill_camera", "first_person_seat",
+    "cockpit_units_per_meter", "first_person_units_per_meter", "first_person_head_up_meters",
+    "first_person_head_forward_meters", "first_person_head_right_meters", "first_person_rotation", "body_ik",
+    "body_ik_hands_only", "body_ik_left_hand_roll", "body_ik_right_hand_roll", "first_person_hide_driver",
+    "first_person_hidden_model", "steering_wheel", "native_steering_wheel", "placeholder_steering_wheel",
+    "hand_steering", "wheel_kart_degrees", "wheel_bike_degrees", "wheel_grab_distance", "wheel_grab_assist",
+    "wheel_response", "wheel_tracking_grace", "wheel_haptics", "cockpit_item_hand", "cockpit_item_throw",
+    "cockpit_item_size", "hand_tracking", "object_culling",
+};
+
+// Puts every kVrPreferenceKeys setting back to its default: the keys leave the file and the loaded
+// values go with them, so each getter answers its own (platform's) default again, as on a fresh
+// install. The caller applies the live ones.
+inline bool ResetVrPreferences() {
+    auto& config = Mutable();
+    config.vrFlatScreen.reset();
+    config.vrImmersiveWindow.reset();
+    config.vrFlatRaceIntro.reset();
+    config.vrRenderScale.reset();
+    config.vrPerformanceLevel.reset();
+    config.vrFoveation.reset();
+    config.vrFrameInterpolationFps.reset();
+    config.vrRefreshRate.reset();
+    config.vrPassthrough.reset();
+    config.vrMirrorView.reset();
+    config.vrRecenterKey.reset();
+    config.vrHudVirtualScreen.reset();
+    config.vrHudDistanceMeters.reset();
+    config.vrHudWidthMeters.reset();
+    config.vrLeanBackDegrees.reset();
+    config.vrFirstPerson.reset();
+    config.vrFirstPersonToggleClick.reset();
+    config.vrBulletBillCamera.reset();
+    config.vrFirstPersonSeat.reset();
+    config.vrCockpitUnitsPerMeter.reset();
+    config.vrFirstPersonUnitsPerMeter.reset();
+    config.vrFirstPersonHeadUpMeters.reset();
+    config.vrFirstPersonHeadForwardMeters.reset();
+    config.vrFirstPersonHeadRightMeters.reset();
+    config.vrFirstPersonRotation.reset();
+    config.vrBodyIk.reset();
+    config.vrBodyIkHandsOnly.reset();
+    config.vrBodyIkLeftHandRoll.reset();
+    config.vrBodyIkRightHandRoll.reset();
+    config.vrFirstPersonHideDriver.reset();
+    config.vrFirstPersonHiddenModel.reset();
+    config.vrSteeringWheel.reset();
+    config.vrNativeSteeringWheel.reset();
+    config.vrPlaceholderSteeringWheel.reset();
+    config.vrHandSteering.reset();
+    config.vrWheelKartDegrees.reset();
+    config.vrWheelBikeDegrees.reset();
+    config.vrWheelGrabDistance.reset();
+    config.vrWheelGrabAssist.reset();
+    config.vrWheelResponse.reset();
+    config.vrWheelTrackingGrace.reset();
+    config.vrWheelHaptics.reset();
+    config.vrCockpitItemHand.reset();
+    config.vrCockpitItemThrow.reset();
+    config.vrCockpitItemSize.reset();
+    config.vrHandTracking.reset();
+    config.vrObjectCulling.reset();
+    return EditConfigFile([](const std::string& text) { return RemoveSettingsText(text, "vr", kVrPreferenceKeys); });
 }
 
 inline bool SetControllerButton(size_t index, std::string value) {

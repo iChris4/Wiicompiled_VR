@@ -382,11 +382,12 @@ The app opens on `LauncherActivity` (`android/app/src/main/java/org/wiicompiled/
 a 2D Horizon OS panel modelled on the PC launcher, WheelWizard VR, and using its
 palette. **Home** has the Play button and reports a missing or incomplete `DATA`
 (the check is the runtime's own `IsDvdDataRoot`: `files/` and `sys/fst.bin`).
-**Settings** edits `Config.toml` in tabs: VR (render scale, performance level, foveation, VR
-interpolation, refresh rate, virtual screen size and distance, passthrough), Camera (race view:
-immersive, immersive window or flat screen, race intro, lean back, default camera, Bullet Bill
-camera, rotation, driver hiding, seat, character body and hands only, hand steering, held items,
-tracked hands), as the in-headset panel splits them,
+**Settings** edits `Config.toml` in tabs: VR (race view: immersive, immersive window or flat
+screen, race intro, render scale, performance level, foveation, VR interpolation, refresh rate,
+virtual screen size and distance, passthrough, and Reset VR settings, which removes
+`kVrPreferenceKeys` as the in-headset panel's reset does), Camera (lean back, default camera,
+Bullet Bill camera, rotation, driver hiding, seat, character body and hands only, hand steering,
+held items, tracked hands), as the in-headset panel splits them,
 Graphics (resolution, widescreen, bloom, shader stutter), Controls (controller
 mode, vibration, the Wii Remote mapping), Audio, Other (game data, builds, paths, OpenXR
 logging) and About. The launch-time geometry (`hud_distance_meters`, `hud_width_meters`)

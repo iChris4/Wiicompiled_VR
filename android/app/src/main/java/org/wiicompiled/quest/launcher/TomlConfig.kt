@@ -89,6 +89,22 @@ class TomlConfig private constructor(private val lines: MutableList<String>) {
 
     fun setString(section: String, key: String, value: String) = set(section, key, quote(value))
 
+    /**
+     * Removes [section].[key] and the comment lines directly above it, which toml11
+     * attaches to the key and RemoveSettingsText removes with it. Absent, nothing changes.
+     */
+    fun remove(section: String, key: String) {
+        val found = findSection(section) ?: return
+        val index = findKey(found, key) ?: return
+        var first = index
+        while (first > found.header + 1 && lines[first - 1].trim().startsWith("#")) {
+            first--
+        }
+        for (i in index downTo first) {
+            lines.removeAt(i)
+        }
+    }
+
     private fun findSection(section: String): Section? {
         var header = -1
         for (i in lines.indices) {

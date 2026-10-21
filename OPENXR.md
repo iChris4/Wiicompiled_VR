@@ -206,8 +206,8 @@ immersive stereo: the whole race, 3D world and HUD alike, is the game's own pict
 in DolphinXR's Flat Screen mode. The first-person camera, hand steering, the lean-back angle, VR
 frame interpolation and `hud_virtual_screen` shape only the immersive race view, so none of them
 apply while it is on; the right-thumbstick camera switch is ignored. It is live, as
-**F10 → Camera → Race view → Flat screen** (the headset panel's Camera tab) and the Quest
-launcher's Settings > Camera, and turning it on or off mid-race switches on the next frame through
+**F10 → VR → Race view → Flat screen** (the headset panel's VR tab) and the Quest launcher's
+Settings > VR, and turning it on or off mid-race switches on the next frame through
 the presentation policy's safety generation.
 `immersive_window` (default off) is the third race view, between the two: the race keeps its
 immersive stereo view, head tracking and all, but is seen only through a window, with the room
@@ -218,7 +218,7 @@ window or Flat screen.
 0), on that flat screen whatever the race view, and turns the race immersive (or the immersive
 window) at the countdown, on the same frame the default camera takes over (see *Camera modes*
 below). Off, the intro is shown as the race view shows the race, as before. It is live, as
-**F10 → Camera → Race intro** (Immersive or Flat screen, greyed out when the race view is Flat screen,
+**F10 → VR → Race intro** (Immersive or Flat screen, greyed out when the race view is Flat screen,
 which keeps the intro on the screen anyway) and the Quest launcher's *Race intro*, mid-intro too.
 `passthrough` (Quest only, default on) shows the room through the headset's cameras around the
 menu screen and every other virtual screen, instead of black: an `XR_FB_passthrough`
@@ -438,6 +438,14 @@ window does: it queues SDL's quit event rather than exiting from the panel, whic
 fiber where the Quest cannot call into Java. Aim a controller at it: the cursor goes where you aim, a trigger (or A / X)
 selects and drags sliders, and a thumbstick scrolls. Whichever hand last pulled its trigger does the
 pointing. Changes apply exactly as they do from the F10 bar, and the two stay in step.
+
+**F10 → VR → Reset VR settings** (asking once more in place of the button) puts every setting of
+the VR and Camera tabs back to its default at once, live: `RuntimeConfigFile::ResetVrPreferences`
+removes the `[vr]` keys in `kVrPreferenceKeys` from Config.toml and the loaded config, so each
+reads the runtime's own default for the platform, as on a fresh install, and the panel applies them.
+`enabled`, `required`, `controller_mode`, `direct_presentation`, `multiview` and the launch-only
+keys stay. The Quest launcher and WheelWizard VR offer the same reset at the end of their VR tab and
+remove the same keys; their copies of the list must follow `kVrPreferenceKeys`.
 
 While the panel is open, and until every button has been released after it closes, the game sees
 the VR controllers idle: no buttons, no pointer and a remote at rest. Nothing reaches the game from

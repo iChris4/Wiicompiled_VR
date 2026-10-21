@@ -195,8 +195,10 @@ bool g_vrHandSteering = RuntimeConfigFile::VrHandSteering();
 constexpr std::array<const char*, 3> kVrCockpitItemHands{"Left", "Right", "Off"};
 bool g_vrCockpitItemThrow = RuntimeConfigFile::VrCockpitItemThrow();
 float g_vrCockpitItemSize = RuntimeConfigFile::VrCockpitItemSize();
-int g_vrCockpitItemHand = RuntimeConfigFile::VrCockpitItemHand() == "right" ? 1 :
-                          RuntimeConfigFile::VrCockpitItemHand() == "off" ? 2 : 0;
+int VrCockpitItemHandFromConfig() {
+    return RuntimeConfigFile::VrCockpitItemHand() == "right" ? 1 : RuntimeConfigFile::VrCockpitItemHand() == "off" ? 2 : 0;
+}
+int g_vrCockpitItemHand = VrCockpitItemHandFromConfig();
 mkw::vr::WheelTuning g_vrWheelTuning = RuntimeConfigFile::VrWheelTuning();
 float g_vrFirstPersonHeadUp = RuntimeConfigFile::VrFirstPersonHeadUpMeters();
 float g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMeters();
@@ -204,19 +206,21 @@ float g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters
 bool g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
 constexpr std::array<uint32_t, 5> kVrInterpolationFps{0, 1, 72, 90, 120};
 constexpr std::array<const char*, 5> kVrInterpolationLabels{"Off", "Auto", "72", "90", "120"};
-int g_vrFrameInterpolationMode = [] {
+int VrFrameInterpolationModeFromConfig() {
     const auto value = RuntimeConfigFile::VrFrameInterpolationFps();
     return static_cast<int>(std::find(kVrInterpolationFps.begin(), kVrInterpolationFps.end(), value) -
                             kVrInterpolationFps.begin());
-}();
+}
+int g_vrFrameInterpolationMode = VrFrameInterpolationModeFromConfig();
 // [vr] refresh_rate as the menu offers it; 0 is the headset's own rate.
 constexpr std::array<uint32_t, 5> kVrRefreshRates{0, 72, 80, 90, 120};
 constexpr std::array<const char*, 5> kVrRefreshRateLabels{"Headset default", "72 Hz", "80 Hz", "90 Hz", "120 Hz"};
-int g_vrRefreshRate = [] {
+int VrRefreshRateFromConfig() {
     const auto value = RuntimeConfigFile::VrRefreshRate();
     const auto it = std::find(kVrRefreshRates.begin(), kVrRefreshRates.end(), value);
     return it == kVrRefreshRates.end() ? 0 : static_cast<int>(it - kVrRefreshRates.begin());
-}();
+}
+int g_vrRefreshRate = VrRefreshRateFromConfig();
 int g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
 bool g_openxrDiagnosticsLogging = RuntimeConfigFile::DiagnosticsOpenXRLogging(false);
 bool g_firstPersonDiagnosticsLogging = RuntimeConfigFile::DiagnosticsFirstPersonLogging(false);
@@ -230,7 +234,7 @@ static_assert(static_cast<int>(AURORA_STEREO_MIRROR_BOTH_EYES) == 1);
 static_assert(static_cast<int>(AURORA_STEREO_MIRROR_LEFT_EYE) == 2);
 static_assert(static_cast<int>(AURORA_STEREO_MIRROR_RIGHT_EYE) == 3);
 static_assert(static_cast<int>(AURORA_STEREO_MIRROR_NONE) == 4);
-int g_vrMirrorView = [] {
+int VrMirrorViewFromConfig() {
     const std::string mode = RuntimeConfigFile::VrMirrorView();
     for (size_t i = 0; i < kVrMirrorViewNames.size(); ++i) {
         if (mode == kVrMirrorViewNames[i]) {
@@ -238,7 +242,8 @@ int g_vrMirrorView = [] {
         }
     }
     return 0;
-}();
+}
+int g_vrMirrorView = VrMirrorViewFromConfig();
 // Config spellings and menu labels for the VR controllers, index-matched to
 // mkw::vr::OpenXRControllerMode.
 constexpr std::array<const char*, 3> kVrControllerModeNames{"wii_remote", "gamepad", "none"};
@@ -267,12 +272,15 @@ int VrFirstPersonRotationIndex(std::string_view mode) {
 int g_vrFirstPersonRotation = VrFirstPersonRotationIndex(RuntimeConfigFile::VrFirstPersonRotation());
 // SDL_SCANCODE_UNKNOWN means unbound, which is also what an unrecognised
 // name in the config file resolves to rather than silently picking a key.
-SDL_Scancode g_vrRecenterScancode = [] {
+SDL_Scancode VrRecenterScancodeFromConfig() {
     const std::string name = RuntimeConfigFile::VrRecenterKey();
     return name.empty() ? SDL_SCANCODE_UNKNOWN
                         : SDL_GetScancodeFromName(name.c_str());
-}();
+}
+SDL_Scancode g_vrRecenterScancode = VrRecenterScancodeFromConfig();
 bool g_vrRecenterRebinding = false;
+// "Reset VR settings" was clicked and waits for its confirmation.
+bool g_vrResetArmed = false;
 float g_vrLeanBackDegrees = RuntimeConfigFile::VrLeanBackDegrees();
 // [vr] render_scale as the slider shows it, in percent of the headset's recommended size.
 int g_vrRenderScalePercent = static_cast<int>(std::lround(RuntimeConfigFile::VrRenderScale() * 100.0f));
@@ -1552,6 +1560,73 @@ void DrawGraphicsSettings() {
     ImGui::Text("Graphics API: %s", GraphicsApiDisplayName());
 }
 
+// "Reset VR settings": every setting of the VR and Camera tabs back to its default and applied at
+// once, as each row applies its own. The config forgets them (ResetVrPreferences), so the defaults
+// are the runtime's own for this platform, and the rows read them back from there. The Enable
+// OpenXR switch and the controllers keep theirs.
+void ResetVrSettings() {
+    RuntimeConfigFile::ResetVrPreferences();
+    g_vrHudVirtualScreen = RuntimeConfigFile::VrHudVirtualScreen(true);
+    g_vrRaceView = static_cast<int>(RuntimeConfigFile::GetVrRaceView());
+    g_vrFlatScreen = g_vrRaceView == static_cast<int>(RuntimeConfigFile::VrRaceView::FlatScreen);
+    g_vrRaceIntroView = RuntimeConfigFile::VrFlatRaceIntro() ? 1 : 0;
+#if defined(__ANDROID__)
+    g_vrPassthrough = RuntimeConfigFile::VrPassthrough();
+    g_vrHandTracking = RuntimeConfigFile::VrHandTracking();
+    g_vrFoveation = static_cast<int>(RuntimeConfigFile::VrFoveationLevelIndex(RuntimeConfigFile::VrFoveation()));
+#endif
+    g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson(false);
+    g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::VrBulletBillCamera());
+    g_vrBodyIk = RuntimeConfigFile::VrBodyIk();
+    g_vrBodyIkHandsOnly = RuntimeConfigFile::VrBodyIkHandsOnly();
+    g_vrBodyIkHandRoll = {RuntimeConfigFile::VrBodyIkHandRoll(0), RuntimeConfigFile::VrBodyIkHandRoll(1)};
+    g_vrFirstPersonToggleClick = RuntimeConfigFile::VrFirstPersonToggleClick();
+    g_vrFirstPersonUnitsPerMeter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter();
+    g_vrFirstPersonSeat = RuntimeConfigFile::VrFirstPersonSeat() == "custom" ? 1 : 0;
+    g_vrCockpitUnitsPerMeter = RuntimeConfigFile::VrCockpitUnitsPerMeter();
+    g_vrSteeringWheel = RuntimeConfigFile::VrSteeringWheel();
+    g_vrNativeSteeringWheel = RuntimeConfigFile::VrNativeSteeringWheel();
+    g_vrPlaceholderSteeringWheel = RuntimeConfigFile::VrPlaceholderSteeringWheel();
+    g_vrObjectCulling = RuntimeConfigFile::VrObjectCulling();
+    g_vrHandSteering = RuntimeConfigFile::VrHandSteering();
+    g_vrCockpitItemThrow = RuntimeConfigFile::VrCockpitItemThrow();
+    g_vrCockpitItemSize = RuntimeConfigFile::VrCockpitItemSize();
+    g_vrCockpitItemHand = VrCockpitItemHandFromConfig();
+    g_vrWheelTuning = RuntimeConfigFile::VrWheelTuning();
+    g_vrFirstPersonHeadUp = RuntimeConfigFile::VrFirstPersonHeadUpMeters();
+    g_vrFirstPersonHeadForward = RuntimeConfigFile::VrFirstPersonHeadForwardMeters();
+    g_vrFirstPersonHeadRight = RuntimeConfigFile::VrFirstPersonHeadRightMeters();
+    g_vrFirstPersonHideDriver = RuntimeConfigFile::VrFirstPersonHideDriver();
+    g_vrFrameInterpolationMode = VrFrameInterpolationModeFromConfig();
+    g_vrRefreshRate = VrRefreshRateFromConfig();
+    g_vrFirstPersonHiddenModel = RuntimeConfigFile::VrFirstPersonHiddenModel();
+    g_vrMirrorView = VrMirrorViewFromConfig();
+    g_vrFirstPersonRotation = VrFirstPersonRotationIndex(RuntimeConfigFile::VrFirstPersonRotation());
+    g_vrRecenterScancode = VrRecenterScancodeFromConfig();
+    g_vrRecenterRebinding = false;
+    g_vrLeanBackDegrees = RuntimeConfigFile::VrLeanBackDegrees();
+    g_vrRenderScalePercent = static_cast<int>(std::lround(RuntimeConfigFile::VrRenderScale() * 100.0f));
+
+    const auto view = static_cast<RuntimeConfigFile::VrRaceView>(g_vrRaceView);
+    mkw::vr::MkwVRPolicySetImmersiveRaces(!g_vrFlatScreen);
+    mkw::vr::OpenXRSetImmersiveWindow(view == RuntimeConfigFile::VrRaceView::ImmersiveWindow);
+    mkw::vr::MkwVRPolicySetRaceIntroOnScreen(g_vrRaceIntroView == 1);
+    mkw::vr::OpenXRSetRenderScale(RuntimeConfigFile::VrRenderScale());
+#if defined(__ANDROID__)
+    mkw::vr::OpenXRSetPassthrough(g_vrPassthrough);
+    aurora_set_stereo_foveation(static_cast<uint32_t>(g_vrFoveation));
+#endif
+    mkw::vr::OpenXRSetDisplayRefreshRate(kVrRefreshRates[static_cast<size_t>(g_vrRefreshRate)]);
+    mkw::vr::OpenXRSetFrameInterpolationFps(RuntimeConfigFile::VrFrameInterpolationFps());
+    aurora_set_stereo_mirror_view(static_cast<AuroraStereoMirrorView>(g_vrMirrorView));
+    mkw::vr::OpenXRSetLeanBackDegrees(g_vrLeanBackDegrees);
+    // The virtual screen's metres are converted at the first-person scale, so it follows.
+    mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    mkw::vr::MkwVRObjectCullingApplyConfiguredSettings();
+    ApplyVrHudVirtualScreen();
+    RT_LOG(RT_TAG_RUNTIME) << "[settings] VR and Camera settings reset to their defaults" << std::endl;
+}
+
 // The VR settings live in their own top-bar menu: they are a self-contained
 // group, and keeping them out of Graphics stops that menu from running off the
 // bottom of the screen.
@@ -1565,10 +1640,46 @@ void DrawVrSettings() {
         RuntimeConfigFile::SetVrEnabled(g_vrEnabled);
     }
     ImGui::TextDisabled("OpenXR mode changes take effect after restarting the game.");
-
     // Everything below is live, unlike the enable toggle, so it is left usable either way: set
-    // before a restart it is simply what the next session starts on. The race view, its intro and
-    // the lean-back angle are on the Camera tab.
+    // before a restart it is simply what the next session starts on. The lean-back angle is on
+    // the Camera tab.
+    if (ImGui::Combo("Race view", &g_vrRaceView, kVrRaceViewLabels.data(),
+                     static_cast<int>(kVrRaceViewLabels.size()))) {
+        const auto view = static_cast<RuntimeConfigFile::VrRaceView>(g_vrRaceView);
+        g_vrFlatScreen = view == RuntimeConfigFile::VrRaceView::FlatScreen;
+        RuntimeConfigFile::SetVrRaceView(view);
+        mkw::vr::MkwVRPolicySetImmersiveRaces(!g_vrFlatScreen);
+        mkw::vr::OpenXRSetImmersiveWindow(view == RuntimeConfigFile::VrRaceView::ImmersiveWindow);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+        mkw::vr::MkwVRObjectCullingApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Immersive plays races all around you in stereo. Immersive window keeps that "
+            "stereo view but shows it only through a window where the menu screen sits, with "
+            "your room around it on the Quest (black elsewhere); look through it from another "
+            "angle and the view shifts as through a real window. Flat screen plays races on "
+            "the menu screen through the game's own camera; the Camera settings do not apply to "
+            "it. Applies immediately.");
+    }
+    // Flat Screen mode keeps the whole race on the screen, its intro included.
+    ImGui::BeginDisabled(g_vrFlatScreen);
+    if (ImGui::Combo("Race intro", &g_vrRaceIntroView, kVrRaceIntroLabels.data(),
+                     static_cast<int>(kVrRaceIntroLabels.size()))) {
+        const bool flat = g_vrRaceIntroView == 1;
+        RuntimeConfigFile::SetVrFlatRaceIntro(flat);
+        mkw::vr::MkwVRPolicySetRaceIntroOnScreen(flat);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "How each race's intro, the course preview before the countdown, is shown. Flat screen "
+            "plays it on the menu screen, and the race turns immersive (or the immersive window) at "
+            "the countdown, as the cockpit camera takes over. Immersive shows it as the race view "
+            "above does. Flat screen as the race view keeps the intro on the screen either way. "
+            "Applies immediately, during an intro too.");
+    }
+
     ImGui::Separator();
     // Applied when the slider is let go rather than at every step of a drag, since each new size
     // means new eye swapchains.
@@ -1741,6 +1852,29 @@ void DrawVrSettings() {
             "Aim at it and pull a trigger to change a setting; push a thumbstick to scroll.\n"
             "While it is open the game does not see the VR controllers.");
     }
+
+    ImGui::Separator();
+    // Asks once more before anything changes: the button turns into the choice.
+    if (!g_vrResetArmed) {
+        if (ImGui::Button("Reset VR settings")) {
+            g_vrResetArmed = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Puts every setting on the VR and Camera tabs back to its default, at once. Enable "
+                "OpenXR VR and the controllers keep theirs.");
+        }
+    } else {
+        ImGui::TextUnformatted("Reset every VR and Camera setting to its default?");
+        if (ImGui::Button("Reset###VrResetConfirm")) {
+            ResetVrSettings();
+            g_vrResetArmed = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel###VrResetCancel")) {
+            g_vrResetArmed = false;
+        }
+    }
 }
 
 // For the log lines of a race camera change.
@@ -1748,45 +1882,14 @@ const char* CameraModeLogName(mkw::vr::CameraMode mode) {
     return mode == mkw::vr::CameraMode::FirstPerson ? "first person" : "game camera";
 }
 
-// The race view and its camera, down to the first-person cockpit's steering wheel: the F10 bar's
-// Camera menu and the headset panel's Camera tab.
+// The race camera, from the lean-back angle down to the first-person cockpit's steering wheel: the
+// F10 bar's Camera menu and the headset panel's Camera tab.
 void DrawVrCameraSettings() {
-    if (ImGui::Combo("Race view", &g_vrRaceView, kVrRaceViewLabels.data(),
-                     static_cast<int>(kVrRaceViewLabels.size()))) {
-        const auto view = static_cast<RuntimeConfigFile::VrRaceView>(g_vrRaceView);
-        g_vrFlatScreen = view == RuntimeConfigFile::VrRaceView::FlatScreen;
-        RuntimeConfigFile::SetVrRaceView(view);
-        mkw::vr::MkwVRPolicySetImmersiveRaces(!g_vrFlatScreen);
-        mkw::vr::OpenXRSetImmersiveWindow(view == RuntimeConfigFile::VrRaceView::ImmersiveWindow);
-        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
-        mkw::vr::MkwVRObjectCullingApplyConfiguredSettings();
+    // All of it shapes the immersive race view, which Flat Screen mode (VR > Race view) replaces.
+    if (g_vrFlatScreen) {
+        ImGui::TextDisabled("Race view (under VR) is Flat screen: these apply to the immersive views.");
     }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Immersive plays races all around you in stereo. Immersive window keeps that "
-            "stereo view but shows it only through a window where the menu screen sits, with "
-            "your room around it on the Quest (black elsewhere); look through it from another "
-            "angle and the view shifts as through a real window. Flat screen plays races on "
-            "the menu screen through the game's own camera; the rest of these settings do not "
-            "apply to it. Applies immediately.");
-    }
-    // Flat Screen mode keeps the whole race on the screen, its intro included, and has no race
-    // camera to tilt.
     ImGui::BeginDisabled(g_vrFlatScreen);
-    if (ImGui::Combo("Race intro", &g_vrRaceIntroView, kVrRaceIntroLabels.data(),
-                     static_cast<int>(kVrRaceIntroLabels.size()))) {
-        const bool flat = g_vrRaceIntroView == 1;
-        RuntimeConfigFile::SetVrFlatRaceIntro(flat);
-        mkw::vr::MkwVRPolicySetRaceIntroOnScreen(flat);
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip(
-            "How each race's intro, the course preview before the countdown, is shown. Flat screen "
-            "plays it on the menu screen, and the race turns immersive (or the immersive window) at "
-            "the countdown, as the cockpit camera takes over. Immersive shows it as the race view "
-            "above does. Flat screen as the race view keeps the intro on the screen either way. "
-            "Applies immediately, during an intro too.");
-    }
     if (ImGui::SliderFloat("Lean back angle (deg)", &g_vrLeanBackDegrees,
                            -RuntimeConfigFile::kVrLeanBackDegreesLimit,
                            RuntimeConfigFile::kVrLeanBackDegreesLimit, "%.1f")) {
@@ -1801,14 +1904,7 @@ void DrawVrCameraSettings() {
             "deliberately does pitch the view, and looking sideways while it is set will "
             "roll the horizon the way a real recline would.");
     }
-    ImGui::EndDisabled();
-
     ImGui::Separator();
-    // The rest shapes the immersive race view too, which the Flat screen race view replaces.
-    if (g_vrFlatScreen) {
-        ImGui::TextDisabled("Race view is Flat screen: these apply to the immersive views.");
-    }
-    ImGui::BeginDisabled(g_vrFlatScreen);
     int defaultCamera = g_vrFirstPerson ? 1 : 0;
     if (ImGui::Combo("Default camera", &defaultCamera, kVrCameraModeLabels.data(),
                      static_cast<int>(kVrCameraModeLabels.size()))) {

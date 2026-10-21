@@ -126,6 +126,31 @@ class TomlConfigTest {
     }
 
     @Test
+    fun removesAKeyWithTheCommentsAboveItAndOnlyInItsSection() {
+        val config = TomlConfig.parse(
+            """
+            [video]
+            render_scale = 2.0
+
+            [vr]
+            enabled = true
+            # Live.
+            # Two lines.
+            render_scale = 1.0 # trailing
+            passthrough = false
+            """.trimIndent() + "\n",
+        )
+        config.remove("vr", "render_scale")
+        config.remove("vr", "absent")
+        config.remove("audio", "volume")
+        assertEquals(
+            "[video]\nrender_scale = 2.0\n\n[vr]\nenabled = true\npassthrough = false\n",
+            config.text(),
+        )
+        assertNull(config.number("vr", "render_scale"))
+    }
+
+    @Test
     fun formatsFloatsSoTomlReadsAFloat() {
         assertEquals("1.0", TomlConfig.formatFloat(1.0))
         assertEquals("0.05", TomlConfig.formatFloat(0.05))
