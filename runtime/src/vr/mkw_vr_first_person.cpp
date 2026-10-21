@@ -488,7 +488,6 @@ struct FirstPersonState {
 std::mutex g_mutex;
 FirstPersonState g_state;
 ModelVisibilityState g_visibility;
-std::atomic_bool g_recenter_requested{false};
 // Character body (character_body_ik.inl): bit 0/1 the left/right hand is the
 // character's own this frame, bit 2 the body is drawn. Read by the pacing
 // thread without the lock.
@@ -752,9 +751,14 @@ bool ReadEyeBounds(uint32_t driver, detail::Vec3& minimum, detail::Vec3& maximum
 
 // The seated eye in the vehicle's own frame, in its units. Measured once from
 // the driver's head bone while the kart drives straight and undamaged, then
-// frozen until the driver/race changes or a recenter; the bind pose serves
-// until the first calibration completes. `observe` false only reads: the
-// character body asks for the frame's seat before the seal, which samples it.
+// frozen until the driver/race changes; the bind pose serves until the first
+// calibration completes. `observe` false only reads: the character body asks
+// for the frame's seat before the seal, which samples it.
+//
+// The head is taken out of the body matrix latched at the race draw, the one
+// the bones were posed from. By the seal the game has stepped the kart again
+// but not the bones, so the live matrix would put a head measured at speed a
+// whole step (60 to 120 units) behind the seat.
 bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye, bool observe = true) noexcept {
     const auto SampleEye = [observe](const std::array<float, 3>& measured, bool safe) {
         if (observe) {
@@ -768,7 +772,7 @@ bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye, bool obs
         g_state.cockpit_forward.reset();
         g_state.cockpit_height.reset();
     }
-    if (driver != 0 && g_state.seated_eye.valid && !g_state.seated_eye.recalibrating) {
+    if (driver != 0 && g_state.seated_eye.valid) {
         eye = g_state.seated_eye.value;
         return true;
     }
@@ -805,13 +809,14 @@ bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye, bool obs
             detail::Vec3 minimum{}, maximum{};
             const bool bounds_found = ReadEyeBounds(driver, minimum, maximum);
             uint32_t model = 0, ex = 0, scn = 0, palette = 0, mtx_id = 0;
-            Mtx34 face_world{}, body_world{};
-            if (ReadGuestPointer(driver + kDriverModelOffset, model) &&
+            Mtx34 face_world{};
+            const Mtx34& body_world = g_state.cockpit.body_pose;
+            if (g_state.cockpit.valid && g_state.cockpit.body == kart.body &&
+                ReadGuestPointer(driver + kDriverModelOffset, model) &&
                 ReadGuestPointer(model + kModelDirectorScnMdlExOffset, ex) && ReadGuestPointer(ex, scn) &&
                 ReadGuestPointer(scn + kScnMdlWorldMtxArrayOffset, palette) &&
                 Memory::TryRead32(node + kResNodeMtxIdOffset, mtx_id) && mtx_id < 128 &&
-                ReadGuestMtx34(palette + mtx_id * 48u, face_world) &&
-                ReadGuestMtx34(kart.body + kKartBodyMtxOffset, body_world)) {
+                ReadGuestMtx34(palette + mtx_id * 48u, face_world)) {
                 uint32_t damage = 0, damage_type = 0;
                 const DrivingSnapshot driving = OpenXRReadDriving();
                 // Only a neutral pose may define the seat: straight ahead, at
@@ -828,9 +833,9 @@ bool ReadDriverEye(const KartPoseRead& kart, std::array<float, 3>& eye, bool obs
                                  : ComputeDriverEyeFromHead(face_world, body_world, measured);
                 if (measured_eye) {
                     observed = true;
-                    const bool calibrating = !g_state.seated_eye.valid || g_state.seated_eye.recalibrating;
+                    const bool calibrating = !g_state.seated_eye.valid;
                     SampleEye(measured, safe);
-                    if (calibrating && g_state.seated_eye.valid && !g_state.seated_eye.recalibrating) {
+                    if (calibrating && g_state.seated_eye.valid) {
                         g_state.cockpit_forward.reset();
                         g_state.cockpit_height.reset();
                         RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] cockpit: seated eye calibrated from "
@@ -1564,10 +1569,6 @@ void MkwVRFirstPersonReset() noexcept {
     g_state.native_wheel_switch_logs = 0;
 }
 
-void MkwVRFirstPersonRecenter() noexcept {
-    g_recenter_requested.store(true, std::memory_order_release);
-}
-
 bool MkwVRReadSceneView(Mtx34& view) noexcept {
     return ReadSceneViewMatrix(view);
 }
@@ -1590,11 +1591,6 @@ void MkwVRFirstPersonUpdate(uint64_t guest_frame_index, uint32_t race_camera_add
     g_state.held_item = {};
     g_state.held_item.race_generation = g_state.race_generation;
     DropHiddenModelsLocked();
-    if (g_recenter_requested.exchange(false, std::memory_order_acq_rel)) {
-        // The character body's seated skeleton is kart-local and its wrists
-        // controller-relative, so a recenter leaves both as they are.
-        g_state.seated_eye.Recalibrate();
-    }
     g_state.camera_address = race_camera_address;
 
     // The race's intro shows the game's own camera; the configured default

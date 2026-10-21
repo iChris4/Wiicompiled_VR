@@ -339,19 +339,15 @@ inline bool ComputeDriverEyeFromHead(const Mtx34& headWorld, const Mtx34& bodyWo
 
 // The neutral seated eye, accepted once eight consecutive safe samples agree
 // within two units of the first sample, then frozen until the driver or the
-// race changes, or a recenter asks for another calibration. Keep the previous
-// seat while waiting for a safe replacement.
+// race changes. A recenter keeps it: the character body's seated skeleton is
+// taken once from the same starting pose, and a head measured later, in a
+// driving pose, would put the view beside the drawn head.
 struct SeatedEyeReference {
     std::array<float, 3> value{}, candidate{};
     unsigned stable = 0;
     bool valid = false;
-    bool recalibrating = false;
-    void Recalibrate() noexcept {
-        stable = 0;
-        recalibrating = true;
-    }
     void Observe(const std::array<float, 3>& sample, bool safe, bool freeze) {
-        if (freeze && valid && !recalibrating) {
+        if (freeze && valid) {
             return;
         }
         if (!safe || !ValidSeatedEye(sample)) {
@@ -371,7 +367,6 @@ struct SeatedEyeReference {
         if (stable >= 8) {
             value = sample;
             valid = true;
-            recalibrating = false;
             stable = 8;
         }
     }
@@ -598,10 +593,6 @@ void MkwVRFirstPersonCommit() noexcept;
 
 // Drops every captured pointer and the held anchor. Call on race entry/exit.
 void MkwVRFirstPersonReset() noexcept;
-
-// Thread-safe request; the guest thread remeasures the cockpit on subsequent
-// neutral frames. Keeps the current seat until a replacement is ready.
-void MkwVRFirstPersonRecenter() noexcept;
 
 // Producer-side read. Thread-safe. A valid anchor is also what marks the mode
 // as engaged, and so what selects the first-person world scale: it is invalid

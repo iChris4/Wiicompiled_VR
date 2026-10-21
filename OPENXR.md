@@ -515,10 +515,15 @@ the camera to the local driver's head instead, at one of two seats:
   strike or a mega mushroom resizes the view, the wheel and the grab reach together. The seat
   follows the simulation's position and driving direction, never the animated chassis, so damage
   spins and tricks do not throw it around.
-  **Recenter view** (including its key binding) and headset reference-space recentering request a
-  fresh cockpit calibration as well as resetting the headset position. The previous seat stays
-  in place until a new stable, neutral measurement is ready; then height and wheel clearance are
-  recalculated together. Recenter while driving straight at normal size to replace a bad initial seat.
+  The head is measured against the vehicle matrix read at the race draw, the one its bones were
+  posed from: by the frame's display copy the game has already stepped the kart again, so the
+  live matrix would place a head measured at speed a whole step (60 to 120 units) behind the seat.
+  **Recenter view** (including its key binding) and headset reference-space recentering only
+  reset the headset position, which puts your head back at the measured eye. They keep the seat:
+  the character body's seated skeleton is taken once from the same starting pose, and a head
+  measured mid-race, in a driving pose, would put the view beside the drawn head (13 units off in
+  height for one character measured, and leaning into turns). Until 2026-10-21 a recenter measured the
+  seat again, and a recenter at speed moved the view up to 90 units behind the character's head.
 - `first_person_seat = "custom"` places the head at `first_person_head_up_meters` and its two
   companions in the kart's own frame, at `first_person_units_per_meter`.
 
@@ -570,7 +575,9 @@ animated frame would bob and lurch the camera.
 
 The kart is read at the race draw boundary (`ScnMgrRace::Draw`, or the character body's
 `ScnRoot::CalcView` wrapper just before it), and the transform is finished at the frame's
-`GXCopyDisp`, once the scene camera the draws used is set. When the game falls behind it catches up
+`GXCopyDisp`, once the scene camera the draws used is set. By then the game has stepped the kart's
+simulation and body matrix again, but not the models' bones, so the cockpit's seat and its eye
+measurement come from what the draw boundary read. When the game falls behind it catches up
 by running a second simulation step before it draws: CalcView runs twice and the draws show the
 second step, so every CalcView reads the kart again (`SeatLatchClock`, covered by
 `mkw_vr_first_person_tests`). Keeping the first reading put the seat a whole kart step, up to a
@@ -933,7 +940,9 @@ character's hands are rigid models with no finger bones, so they follow the hand
 a character without a body (a Mii) keeps the tracked-hand mesh.
 
 The seated skeleton is latched once per driver and model, at the first frame the body is drawn
-(normally the end of the race intro, in the waiting pose). A recenter or a settings change keeps it;
+(normally the end of the race intro, in the waiting pose). A recenter or a settings change keeps it,
+as a recenter keeps the cockpit's seated eye, measured from the same pose, so the view stays at the
+character's head;
 a new race, a driver change or a new kart takes it again. The pose is solved once per seat latch
 (see when the seat is read in [The first-person camera](#the-first-person-camera)): further CalcView
 calls under the same latch only set the palette again, and a frame the game catches up on, which

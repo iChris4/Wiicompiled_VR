@@ -1554,7 +1554,6 @@ private:
     // this frame's head pose rather than the next one's.
     void ServiceRecenterRequest() noexcept {
         if (recenter_requested_.exchange(false, std::memory_order_acq_rel)) {
-            MkwVRFirstPersonRecenter();
             ResetTrackingOrigin();
         }
     }
@@ -1716,7 +1715,6 @@ private:
 
     void ApplyPendingReferenceSpaceChange(const OpenXRFrame& frame) noexcept {
         if (runtime_->ConsumeAppSpaceChangesThrough(frame.predicted_display_time)) {
-            MkwVRFirstPersonRecenter();
             ResetTrackingOrigin();
         }
     }

@@ -128,19 +128,10 @@ void TestDriverEye() {
     Check(reference.valid, "eight stable samples calibrate the seat");
     reference.Observe({0, 200, 15}, true, true);
     CheckNear(reference.value[1], 90.0f, "a calibrated seat is frozen");
-    reference.Recalibrate();
-    reference.Observe({0, 120, 15}, false, true);
-    Check(reference.valid && reference.recalibrating, "recenter holds the seat until a neutral pose is ready");
-    CheckNear(reference.value[1], 90.0f, "unsafe recenter keeps old height");
-    for (int i = 0; i < 7; ++i) {
-        reference.Observe({0, 75, 15}, true, true);
+    for (int i = 0; i < 8; ++i) {
+        reference.Observe({0, 75, -60}, true, true);
     }
-    CheckNear(reference.value[1], 90.0f, "partial recalibration keeps old height");
-    reference.Observe({0, 75, 15}, true, true);
-    Check(reference.valid && !reference.recalibrating, "recenter accepts fresh stable samples");
-    CheckNear(reference.value[1], 75.0f, "recenter replaces a bad initial height");
-    reference.Observe({0, 100, 15}, true, true);
-    CheckNear(reference.value[1], 75.0f, "replacement freezes again");
+    CheckNear(reference.value[2], 15.0f, "a stable later pose cannot move a calibrated seat");
     SeatedEyeReference drifting;
     for (int i = 0; i < 30; ++i) {
         drifting.Observe({0, 60.0f + float(i), 15}, true, true);
