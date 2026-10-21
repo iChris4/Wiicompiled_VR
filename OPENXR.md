@@ -206,8 +206,8 @@ immersive stereo: the whole race, 3D world and HUD alike, is the game's own pict
 in DolphinXR's Flat Screen mode. The first-person camera, hand steering, the lean-back angle, VR
 frame interpolation and `hud_virtual_screen` shape only the immersive race view, so none of them
 apply while it is on; the right-thumbstick camera switch is ignored. It is live, as
-**F10 → VR → Race view → Flat screen** (the headset panel's VR tab) and the Quest launcher's
-Settings page, and turning it on or off mid-race switches on the next frame through
+**F10 → Camera → Race view → Flat screen** (the headset panel's Camera tab) and the Quest
+launcher's Settings > Camera, and turning it on or off mid-race switches on the next frame through
 the presentation policy's safety generation.
 `immersive_window` (default off) is the third race view, between the two: the race keeps its
 immersive stereo view, head tracking and all, but is seen only through a window, with the room
@@ -218,7 +218,7 @@ window or Flat screen.
 0), on that flat screen whatever the race view, and turns the race immersive (or the immersive
 window) at the countdown, on the same frame the default camera takes over (see *Camera modes*
 below). Off, the intro is shown as the race view shows the race, as before. It is live, as
-**F10 → VR → Race intro** (Immersive or Flat screen, greyed out when the race view is Flat screen,
+**F10 → Camera → Race intro** (Immersive or Flat screen, greyed out when the race view is Flat screen,
 which keeps the intro on the screen anyway) and the Quest launcher's *Race intro*, mid-intro too.
 `passthrough` (Quest only, default on) shows the room through the headset's cameras around the
 menu screen and every other virtual screen, instead of black: an `XR_FB_passthrough`
@@ -777,7 +777,7 @@ full-lock angle as the stick (`wheel_kart_degrees`, `wheel_bike_degrees`), and h
 aside while it drives.
 
 **Tracked hands.** `hand_tracking` (Quest only for now, default off; the Quest launcher's
-Settings > VR and the headset panel's Camera tab, under hand steering, which it needs) poses the
+Settings > Camera and the headset panel's Camera tab, under hand steering, which it needs) poses the
 cockpit hands from the headset's hand tracking instead of curling them with the grip. Two hand
 trackers (`XR_EXT_hand_tracking`) are located every XR frame at the display time. While the
 controllers are held the Quest builds the joints from their touch sensors

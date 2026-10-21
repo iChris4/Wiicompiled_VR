@@ -225,6 +225,14 @@ class SettingsPage(
                 write = { c, index -> c.setBool("vr", "flat_race_intro", index == 1) },
                 enabledIf = immersive,
             )
+            // Ordered as on the in-headset panel's Camera tab: the race view's own rows first.
+            slider(
+                R.string.vr_lean_back, R.string.vr_lean_back_helper, -45.0, 45.0, 1.0,
+                read = { number(it, "vr", "lean_back_degrees", -45.0, 45.0, 0.0) },
+                format = { "%.0f°".format(it) },
+                write = { c, value -> c.setFloat("vr", "lean_back_degrees", value) },
+                enabledIf = immersive,
+            )
             // The default camera: each race shows the game's camera through its intro, then this one.
             choice(
                 R.string.vr_camera, R.string.vr_camera_helper,
@@ -364,13 +372,6 @@ class SettingsPage(
                 write = { c, value -> c.setBool("vr", "hand_tracking", value) },
                 enabledIf = { c -> cockpit(c) && ((c.bool("vr", "hand_steering") ?: true) ||
                     stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS) != 2) },
-            )
-            slider(
-                R.string.vr_lean_back, R.string.vr_lean_back_helper, -45.0, 45.0, 1.0,
-                read = { number(it, "vr", "lean_back_degrees", -45.0, 45.0, 0.0) },
-                format = { "%.0f°".format(it) },
-                write = { c, value -> c.setFloat("vr", "lean_back_degrees", value) },
-                enabledIf = immersive,
             )
         }
     }

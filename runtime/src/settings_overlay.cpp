@@ -1565,45 +1565,10 @@ void DrawVrSettings() {
         RuntimeConfigFile::SetVrEnabled(g_vrEnabled);
     }
     ImGui::TextDisabled("OpenXR mode changes take effect after restarting the game.");
-    // Everything below is live, unlike the enable toggle, so it is left usable either way: set
-    // before a restart it is simply what the next session starts on.
-    if (ImGui::Combo("Race view", &g_vrRaceView, kVrRaceViewLabels.data(),
-                     static_cast<int>(kVrRaceViewLabels.size()))) {
-        const auto view = static_cast<RuntimeConfigFile::VrRaceView>(g_vrRaceView);
-        g_vrFlatScreen = view == RuntimeConfigFile::VrRaceView::FlatScreen;
-        RuntimeConfigFile::SetVrRaceView(view);
-        mkw::vr::MkwVRPolicySetImmersiveRaces(!g_vrFlatScreen);
-        mkw::vr::OpenXRSetImmersiveWindow(view == RuntimeConfigFile::VrRaceView::ImmersiveWindow);
-        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
-        mkw::vr::MkwVRObjectCullingApplyConfiguredSettings();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Immersive plays races all around you in stereo. Immersive window keeps that "
-            "stereo view but shows it only through a window where the menu screen sits, with "
-            "your room around it on the Quest (black elsewhere); look through it from another "
-            "angle and the view shifts as through a real window. Flat screen plays races on "
-            "the menu screen through the game's own camera; the Camera settings and the lean-back "
-            "angle do not apply to it. Applies immediately.");
-    }
-    // Flat Screen mode keeps the whole race on the screen, its intro included.
-    ImGui::BeginDisabled(g_vrFlatScreen);
-    if (ImGui::Combo("Race intro", &g_vrRaceIntroView, kVrRaceIntroLabels.data(),
-                     static_cast<int>(kVrRaceIntroLabels.size()))) {
-        const bool flat = g_vrRaceIntroView == 1;
-        RuntimeConfigFile::SetVrFlatRaceIntro(flat);
-        mkw::vr::MkwVRPolicySetRaceIntroOnScreen(flat);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip(
-            "How each race's intro, the course preview before the countdown, is shown. Flat screen "
-            "plays it on the menu screen, and the race turns immersive (or the immersive window) at "
-            "the countdown, as the cockpit camera takes over. Immersive shows it as the race view "
-            "above does. Flat screen as the race view keeps the intro on the screen either way. "
-            "Applies immediately, during an intro too.");
-    }
 
+    // Everything below is live, unlike the enable toggle, so it is left usable either way: set
+    // before a restart it is simply what the next session starts on. The race view, its intro and
+    // the lean-back angle are on the Camera tab.
     ImGui::Separator();
     // Applied when the slider is let go rather than at every step of a drag, since each new size
     // means new eye swapchains.
@@ -1745,22 +1710,6 @@ void DrawVrSettings() {
             ImGui::SetTooltip("Click to rebind. Esc cancels, Backspace unbinds.");
         }
     }
-    ImGui::BeginDisabled(g_vrFlatScreen);
-    if (ImGui::SliderFloat("Lean back angle (deg)", &g_vrLeanBackDegrees,
-                           -RuntimeConfigFile::kVrLeanBackDegreesLimit,
-                           RuntimeConfigFile::kVrLeanBackDegreesLimit, "%.1f")) {
-        mkw::vr::OpenXRSetLeanBackDegrees(g_vrLeanBackDegrees);
-        RuntimeConfigFile::SetVrLeanBackDegrees(g_vrLeanBackDegrees);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip(
-            "Tilts the game camera back with you when you play reclined, so set it to "
-            "roughly how far back your seat is and the track comes back in front of you "
-            "instead of above. 0 applies no tilt. Unlike recentering, this deliberately "
-            "does pitch the view, and looking sideways while it is set will roll the "
-            "horizon the way a real recline would.");
-    }
 
     ImGui::Separator();
     ImGui::BeginDisabled(
@@ -1799,12 +1748,65 @@ const char* CameraModeLogName(mkw::vr::CameraMode mode) {
     return mode == mkw::vr::CameraMode::FirstPerson ? "first person" : "game camera";
 }
 
-// The first-person camera and its cockpit's steering wheel: the F10 bar's Camera menu and the
-// headset panel's Camera tab.
+// The race view and its camera, down to the first-person cockpit's steering wheel: the F10 bar's
+// Camera menu and the headset panel's Camera tab.
 void DrawVrCameraSettings() {
-    // All of it shapes the immersive race view, which Flat Screen mode (VR > Race view) replaces.
+    if (ImGui::Combo("Race view", &g_vrRaceView, kVrRaceViewLabels.data(),
+                     static_cast<int>(kVrRaceViewLabels.size()))) {
+        const auto view = static_cast<RuntimeConfigFile::VrRaceView>(g_vrRaceView);
+        g_vrFlatScreen = view == RuntimeConfigFile::VrRaceView::FlatScreen;
+        RuntimeConfigFile::SetVrRaceView(view);
+        mkw::vr::MkwVRPolicySetImmersiveRaces(!g_vrFlatScreen);
+        mkw::vr::OpenXRSetImmersiveWindow(view == RuntimeConfigFile::VrRaceView::ImmersiveWindow);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+        mkw::vr::MkwVRObjectCullingApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Immersive plays races all around you in stereo. Immersive window keeps that "
+            "stereo view but shows it only through a window where the menu screen sits, with "
+            "your room around it on the Quest (black elsewhere); look through it from another "
+            "angle and the view shifts as through a real window. Flat screen plays races on "
+            "the menu screen through the game's own camera; the rest of these settings do not "
+            "apply to it. Applies immediately.");
+    }
+    // Flat Screen mode keeps the whole race on the screen, its intro included, and has no race
+    // camera to tilt.
+    ImGui::BeginDisabled(g_vrFlatScreen);
+    if (ImGui::Combo("Race intro", &g_vrRaceIntroView, kVrRaceIntroLabels.data(),
+                     static_cast<int>(kVrRaceIntroLabels.size()))) {
+        const bool flat = g_vrRaceIntroView == 1;
+        RuntimeConfigFile::SetVrFlatRaceIntro(flat);
+        mkw::vr::MkwVRPolicySetRaceIntroOnScreen(flat);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "How each race's intro, the course preview before the countdown, is shown. Flat screen "
+            "plays it on the menu screen, and the race turns immersive (or the immersive window) at "
+            "the countdown, as the cockpit camera takes over. Immersive shows it as the race view "
+            "above does. Flat screen as the race view keeps the intro on the screen either way. "
+            "Applies immediately, during an intro too.");
+    }
+    if (ImGui::SliderFloat("Lean back angle (deg)", &g_vrLeanBackDegrees,
+                           -RuntimeConfigFile::kVrLeanBackDegreesLimit,
+                           RuntimeConfigFile::kVrLeanBackDegreesLimit, "%.1f")) {
+        mkw::vr::OpenXRSetLeanBackDegrees(g_vrLeanBackDegrees);
+        RuntimeConfigFile::SetVrLeanBackDegrees(g_vrLeanBackDegrees);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "Tilts the game camera back with you when you play reclined, so set it to "
+            "roughly how far back your seat is and the track comes back in front of you "
+            "instead of above. 0 applies no tilt. Unlike recentering (under VR), this "
+            "deliberately does pitch the view, and looking sideways while it is set will "
+            "roll the horizon the way a real recline would.");
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+    // The rest shapes the immersive race view too, which the Flat screen race view replaces.
     if (g_vrFlatScreen) {
-        ImGui::TextDisabled("Race view (under VR) is Flat screen: these apply to the immersive views.");
+        ImGui::TextDisabled("Race view is Flat screen: these apply to the immersive views.");
     }
     ImGui::BeginDisabled(g_vrFlatScreen);
     int defaultCamera = g_vrFirstPerson ? 1 : 0;

@@ -720,7 +720,7 @@ inline void EnsureConfigFile() {
               "# Fixed pitch of the game camera, in degrees, for a player sitting\n"
               "# reclined. Positive tilts the camera back with you, so 20 here cancels\n"
               "# reclining about 20 degrees and puts the track back in front of you.\n"
-              "# 0 disables it. Changeable live from the F10 menu under VR.\n"
+              "# 0 disables it. Changeable live from the F10 menu under Camera.\n"
               "lean_back_degrees = 0.0\n\n"
               "[audio]\n"
               "volume = 1.0\n"
