@@ -2028,17 +2028,21 @@ void DrawVrCameraSettings() {
     ImGui::EndDisabled();
     DrawVrSteeringWheelSettings();
     ImGui::Separator();
-    ImGui::Text("Object culling");
-    if (ImGui::Checkbox("Hide what the game camera cannot see", &g_vrObjectCulling)) {
+    constexpr std::array<const char*, 2> kObjectCullingLabels{"Enabled", "Disabled"};
+    int objectCulling = g_vrObjectCulling ? 0 : 1;
+    if (ImGui::Combo("Object culling", &objectCulling, kObjectCullingLabels.data(),
+                     static_cast<int>(kObjectCullingLabels.size()))) {
+        g_vrObjectCulling = objectCulling == 0;
         RuntimeConfigFile::SetVrObjectCulling(g_vrObjectCulling);
         mkw::vr::MkwVRObjectCullingApplyConfiguredSettings();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "The game's own culling: karts, characters and course objects outside its chase "
-            "camera's view are not drawn, so a head turn or a look over the shoulder finds them "
-            "missing. Off draws them anyway, at some GPU cost, and is the PC's default. The draw "
-            "distance is unchanged, and the Flat screen race view always keeps the game's culling.");
+            "Enabled keeps the game's own culling: karts, characters and course objects outside "
+            "its chase camera's view are not drawn, so a head turn or a look over the shoulder "
+            "finds them missing. Disabled draws them anyway, at some GPU cost, and is the PC's "
+            "default. The draw distance is unchanged, and the Flat screen race view always keeps "
+            "the game's culling. Applies immediately.");
     }
     ImGui::Separator();
     if (ImGui::Button("Reset first-person defaults")) {

@@ -643,8 +643,8 @@ Mario Kart hides what its own chase camera cannot see, and that camera does not 
 headset is looking. Turn your head far enough in an immersive race, or look over your shoulder
 in first person, and karts, characters and course objects are simply missing until the game
 camera catches up; the race intro's pan shows it too, since the other racers are culled from the
-intro camera's narrow view. `object_culling = false` (F10 > Camera > Object culling, also on the
-headset settings panel's Camera tab) draws them anyway, and takes effect immediately. That is
+intro camera's narrow view. `object_culling = false` (F10 > Camera > Object culling: Disabled, also
+on the headset settings panel's Camera tab) draws them anyway, and takes effect immediately. That is
 the PC's default. The Quest defaults to `true`, the game's own culling, because every model
 drawn costs its GPU twice, once per eye.
 
