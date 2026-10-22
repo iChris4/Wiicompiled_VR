@@ -19,7 +19,7 @@ int main() {
         Require(Parse("[vr]\ncockpit_item_hand = \"" + std::string(hand) + "\"\n")
                     .vrCockpitItemHand == std::string(hand));
     }
-    Require(std::string_view(RuntimeConfigFile::kVrCockpitItemHandDefault) == "left");
+    Require(std::string_view(RuntimeConfigFile::kVrCockpitItemHandDefault) == "right");
     Require(!Parse("[vr]\n").vrCockpitItemHand.has_value());
     Require(!Parse("[vr]\ncockpit_item_hand = 1\n").vrCockpitItemHand.has_value());
     Require(RuntimeConfigFile::kVrCockpitItemThrowDefault);
@@ -121,7 +121,7 @@ int main() {
     Require(!Parse("[vr]\n").vrBodyIkHandsOnly.value_or(RuntimeConfigFile::kVrBodyIkHandsOnlyDefault));
 
     // [vr] bullet_bill_camera: ride inside the bullet, or show the game's camera.
-    Require(std::string_view(RuntimeConfigFile::kVrBulletBillCameraDefault) == "inside");
+    Require(std::string_view(RuntimeConfigFile::kVrBulletBillCameraDefault) == "game");
     for (std::string_view camera : {"inside", "game"}) {
         Require(Parse("[vr]\nbullet_bill_camera = \"" + std::string(camera) + "\"\n").vrBulletBillCamera ==
                 std::string(camera));
@@ -131,6 +131,6 @@ int main() {
     Require(!Parse("[vr]\nbullet_bill_camera = \"Game\"\n").vrBulletBillCamera.has_value());
     Require(!Parse("[vr]\nbullet_bill_camera = 1\n").vrBulletBillCamera.has_value());
     Require(Parse("[vr]\nbullet_bill_camera = \"chase\"\n")
-                .vrBulletBillCamera.value_or(RuntimeConfigFile::kVrBulletBillCameraDefault) == "inside");
+                .vrBulletBillCamera.value_or(RuntimeConfigFile::kVrBulletBillCameraDefault) == "game");
     return 0;
 }

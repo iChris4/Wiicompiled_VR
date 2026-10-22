@@ -44,14 +44,14 @@ refresh_rate = 0
 render_scale = 1.0
 world_units_per_meter = 500.0
 hud_distance_meters = 2.0
-hud_width_meters = 2.4
+hud_width_meters = 2.5
 hud_virtual_screen = true
 flat_screen = false
 immersive_window = false
 flat_race_intro = true
-first_person = false
+first_person = true
 first_person_toggle_click = true
-bullet_bill_camera = "inside"
+bullet_bill_camera = "game"
 first_person_seat = "cockpit"
 cockpit_units_per_meter = 100.0
 first_person_units_per_meter = 50.0
@@ -70,17 +70,18 @@ native_steering_wheel = true
 placeholder_steering_wheel = false
 object_culling = false
 hand_steering = true
-cockpit_item_hand = "left"
+cockpit_item_hand = "right"
 cockpit_item_throw = true
-cockpit_item_size = 0.28
+cockpit_item_size = 0.2
 performance_level = "boost"
 ```
 
-Those are the desktop's defaults. The Quest's are the settings tuned on a Quest 3 (2026-10-22), which
-differ in `mirror_view = "none"`, `refresh_rate = 72`, `hud_width_meters = 2.5`, `first_person = true`,
-`bullet_bill_camera = "game"`, `cockpit_item_hand = "right"`, `cockpit_item_size = 0.2`, `wheel_kart_degrees = 45`,
-`hand_tracking = true`, `object_culling = true` and `foveation = "off"`; the Quest launcher writes
-only `render_scale` into its first Config.toml, and every other absent key reads as that default.
+Those are the desktop's defaults. The camera, Bullet Bill, held item and HUD width defaults, with
+`wheel_kart_degrees = 45`, are the settings tuned on a Quest 3 (2026-10-22), which the desktop
+shares since that evening. The Quest's own defaults differ where its hardware does:
+`mirror_view = "none"`, `refresh_rate = 72`, `hand_tracking = true`, `object_culling = true` and
+`foveation = "off"`; the Quest launcher writes only `render_scale` into its first Config.toml, and
+every other absent key reads as that default.
 The Quest 1 and 2 (`ro.product.device` `monterey` and `hollywood`) start lighter: `render_scale = 0.8`
 and `frame_interpolation_fps = 0`.
 *Reset VR settings* (see [Settings in the headset](#settings-in-the-headset)) returns to these.
@@ -352,12 +353,12 @@ see [Steering wheel and hand
 steering](#steering-wheel-and-hand-steering). Turning the wheel moves the controllers, and the game's
 own motion detection still reads them, so a sharp enough turn can read as a shake.
 
-**Held item.** `cockpit_item_hand` accepts `"left"` (the desktop's default), `"right"` (the
-Quest's), or `"off"` and is also
+**Held item.** `cockpit_item_hand` accepts `"left"`, `"right"` (the default), or `"off"` and is
+also
 available in F10 > VR. In cockpit view, the selected tracked hand holds one item model from the
 game's `Race/Common.szs` after the roulette settles. The item stands upright just above the palm
-with its front toward the player, `cockpit_item_size` metres across its largest side (0.28 by
-default, 0.2 on the Quest, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
+with its front toward the player, `cockpit_item_size` metres across its largest side (0.2 by
+default, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
 hand never tips it over. A triple (mushrooms, green or red shells, bananas) shows what is left of it
 as copies of the single item at half the item size, drawn as instances of one model: three in a
 triangle, two at the back and a little higher with the third in front of them, then two side by
@@ -552,8 +553,8 @@ Both are a matter of taste rather than properties of the game, so the F10 bar ex
 two cameras, the game's or first person. Each race shows the game's own camera through its intro
 (the course preview, `RaceManager`'s stage 0), so the flyover plays as the game made it (on the
 flat screen under `flat_race_intro`), then
-starts on the default camera once the countdown begins: `first_person`, where `true` is first
-person (**F10 → Camera → Default camera**, also the Quest launcher's *Default camera*). During the
+starts on the default camera once the countdown begins: `first_person`, where `true`, the default,
+is first person (**F10 → Camera → Default camera**, also the Quest launcher's *Default camera*). During the
 race the camera can be switched for that race only, with the right thumbstick click below or
 **F10 → Camera → This race** (shown during a race, greyed out until the intro is over). That choice
 is kept in memory, never saved, and the next race starts on the default again; outside races and
@@ -561,8 +562,8 @@ during the intro a switch is refused, so it cannot leak into the next race. Each
 `[mkw-vr] this race's camera: first person` (or `game camera`). `mkw_vr_camera_mode_tests` covers
 these rules.
 
-`bullet_bill_camera` decides what first person shows while you are a Bullet Bill: `"inside"`, the
-desktop's default, rides inside the bullet as described below, and `"game"`, the Quest's, shows the game's own camera until
+`bullet_bill_camera` decides what first person shows while you are a Bullet Bill: `"inside"` rides
+inside the bullet as described below, and `"game"`, the default, shows the game's own camera until
 the Bullet Bill ends, then first person again (**F10 → Camera → Bullet Bill**: *Ride inside* or
 *Game camera*; also in the Quest launcher). That override leaves the race's own choice alone, and F10
 notes it under *This race*; a click during it switches that choice, which shows once the Bullet Bill
@@ -775,7 +776,7 @@ it. One hand steers by its angle around the hub; two hands steer by the line bet
 or moving both arms together does not steer, and a hand joining, leaving or crossing the hub keeps
 the steering where it was. Turning past full lock is kept, so retracing the gesture returns to the
 same centre, while the game's steering saturates at full lock. How far the hands turn for full lock
-is the hand steering sensitivity: `wheel_kart_degrees` (default 90, 45 on the Quest) and `wheel_bike_degrees`
+is the hand steering sensitivity: `wheel_kart_degrees` (default 45) and `wheel_bike_degrees`
 (default 45), 20 to 180, offered as **Hand steering sensitivity (kart)** and **(bike)** right under
 Hand steering in F10 > VR, the headset panel, and the Quest launcher's Settings > VR; a lower angle
 is more sensitive. The stick's steering does not change;
@@ -1257,7 +1258,7 @@ the nose. Its rings are angles from that direction (`aurora-main/lib/gfx/foveati
 | `high` | within 18° | 18° to 34° | beyond 34° |
 
 The HUD is drawn in the same render pass as the world and is foveated with it. `low` and `medium`
-keep the HUD screen (2.4 m wide at 2 m, 2.5 m by default on the Quest) at half rate or better while you look straight
+keep the HUD screen (2.5 m wide at 2 m by default) at half rate or better while you look straight
 ahead; `high` coarsens its corners. Menus and every other virtual screen, the settings panel, and
 anything drawn outside an immersive race are never foveated.
 

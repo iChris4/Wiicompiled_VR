@@ -253,16 +253,13 @@ inline constexpr bool kVrFirstPersonHideDriverDefault = true;
 inline constexpr int32_t kVrFirstPersonHiddenModelDefault = 0;
 inline constexpr float kVrFirstPersonHeadOffsetLimit = 10.0f;
 // The camera each race starts on once its intro is over: first person in the
-// cockpit on the Quest, the game's chase camera elsewhere. Where the Quest's
-// defaults differ in this file, they are the settings its tester tuned on a
-// Quest 3 (2026-10-22). The macros are the same defaults for the template below.
-#if defined(__ANDROID__)
+// cockpit. This and the held item's hand and size, the Bullet Bill camera, the
+// kart's hand-steering angle and the HUD width are the settings tuned on a
+// Quest 3 (2026-10-22), on the desktop too; the Quest's other differences in
+// this file suit its hardware. The macros are the same defaults for the
+// template below.
 inline constexpr bool kVrFirstPersonDefault = true;
 #define MKW_VR_FIRST_PERSON_DEFAULT_TOML "true"
-#else
-inline constexpr bool kVrFirstPersonDefault = false;
-#define MKW_VR_FIRST_PERSON_DEFAULT_TOML "false"
-#endif
 // "yaw", "yaw_pitch" or "full", matching FirstPersonRotation. The cockpit seat
 // is the first-person default, and sitting in the vehicle reads better with its
 // climb than with a level horizon, so "yaw_pitch" is the default anchor.
@@ -296,13 +293,8 @@ inline constexpr bool kVrNativeSteeringWheelDefault = true;
 inline constexpr bool kVrPlaceholderSteeringWheelDefault = false;
 inline constexpr bool kVrHandSteeringDefault = true;
 // The palm the held item shows above: "left", "right" or "off".
-#if defined(__ANDROID__)
 inline constexpr const char* kVrCockpitItemHandDefault = "right";
 #define MKW_VR_COCKPIT_ITEM_HAND_DEFAULT_TOML "\"right\""
-#else
-inline constexpr const char* kVrCockpitItemHandDefault = "left";
-#define MKW_VR_COCKPIT_ITEM_HAND_DEFAULT_TOML "\"left\""
-#endif
 // In the cockpit seat the player's own character is drawn around the view,
 // its arms following the tracked controllers and its head hidden (character
 // body IK, by heurazy). hands_only keeps just the character's hands. Off, the
@@ -319,24 +311,14 @@ inline constexpr float kVrBodyIkRightHandRollDefault = -90.0f;
 inline constexpr float kVrBodyIkHandRollMin = -180.0f, kVrBodyIkHandRollMax = 180.0f;
 // While the player is a Bullet Bill, first person either rides inside the
 // bullet ("inside") or shows the game's own camera until it ends ("game").
-#if defined(__ANDROID__)
 inline constexpr const char* kVrBulletBillCameraDefault = "game";
 #define MKW_VR_BULLET_BILL_CAMERA_DEFAULT_TOML "\"game\""
-#else
-inline constexpr const char* kVrBulletBillCameraDefault = "inside";
-#define MKW_VR_BULLET_BILL_CAMERA_DEFAULT_TOML "\"inside\""
-#endif
 // A quick swing of the item hand forward or back throws the item that way.
 inline constexpr bool kVrCockpitItemThrowDefault = true;
-// The held item's model across its largest side, in metres (Aurora's
-// cockpit_item::kDefaultItemSize is the desktop default).
-#if defined(__ANDROID__)
+// The held item's model across its largest side, in metres (Aurora's own
+// cockpit_item::kDefaultItemSize, 0.28, only replaces a size out of range).
 inline constexpr float kVrCockpitItemSizeDefault = 0.2f;
 #define MKW_VR_COCKPIT_ITEM_SIZE_DEFAULT_TEXT "0.2"
-#else
-inline constexpr float kVrCockpitItemSizeDefault = 0.28f;
-#define MKW_VR_COCKPIT_ITEM_SIZE_DEFAULT_TEXT "0.28"
-#endif
 inline constexpr float kVrCockpitItemSizeMin = 0.05f, kVrCockpitItemSizeMax = 0.60f;
 // The game hides karts and objects its own camera cannot see, which a head
 // turn in VR reveals. object_culling false draws them anyway (see
@@ -361,15 +343,10 @@ inline constexpr bool kVrHandTrackingDefault = true;
 inline constexpr bool kVrHandTrackingDefault = false;
 #endif
 // Hand steering tuning ranges; the defaults are mkw::vr::WheelTuning's, but for
-// the kart's full-lock angle, which the Quest halves (a more sensitive wheel).
+// the kart's full-lock angle, halved here (a more sensitive wheel).
 inline constexpr float kVrWheelDegreesMin = 20.0f, kVrWheelDegreesMax = 180.0f;
-#if defined(__ANDROID__)
 inline constexpr float kVrWheelKartDegreesDefault = 45.0f;
 #define MKW_VR_WHEEL_KART_DEGREES_DEFAULT_TEXT "45.0"
-#else
-inline constexpr float kVrWheelKartDegreesDefault = 90.0f;
-#define MKW_VR_WHEEL_KART_DEGREES_DEFAULT_TEXT "90.0"
-#endif
 inline constexpr float kVrWheelGrabDistanceMin = 0.15f, kVrWheelGrabDistanceMax = 0.8f;
 inline constexpr float kVrWheelGrabAssistMin = 0.7f, kVrWheelGrabAssistMax = 2.0f;
 inline constexpr float kVrWheelResponseMin = 0.5f, kVrWheelResponseMax = 2.0f;
@@ -427,14 +404,12 @@ inline uint32_t VrFrameInterpolationFpsDefault() {
 #if defined(__ANDROID__)
 inline constexpr uint32_t kVrRefreshRateDefault = 72;
 #define MKW_VR_REFRESH_RATE_DEFAULT_TEXT "72"
-inline constexpr float kVrHudWidthMetersDefault = 2.5f;
-#define MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "2.5"
 #else
 inline constexpr uint32_t kVrRefreshRateDefault = 0;
 #define MKW_VR_REFRESH_RATE_DEFAULT_TEXT "0"
-inline constexpr float kVrHudWidthMetersDefault = 2.4f;
-#define MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "2.4"
 #endif
+inline constexpr float kVrHudWidthMetersDefault = 2.5f;
+#define MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "2.5"
 
 inline bool IsSupportedVrMirrorView(std::string_view value) {
     return value == "normal" || value == "both" || value == "left" || value == "right" || value == "none";

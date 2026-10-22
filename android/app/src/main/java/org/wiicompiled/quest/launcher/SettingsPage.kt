@@ -263,7 +263,7 @@ class SettingsPage(
             choice(
                 R.string.vr_camera, R.string.vr_camera_helper,
                 listOf(R.string.vr_camera_chase, R.string.vr_camera_first_person),
-                // runtime_config.h's kVrFirstPersonDefault is first person on the Quest.
+                // runtime_config.h's kVrFirstPersonDefault is first person.
                 read = { if (it.bool("vr", "first_person") ?: true) 1 else 0 },
                 write = { c, index -> c.setBool("vr", "first_person", index == 1) },
                 enabledIf = immersive,
@@ -354,7 +354,7 @@ class SettingsPage(
                 enabledIf = cockpit,
             )
             // The full-lock angles as sensitivities: runtime_config.h's kVrWheelDegreesMin/Max and
-            // the Quest's defaults, 45 and 45 (kVrWheelKartDegreesDefault and WheelTuning's bike angle).
+            // their defaults, 45 and 45 (kVrWheelKartDegreesDefault and WheelTuning's bike angle).
             val handSteering = { c: TomlConfig -> cockpit(c) && (c.bool("vr", "hand_steering") ?: true) }
             slider(
                 R.string.vr_wheel_kart_sensitivity, R.string.vr_wheel_kart_sensitivity_helper, 20.0, 180.0, 5.0,
@@ -384,7 +384,7 @@ class SettingsPage(
                 write = { c, value -> c.setBool("vr", "cockpit_item_throw", value) },
                 enabledIf = { c -> cockpit(c) && stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS, ITEM_HAND_DEFAULT) != 2 },
             )
-            // runtime_config.h's kVrCockpitItemSizeDefault on the Quest (0.2 m) and its 0.05..0.60 range.
+            // runtime_config.h's kVrCockpitItemSizeDefault (0.2 m) and its 0.05..0.60 range.
             slider(
                 R.string.vr_cockpit_item_size, R.string.vr_cockpit_item_size_helper, 0.05, 0.60, 0.01,
                 read = { number(it, "vr", "cockpit_item_size", 0.05, 0.60, 0.2) },
@@ -937,11 +937,11 @@ class SettingsPage(
         val SEATS = listOf("cockpit", "custom")
         val BULLET_BILL_CAMERAS = listOf("inside", "game")
 
-        /** runtime_config.h's kVrBulletBillCameraDefault on the Quest. */
+        /** runtime_config.h's kVrBulletBillCameraDefault. */
         val BULLET_BILL_DEFAULT = BULLET_BILL_CAMERAS.indexOf("game")
         val ITEM_HANDS = listOf("left", "right", "off")
 
-        /** runtime_config.h's kVrCockpitItemHandDefault on the Quest. */
+        /** runtime_config.h's kVrCockpitItemHandDefault. */
         val ITEM_HAND_DEFAULT = ITEM_HANDS.indexOf("right")
         // The runtime's default ("boost") first: an absent key reads as index 0.
         val PERFORMANCE_LEVELS = listOf("boost", "sustained_high", "sustained_low", "power_savings", "default")
@@ -959,7 +959,7 @@ class SettingsPage(
         /** runtime_config.h's kVrRefreshRateDefault on the Quest. */
         const val REFRESH_RATE_DEFAULT = 72L
 
-        /** runtime_config.h's kVrHudWidthMetersDefault on the Quest. */
+        /** runtime_config.h's kVrHudWidthMetersDefault. */
         const val HUD_WIDTH_DEFAULT = 2.5
         val RESOLUTIONS = listOf(1.0, 1.5, 2.0, 3.0, 4.0)
         val SUPPORTED_RESOLUTIONS = listOf(0.0, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)

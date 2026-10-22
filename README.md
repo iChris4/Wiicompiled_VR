@@ -133,8 +133,9 @@ as wheels and marked "(wheel)" in the device list. This has not been tried on a 
   one axis. A G920 or G923 for Xbox also starts as an Xbox controller, which the game would read as
   an ordinary pad.
 - Set a G29's mode switch to PS3 on PC.
-- Full lock is wherever you record full left and right. Recording them a quarter turn each way
-  (90°) matches the VR cockpit's wheel, or lower the operating range in G HUB.
+- Full lock is wherever you record full left and right. Recording them as far each way as the
+  kart's Hand steering sensitivity (45° by default) matches the VR cockpit's wheel, or lower the
+  operating range in G HUB.
 - A Driving Force Shifter's gears reach the game as buttons of the wheel and can be assigned like
   any other. A gear stays pressed while it is engaged: on the item button it keeps the item held
   behind you until you shift back to neutral. The clutch is not used.
