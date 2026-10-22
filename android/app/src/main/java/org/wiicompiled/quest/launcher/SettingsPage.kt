@@ -186,7 +186,7 @@ class SettingsPage(
             choice(
                 R.string.vr_refresh_rate, R.string.vr_refresh_rate_helper,
                 listOf(activity.getString(R.string.vr_refresh_rate_default), "72 Hz", "80 Hz", "90 Hz", "120 Hz"),
-                read = { REFRESH_RATES.indexOf(it.integer("vr", "refresh_rate") ?: 0L) },
+                read = { REFRESH_RATES.indexOf(it.integer("vr", "refresh_rate") ?: REFRESH_RATE_DEFAULT) },
                 write = { c, index -> c.setInteger("vr", "refresh_rate", REFRESH_RATES[index]) },
                 custom = { "${it.integer("vr", "refresh_rate")} Hz" },
             )
@@ -207,7 +207,7 @@ class SettingsPage(
             )
             slider(
                 R.string.vr_hud_width, R.string.vr_hud_width_helper, 1.0, 6.0, 0.1,
-                read = { number(it, "vr", "hud_width_meters", 0.25, 20.0, 2.4) },
+                read = { number(it, "vr", "hud_width_meters", 0.25, 20.0, HUD_WIDTH_DEFAULT) },
                 format = { "%.1f m".format(it) },
                 write = { c, value -> c.setFloat("vr", "hud_width_meters", value) },
             )
@@ -263,14 +263,15 @@ class SettingsPage(
             choice(
                 R.string.vr_camera, R.string.vr_camera_helper,
                 listOf(R.string.vr_camera_chase, R.string.vr_camera_first_person),
-                read = { if (it.bool("vr", "first_person") == true) 1 else 0 },
+                // runtime_config.h's kVrFirstPersonDefault is first person on the Quest.
+                read = { if (it.bool("vr", "first_person") ?: true) 1 else 0 },
                 write = { c, index -> c.setBool("vr", "first_person", index == 1) },
                 enabledIf = immersive,
             )
             choice(
                 R.string.vr_bullet_bill, R.string.vr_bullet_bill_helper,
                 listOf(R.string.vr_bullet_bill_inside, R.string.vr_bullet_bill_game),
-                read = { stringIndex(it, "vr", "bullet_bill_camera", BULLET_BILL_CAMERAS) },
+                read = { stringIndex(it, "vr", "bullet_bill_camera", BULLET_BILL_CAMERAS, BULLET_BILL_DEFAULT) },
                 write = { c, index -> c.setString("vr", "bullet_bill_camera", BULLET_BILL_CAMERAS[index]) },
                 enabledIf = firstPerson,
             )
@@ -353,11 +354,11 @@ class SettingsPage(
                 enabledIf = cockpit,
             )
             // The full-lock angles as sensitivities: runtime_config.h's kVrWheelDegreesMin/Max and
-            // WheelTuning's 90 and 45 defaults.
+            // the Quest's defaults, 45 and 45 (kVrWheelKartDegreesDefault and WheelTuning's bike angle).
             val handSteering = { c: TomlConfig -> cockpit(c) && (c.bool("vr", "hand_steering") ?: true) }
             slider(
                 R.string.vr_wheel_kart_sensitivity, R.string.vr_wheel_kart_sensitivity_helper, 20.0, 180.0, 5.0,
-                read = { number(it, "vr", "wheel_kart_degrees", 20.0, 180.0, 90.0) },
+                read = { number(it, "vr", "wheel_kart_degrees", 20.0, 180.0, 45.0) },
                 format = { "%.0f°".format(it) },
                 write = { c, value -> c.setFloat("vr", "wheel_kart_degrees", value) },
                 enabledIf = handSteering,
@@ -372,7 +373,7 @@ class SettingsPage(
             choice(
                 R.string.vr_cockpit_item_hand, R.string.vr_cockpit_item_hand_helper,
                 listOf(R.string.vr_item_left, R.string.vr_item_right, R.string.vr_item_off),
-                read = { stringIndex(it, "vr", "cockpit_item_hand", ITEM_HANDS) },
+                read = { stringIndex(it, "vr", "cockpit_item_hand", ITEM_HANDS, ITEM_HAND_DEFAULT) },
                 write = { c, index -> c.setString("vr", "cockpit_item_hand", ITEM_HANDS[index]) },
                 enabledIf = cockpit,
             )
@@ -381,23 +382,23 @@ class SettingsPage(
                 R.string.vr_cockpit_item_throw, R.string.vr_cockpit_item_throw_helper,
                 read = { it.bool("vr", "cockpit_item_throw") ?: true },
                 write = { c, value -> c.setBool("vr", "cockpit_item_throw", value) },
-                enabledIf = { c -> cockpit(c) && stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS) != 2 },
+                enabledIf = { c -> cockpit(c) && stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS, ITEM_HAND_DEFAULT) != 2 },
             )
-            // runtime_config.h's kVrCockpitItemSizeDefault (0.28 m) and its 0.05..0.60 range.
+            // runtime_config.h's kVrCockpitItemSizeDefault on the Quest (0.2 m) and its 0.05..0.60 range.
             slider(
                 R.string.vr_cockpit_item_size, R.string.vr_cockpit_item_size_helper, 0.05, 0.60, 0.01,
-                read = { number(it, "vr", "cockpit_item_size", 0.05, 0.60, 0.28) },
+                read = { number(it, "vr", "cockpit_item_size", 0.05, 0.60, 0.2) },
                 format = { "%.2f m".format(it) },
                 write = { c, value -> c.setFloat("vr", "cockpit_item_size", value) },
-                enabledIf = { c -> cockpit(c) && stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS) != 2 },
+                enabledIf = { c -> cockpit(c) && stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS, ITEM_HAND_DEFAULT) != 2 },
             )
             // Tracked hands can show the item with stick steering as well.
             toggle(
                 R.string.vr_hand_tracking, R.string.vr_hand_tracking_helper,
-                read = { it.bool("vr", "hand_tracking") ?: false },
+                read = { it.bool("vr", "hand_tracking") ?: true },
                 write = { c, value -> c.setBool("vr", "hand_tracking", value) },
                 enabledIf = { c -> cockpit(c) && ((c.bool("vr", "hand_steering") ?: true) ||
-                    stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS) != 2) },
+                    stringIndex(c, "vr", "cockpit_item_hand", ITEM_HANDS, ITEM_HAND_DEFAULT) != 2) },
             )
         }
     }
@@ -934,18 +935,32 @@ class SettingsPage(
         val ROTATION_DEFAULT = ROTATIONS.indexOf("yaw_pitch")
         // The runtime's default ("cockpit") first.
         val SEATS = listOf("cockpit", "custom")
-        // The runtime's default ("inside") first.
         val BULLET_BILL_CAMERAS = listOf("inside", "game")
+
+        /** runtime_config.h's kVrBulletBillCameraDefault on the Quest. */
+        val BULLET_BILL_DEFAULT = BULLET_BILL_CAMERAS.indexOf("game")
         val ITEM_HANDS = listOf("left", "right", "off")
+
+        /** runtime_config.h's kVrCockpitItemHandDefault on the Quest. */
+        val ITEM_HAND_DEFAULT = ITEM_HANDS.indexOf("right")
         // The runtime's default ("boost") first: an absent key reads as index 0.
         val PERFORMANCE_LEVELS = listOf("boost", "sustained_high", "sustained_low", "power_savings", "default")
         // runtime_config.h's kVrFoveationLevels, and its Quest default.
         val FOVEATION_LEVELS = listOf("off", "low", "medium", "high")
-        val FOVEATION_DEFAULT = FOVEATION_LEVELS.indexOf("medium")
+        val FOVEATION_DEFAULT = FOVEATION_LEVELS.indexOf("off")
         val CONTROLLER_MODES = listOf("wii_remote", "gamepad", "none")
         val INTERPOLATION_FPS = listOf(0L, 1L, 72L, 90L, 120L)
+
+        /** runtime_config.h's kVrFrameInterpolationFpsDefault on the Quest. */
+        const val INTERPOLATION_FPS_DEFAULT = 72L
         // runtime_config.h [vr] refresh_rate; 0 is the headset's own rate.
         val REFRESH_RATES = listOf(0L, 72L, 80L, 90L, 120L)
+
+        /** runtime_config.h's kVrRefreshRateDefault on the Quest. */
+        const val REFRESH_RATE_DEFAULT = 72L
+
+        /** runtime_config.h's kVrHudWidthMetersDefault on the Quest. */
+        const val HUD_WIDTH_DEFAULT = 2.5
         val RESOLUTIONS = listOf(1.0, 1.5, 2.0, 3.0, 4.0)
         val SUPPORTED_RESOLUTIONS = listOf(0.0, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
         const val BLOOM_PATH = 0x10L
@@ -979,7 +994,7 @@ class SettingsPage(
         fun vrInterpolationFps(config: TomlConfig): Long {
             val value = config.integer("vr", "frame_interpolation_fps")?.takeIf { it in 0L..UINT32_MAX }
                 ?: config.bool("vr", "frame_interpolation")?.let { if (it) 1L else 0L }
-                ?: 0L
+                ?: INTERPOLATION_FPS_DEFAULT
             return if (value in INTERPOLATION_FPS) value else 0L
         }
     }

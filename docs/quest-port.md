@@ -228,9 +228,10 @@ at 0.8, and 492 to 525 MHz at 1.3, the unfoveated windows running at the higher 
 
 So an eye's time on these tracks is mostly geometry and full-resolution tile stores, which a
 density map does not reduce (the stores stay full size for non-subsampled images). Foveation
-pays only when `render_scale` makes the eyes pixel-bound, as at 1.3 on Luigi Circuit; it
-defaults to `medium` anyway, so it is already on when the render scale is raised and can be
-changed without a restart.
+pays only when `render_scale` makes the eyes pixel-bound, as at 1.3 on Luigi Circuit. It
+defaulted to `medium` until 2026-10-22; the Quest's defaults are now its tester's settings
+(render scale 1.0, foveation `off`, see OPENXR.md), and a session launched with it off needs a
+restart to turn it on.
 
 ### Quest 1 renderer compatibility
 
@@ -1377,11 +1378,11 @@ or `EndAccess` errors); a black mirror too points at Aurora itself.
 - **Performance.** The desktop product targets x86-64-v3; nothing has been
   profiled on the XR2. The first run compiles every bundled pipeline recipe
   (about half a minute); later runs load Dawn's pipeline cache from `Cache/`
-  next to `DATA`. `render_scale` defaults to 0.8 here (1.0 on
-  PC); lower it further if the compositor reports missed frames. It can be
+  next to `DATA`. `render_scale` defaults to 1.0 here, as on PC
+  (0.8 until 2026-10-22); lower it if the compositor reports missed frames. It can be
   changed during a race from the headset panel (VR → Render resolution).
   Foveated rendering (above) is off by default: at `render_scale` 0.8 it saves
-  nothing measurable, above that 8 to 22% of the eyes' GPU time.
+  nothing measurable, at 1.3 8 to 22% of the eyes' GPU time.
 - **Lifecycle.** Backgrounding (the Quest menu, guardian) pauses the session
   through the ordinary `STOPPING`/`READY` events; SDL's Android surface loss is
   handled by Aurora's existing Android paths. Neither has been exercised.

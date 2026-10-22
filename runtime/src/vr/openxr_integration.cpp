@@ -73,7 +73,7 @@ void ConfigurePolicy(bool enabled) noexcept {
     config.race_intro_on_screen = RuntimeConfigFile::VrFlatRaceIntro();
     config.world_units_per_meter = RuntimeConfigFile::VrWorldUnitsPerMeter(500.0f);
     config.hud_distance_meters = RuntimeConfigFile::VrHudDistanceMeters(2.0f);
-    config.hud_width_meters = RuntimeConfigFile::VrHudWidthMeters(2.4f);
+    config.hud_width_meters = RuntimeConfigFile::VrHudWidthMeters();
     config.first_person_units_per_meter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter();
     MkwVRPolicyConfigure(config);
     MkwVRInstrumentationInitialize();

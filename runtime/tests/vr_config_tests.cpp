@@ -39,11 +39,8 @@ int main() {
     Require(!Parse("[vr]\nfoveation = \"ultra\"\n").vrFoveation.has_value());
     Require(!Parse("[vr]\nfoveation = 2\n").vrFoveation.has_value());
     Require(!Parse("[vr]\n").vrFoveation.has_value());
-#if defined(__ANDROID__)
-    Require(std::string_view(RuntimeConfigFile::kVrFoveationDefault) == "medium");
-#else
+    // Off on both since the Quest's defaults became its tester's settings (2026-10-22).
     Require(std::string_view(RuntimeConfigFile::kVrFoveationDefault) == "off");
-#endif
     Require(RuntimeConfigFile::VrFoveationLevelIndex("off") == 0);
     Require(RuntimeConfigFile::VrFoveationLevelIndex("low") == 1);
     Require(RuntimeConfigFile::VrFoveationLevelIndex("medium") == 2);
@@ -55,7 +52,18 @@ int main() {
     Require(Parse("[vr]\nhand_tracking = false\n").vrHandTracking == false);
     Require(!Parse("[vr]\n").vrHandTracking.has_value());
     Require(!Parse("[vr]\nhand_tracking = 1\n").vrHandTracking.has_value());
+#if defined(__ANDROID__)
+    Require(RuntimeConfigFile::kVrHandTrackingDefault);
+#else
     Require(!RuntimeConfigFile::kVrHandTrackingDefault);
+#endif
+
+    // An absent [vr] frame_interpolation_fps reads as Auto on the desktop and 72 FPS on the Quest.
+#if defined(__ANDROID__)
+    Require(RuntimeConfigFile::kVrFrameInterpolationFpsDefault == 72);
+#else
+    Require(RuntimeConfigFile::kVrFrameInterpolationFpsDefault == 1);
+#endif
 
     // [vr] object_culling: false draws what the game camera culls. The PC
     // defaults to that; the Quest keeps the game's culling.

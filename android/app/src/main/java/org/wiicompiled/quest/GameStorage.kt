@@ -22,7 +22,7 @@ object GameStorage {
     /** The Retro Rewind pack the modded product reads (`[paths] retro_rewind_root`). */
     const val MOD_DIRECTORY = "RetroRewind6"
     /** `[vr] render_scale` until the player changes it; must match kVrRenderScaleDefault on Android. */
-    const val DEFAULT_RENDER_SCALE = 0.8
+    const val DEFAULT_RENDER_SCALE = 1.0
 
     enum class DiscStatus { Missing, Incomplete, Ready }
 

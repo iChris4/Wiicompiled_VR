@@ -39,7 +39,7 @@ enabled = true
 required = false
 mirror_view = "normal"
 controller_mode = "wii_remote"
-frame_interpolation_fps = 0
+frame_interpolation_fps = 1
 refresh_rate = 0
 render_scale = 1.0
 world_units_per_meter = 500.0
@@ -75,6 +75,14 @@ cockpit_item_throw = true
 cockpit_item_size = 0.28
 performance_level = "boost"
 ```
+
+Those are the desktop's defaults. The Quest's are the settings tuned on a Quest 3 (2026-10-22), which
+differ in `render_scale` (1.0, as on PC), `mirror_view = "none"`, `frame_interpolation_fps = 72`,
+`refresh_rate = 72`, `hud_width_meters = 2.5`, `first_person = true`, `bullet_bill_camera = "game"`,
+`cockpit_item_hand = "right"`, `cockpit_item_size = 0.2`, `wheel_kart_degrees = 45`,
+`hand_tracking = true`, `object_culling = true` and `foveation = "off"`; the Quest launcher writes
+only `render_scale` into its first Config.toml, and every other absent key reads as that default.
+*Reset VR settings* (see [Settings in the headset](#settings-in-the-headset)) returns to these.
 
 The seven `wheel_*` hand-steering tuning keys are described in
 [Steering wheel and hand steering](#steering-wheel-and-hand-steering).
@@ -130,16 +138,16 @@ for 1/2/3/4/1-screen transitions with VR interpolation on and off. Actual headse
 needs visual validation for course effects, HUD layout, pause/resume, and scene transitions.
 
 **F10 > VR > VR frame interpolation (experimental)** offers **Off, Auto, 72, 90, 120** and
-applies immediately. `frame_interpolation_fps` stores `0` for Off (the default), `1` for Auto,
-or the selected rate. The earlier `frame_interpolation = true` checkbox migrates to Auto.
+applies immediately. `frame_interpolation_fps` stores `0` for Off, `1` for Auto (the desktop's
+default), or the selected rate (`72`, the Quest's default). The earlier `frame_interpolation = true` checkbox migrates to Auto.
 Auto renders at the headset's display deadlines; the numbered choices cap the rate of new
 stereo frames. They do not change the headset's physical refresh setting. For VDXR with Virtual
 Desktop set to 90 Hz, select Auto or 90. The menu shows both the detected headset rate and the
 rate of newly rendered VR frames, excluding repeated images. Menus and other virtual-screen
 scenes continue at the game's rate; assess interpolation during an immersive race.
 
-**F10 > VR > Display refresh rate** (`[vr] refresh_rate`, Hz; `0`, the default, keeps the rate
-the headset chose) asks the runtime for that refresh through `XR_FB_display_refresh_rate`, so
+**F10 > VR > Display refresh rate** (`[vr] refresh_rate`, Hz; `0`, the desktop's default, keeps
+the rate the headset chose, and the Quest defaults to `72`) asks the runtime for that refresh through `XR_FB_display_refresh_rate`, so
 only Meta runtimes (the Quest, Quest Link) take it; elsewhere the rate is set in the VR runtime.
 A Quest 3 offers 72, 80, 90 and 120 Hz; the session logs the list and every change, and an
 unoffered rate is logged and ignored. It applies immediately, and the Quest launcher's settings
@@ -169,8 +177,8 @@ settings are ignored. Completed rendering wakes the XR thread immediately. A 50 
 still protects pauses and window dragging without eager repeats during rendering.
 
 `render_scale` scales the per-eye size recommended by the OpenXR runtime (0.25 to 2, never above the
-runtime's maximum). It defaults to 1.0 on PC and 0.8 on the Quest, whose mobile GPU needs the
-headroom. It is live: **F10 → VR → Render resolution** (also on the headset panel's VR tab) sets it
+runtime's maximum). It defaults to 1.0 on PC and on the Quest (0.8 there until 2026-10-22,
+when the Quest's defaults became its tester's settings). It is live: **F10 → VR → Render resolution** (also on the headset panel's VR tab) sets it
 in percent, applies it when the slider is let go, and saves it. Below the slider, *Each eye* gives
 the left eye's size now and, while they differ, the size the slider's value gives.
 
@@ -231,7 +239,7 @@ live, from the headset panel's VR tab or the launcher's Settings page. The app d
 So that the room frames the picture rather than black bands, the Quest's menu quad shows only the
 part of its eye-sized image Aurora draws into (the desktop snapshot, and the in-eye settings
 panel's rectangle), at the same size per pixel, so nothing moves.
-`hand_tracking` (Quest only, default off) makes the first-person cockpit's hands follow the
+`hand_tracking` (Quest only, default on) makes the first-person cockpit's hands follow the
 headset's hand tracking; see "Tracked hands" under
 [Steering wheel and hand steering](#steering-wheel-and-hand-steering).
 How each eye is replayed is fixed; the former `stop_at_display_copy`, `skip_copy_clears` and
@@ -254,7 +262,7 @@ its CPU and GPU domains: `boost`, `sustained_high`, `sustained_low`, `power_savi
 request (see `docs/quest-port.md`); desktop runtimes rarely offer the extension, and the setting
 then does nothing. It is read at launch, and the session log records whether the runtime accepted
 it and any later performance notification (a thermal or rendering warning).
-`foveation` (Quest only, default `medium`) shades the edges of the immersive race view more coarsely:
+`foveation` (Quest only, default `off`) shades the edges of the immersive race view more coarsely:
 `off`, `low`, `medium` or `high`, see [Foveated rendering](#foveated-rendering). A session launched
 with it off runs without fragment density maps, so going from `off` to a level takes a restart;
 between levels, and back to `off`, it is live from the headset panel's VR tab. The launcher's
@@ -343,11 +351,12 @@ see [Steering wheel and hand
 steering](#steering-wheel-and-hand-steering). Turning the wheel moves the controllers, and the game's
 own motion detection still reads them, so a sharp enough turn can read as a shake.
 
-**Held item.** `cockpit_item_hand` accepts `"left"` (default), `"right"`, or `"off"` and is also
+**Held item.** `cockpit_item_hand` accepts `"left"` (the desktop's default), `"right"` (the
+Quest's), or `"off"` and is also
 available in F10 > VR. In cockpit view, the selected tracked hand holds one item model from the
 game's `Race/Common.szs` after the roulette settles. The item stands upright just above the palm
 with its front toward the player, `cockpit_item_size` metres across its largest side (0.28 by
-default, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
+default, 0.2 on the Quest, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
 hand never tips it over. A triple (mushrooms, green or red shells, bananas) shows what is left of it
 as copies of the single item at half the item size, drawn as instances of one model: three in a
 triangle, two at the back and a little higher with the third in front of them, then two side by
@@ -552,7 +561,7 @@ during the intro a switch is refused, so it cannot leak into the next race. Each
 these rules.
 
 `bullet_bill_camera` decides what first person shows while you are a Bullet Bill: `"inside"`, the
-default, rides inside the bullet as described below, and `"game"` shows the game's own camera until
+desktop's default, rides inside the bullet as described below, and `"game"`, the Quest's, shows the game's own camera until
 the Bullet Bill ends, then first person again (**F10 → Camera → Bullet Bill**: *Ride inside* or
 *Game camera*; also in the Quest launcher). That override leaves the race's own choice alone, and F10
 notes it under *This race*; a click during it switches that choice, which shows once the Bullet Bill
@@ -765,7 +774,7 @@ it. One hand steers by its angle around the hub; two hands steer by the line bet
 or moving both arms together does not steer, and a hand joining, leaving or crossing the hub keeps
 the steering where it was. Turning past full lock is kept, so retracing the gesture returns to the
 same centre, while the game's steering saturates at full lock. How far the hands turn for full lock
-is the hand steering sensitivity: `wheel_kart_degrees` (default 90) and `wheel_bike_degrees`
+is the hand steering sensitivity: `wheel_kart_degrees` (default 90, 45 on the Quest) and `wheel_bike_degrees`
 (default 45), 20 to 180, offered as **Hand steering sensitivity (kart)** and **(bike)** right under
 Hand steering in F10 > VR, the headset panel, and the Quest launcher's Settings > VR; a lower angle
 is more sensitive. The stick's steering does not change;
@@ -784,7 +793,7 @@ player 1's GameCube controller. The cockpit's wheel follows its calibrated steer
 full-lock angle as the stick (`wheel_kart_degrees`, `wheel_bike_degrees`), and hand steering steps
 aside while it drives.
 
-**Tracked hands.** `hand_tracking` (Quest only for now, default off; the Quest launcher's
+**Tracked hands.** `hand_tracking` (Quest only for now, default on; the Quest launcher's
 Settings > Camera and the headset panel's Camera tab, under hand steering, which it needs) poses the
 cockpit hands from the headset's hand tracking instead of curling them with the grip. Two hand
 trackers (`XR_EXT_hand_tracking`) are located every XR frame at the display time. While the
@@ -1247,7 +1256,7 @@ the nose. Its rings are angles from that direction (`aurora-main/lib/gfx/foveati
 | `high` | within 18° | 18° to 34° | beyond 34° |
 
 The HUD is drawn in the same render pass as the world and is foveated with it. `low` and `medium`
-keep the default HUD screen (2.4 m wide at 2 m) at half rate or better while you look straight
+keep the HUD screen (2.4 m wide at 2 m, 2.5 m by default on the Quest) at half rate or better while you look straight
 ahead; `high` coarsens its corners. Menus and every other virtual screen, the settings panel, and
 anything drawn outside an immersive race are never foveated.
 
@@ -1278,13 +1287,13 @@ interleaved within one session (`docs/quest-port.md` has the method).
 | 0.8 (1344x1408) | 5.82 ms | 5.11 ms | 5.09 ms | 5.36 ms | 5.11 ms |
 | 1.3 (2184x2288) | 6.32 ms | 5.81 ms | 5.33 ms | 5.00 ms | 4.56 ms |
 
-At the Quest's default 0.8 an eye's time goes mostly to geometry and to storing its tiles at full
+At the Quest's former default 0.8 an eye's time goes mostly to geometry and to storing its tiles at full
 resolution. The Wii's shading is cheap, so foveation saves nothing measurable there, although the
 density map verifiably applies (4x4 blocks at the view's edges on High). At higher render scales it
 takes 8 to 22% off the eyes, which is where it earns its keep, bought with a softer periphery. The
-Quest defaults to `medium` all the same: it costs nothing measurable at 0.8, it is already on when
-the render scale is raised, and a session launched with a level can change it live, where one
-launched with `off` needs a restart. The Quest's GPU applies the density per screen tile, and inside a
+Quest defaulted to `medium` all the same until 2026-10-22, when its defaults became its tester's
+settings, foveation `off` at render scale 1.0; a session launched with a level can change it live,
+where one launched with `off` needs a restart. The Quest's GPU applies the density per screen tile, and inside a
 reduced-rate tile it also samples textures one level blurrier per halving. Most surfaces hide it,
 but fine animated detail does not: on Retro Rewind's swamp goo the tiles show as squares where the
 ripples give way to a smoother look. It is no fix for a heavy track: on Retro Rewind's SNES Ghost Valley

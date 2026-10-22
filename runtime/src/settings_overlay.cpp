@@ -161,7 +161,7 @@ int g_vrFoveation = static_cast<int>(RuntimeConfigFile::VrFoveationLevelIndex(Ru
 #endif
 // [vr] first_person: the camera each race starts on once its intro is over. The
 // camera of the race in progress is mkw_vr_first_person.cpp's and never saved.
-bool g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson(false);
+bool g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson();
 // Menu labels for the race cameras, index-matched to mkw::vr::CameraMode.
 constexpr std::array<const char*, 2> kVrCameraModeLabels{"Game camera", "First person"};
 static_assert(static_cast<int>(mkw::vr::CameraMode::Game) == 0);
@@ -195,8 +195,12 @@ bool g_vrHandSteering = RuntimeConfigFile::VrHandSteering();
 constexpr std::array<const char*, 3> kVrCockpitItemHands{"Left", "Right", "Off"};
 bool g_vrCockpitItemThrow = RuntimeConfigFile::VrCockpitItemThrow();
 float g_vrCockpitItemSize = RuntimeConfigFile::VrCockpitItemSize();
+// kVrCockpitItemHands' index of [vr] cockpit_item_hand's spelling.
+int VrCockpitItemHandIndex(std::string_view hand) {
+    return hand == "right" ? 1 : hand == "off" ? 2 : 0;
+}
 int VrCockpitItemHandFromConfig() {
-    return RuntimeConfigFile::VrCockpitItemHand() == "right" ? 1 : RuntimeConfigFile::VrCockpitItemHand() == "off" ? 2 : 0;
+    return VrCockpitItemHandIndex(RuntimeConfigFile::VrCockpitItemHand());
 }
 int g_vrCockpitItemHand = VrCockpitItemHandFromConfig();
 mkw::vr::WheelTuning g_vrWheelTuning = RuntimeConfigFile::VrWheelTuning();
@@ -1264,7 +1268,7 @@ void DrawAudioSettings() {
 void ApplyVrHudVirtualScreen() {
     const float unitsPerMeter = mkw::vr::MkwVRPolicyGetSnapshot().EffectiveUnitsPerMeter();
     aurora_set_stereo_hud_screen(g_vrHudVirtualScreen,
-                                 RuntimeConfigFile::VrHudWidthMeters(2.4f) * unitsPerMeter,
+                                 RuntimeConfigFile::VrHudWidthMeters() * unitsPerMeter,
                                  RuntimeConfigFile::VrHudDistanceMeters(2.0f) * unitsPerMeter);
 }
 
@@ -1314,8 +1318,9 @@ void DrawVrSteeringWheelSettings() {
                                              RuntimeConfigFile::kVrWheelDegreesMax, "%.0f deg to full lock");
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("How far you turn the kart's wheel with your hands for full steering (default "
-                          "90 deg). Lower is more sensitive: less turning. The stick steers as before; at "
-                          "full stick the wheel shows this angle. Needs Hand steering.");
+                          "%.0f deg). Lower is more sensitive: less turning. The stick steers as before; at "
+                          "full stick the wheel shows this angle. Needs Hand steering.",
+                          RuntimeConfigFile::kVrWheelKartDegreesDefault);
     }
     sensitivityChanged |= ImGui::SliderFloat("Hand steering sensitivity (bike)", &g_vrWheelTuning.bikeDegrees,
                                              RuntimeConfigFile::kVrWheelDegreesMin,
@@ -1353,7 +1358,8 @@ void DrawVrSteeringWheelSettings() {
         RuntimeConfigFile::SetVrCockpitItemSize(g_vrCockpitItemSize);
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("How big the item in your hand is, across its largest side (default 0.28 m).");
+        ImGui::SetTooltip("How big the item in your hand is, across its largest side (default %.2g m).",
+                          RuntimeConfigFile::kVrCockpitItemSizeDefault);
     }
     ImGui::EndDisabled();
 #if defined(__ANDROID__)
@@ -1575,7 +1581,7 @@ void ResetVrSettings() {
     g_vrHandTracking = RuntimeConfigFile::VrHandTracking();
     g_vrFoveation = static_cast<int>(RuntimeConfigFile::VrFoveationLevelIndex(RuntimeConfigFile::VrFoveation()));
 #endif
-    g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson(false);
+    g_vrFirstPerson = RuntimeConfigFile::VrFirstPerson();
     g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::VrBulletBillCamera());
     g_vrBodyIk = RuntimeConfigFile::VrBodyIk();
     g_vrBodyIkHandsOnly = RuntimeConfigFile::VrBodyIkHandsOnly();
@@ -2148,7 +2154,7 @@ void DrawVrCameraSettings() {
         g_vrNativeSteeringWheel = RuntimeConfigFile::kVrNativeSteeringWheelDefault;
         g_vrPlaceholderSteeringWheel = RuntimeConfigFile::kVrPlaceholderSteeringWheelDefault;
         g_vrHandSteering = RuntimeConfigFile::kVrHandSteeringDefault;
-        g_vrCockpitItemHand = 0;
+        g_vrCockpitItemHand = VrCockpitItemHandIndex(RuntimeConfigFile::kVrCockpitItemHandDefault);
         g_vrCockpitItemThrow = RuntimeConfigFile::kVrCockpitItemThrowDefault;
         g_vrCockpitItemSize = RuntimeConfigFile::kVrCockpitItemSizeDefault;
         RuntimeConfigFile::SetVrFirstPersonSeat(RuntimeConfigFile::kVrFirstPersonSeatDefault);

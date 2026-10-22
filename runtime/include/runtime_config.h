@@ -203,16 +203,10 @@ inline constexpr int kPortableSearchDepth = 4;
 inline constexpr uint32_t kPostProcessingBloomPath = 0x10u;
 inline constexpr uint32_t kDisabledPostProcessingPathsDefault = kPostProcessingBloomPath;
 
-// Headset eye size as a fraction of what the OpenXR runtime recommends. A
-// standalone headset renders on a mobile GPU, so the Quest starts below it;
-// the launcher's first Config.toml (GameStorage.kt) writes the same value.
-#if defined(__ANDROID__)
-inline constexpr float kVrRenderScaleDefault = 0.8f;
-#define MKW_VR_RENDER_SCALE_DEFAULT_TEXT "0.8"
-#else
+// Headset eye size as a fraction of what the OpenXR runtime recommends; the
+// Quest launcher's first Config.toml (GameStorage.kt) writes the same value.
 inline constexpr float kVrRenderScaleDefault = 1.0f;
 #define MKW_VR_RENDER_SCALE_DEFAULT_TEXT "1.0"
-#endif
 // The range the file accepts and the F10 bar's slider offers; the Quest
 // launcher's settings page (SettingsPage.kt) repeats it.
 inline constexpr float kVrRenderScaleMin = 0.25f;
@@ -232,6 +226,17 @@ inline constexpr float kVrFirstPersonHeadRightDefault = 0.0f;
 inline constexpr bool kVrFirstPersonHideDriverDefault = true;
 inline constexpr int32_t kVrFirstPersonHiddenModelDefault = 0;
 inline constexpr float kVrFirstPersonHeadOffsetLimit = 10.0f;
+// The camera each race starts on once its intro is over: first person in the
+// cockpit on the Quest, the game's chase camera elsewhere. Where the Quest's
+// defaults differ in this file, they are the settings its tester tuned on a
+// Quest 3 (2026-10-22). The macros are the same defaults for the template below.
+#if defined(__ANDROID__)
+inline constexpr bool kVrFirstPersonDefault = true;
+#define MKW_VR_FIRST_PERSON_DEFAULT_TOML "true"
+#else
+inline constexpr bool kVrFirstPersonDefault = false;
+#define MKW_VR_FIRST_PERSON_DEFAULT_TOML "false"
+#endif
 // "yaw", "yaw_pitch" or "full", matching FirstPersonRotation. The cockpit seat
 // is the first-person default, and sitting in the vehicle reads better with its
 // climb than with a level horizon, so "yaw_pitch" is the default anchor.
@@ -264,7 +269,14 @@ inline constexpr bool kVrSteeringWheelDefault = true;
 inline constexpr bool kVrNativeSteeringWheelDefault = true;
 inline constexpr bool kVrPlaceholderSteeringWheelDefault = false;
 inline constexpr bool kVrHandSteeringDefault = true;
+// The palm the held item shows above: "left", "right" or "off".
+#if defined(__ANDROID__)
+inline constexpr const char* kVrCockpitItemHandDefault = "right";
+#define MKW_VR_COCKPIT_ITEM_HAND_DEFAULT_TOML "\"right\""
+#else
 inline constexpr const char* kVrCockpitItemHandDefault = "left";
+#define MKW_VR_COCKPIT_ITEM_HAND_DEFAULT_TOML "\"left\""
+#endif
 // In the cockpit seat the player's own character is drawn around the view,
 // its arms following the tracked controllers and its head hidden (character
 // body IK, by heurazy). hands_only keeps just the character's hands. Off, the
@@ -281,12 +293,24 @@ inline constexpr float kVrBodyIkRightHandRollDefault = -90.0f;
 inline constexpr float kVrBodyIkHandRollMin = -180.0f, kVrBodyIkHandRollMax = 180.0f;
 // While the player is a Bullet Bill, first person either rides inside the
 // bullet ("inside") or shows the game's own camera until it ends ("game").
+#if defined(__ANDROID__)
+inline constexpr const char* kVrBulletBillCameraDefault = "game";
+#define MKW_VR_BULLET_BILL_CAMERA_DEFAULT_TOML "\"game\""
+#else
 inline constexpr const char* kVrBulletBillCameraDefault = "inside";
+#define MKW_VR_BULLET_BILL_CAMERA_DEFAULT_TOML "\"inside\""
+#endif
 // A quick swing of the item hand forward or back throws the item that way.
 inline constexpr bool kVrCockpitItemThrowDefault = true;
 // The held item's model across its largest side, in metres (Aurora's
-// cockpit_item::kDefaultItemSize is the same default).
+// cockpit_item::kDefaultItemSize is the desktop default).
+#if defined(__ANDROID__)
+inline constexpr float kVrCockpitItemSizeDefault = 0.2f;
+#define MKW_VR_COCKPIT_ITEM_SIZE_DEFAULT_TEXT "0.2"
+#else
 inline constexpr float kVrCockpitItemSizeDefault = 0.28f;
+#define MKW_VR_COCKPIT_ITEM_SIZE_DEFAULT_TEXT "0.28"
+#endif
 inline constexpr float kVrCockpitItemSizeMin = 0.05f, kVrCockpitItemSizeMax = 0.60f;
 // The game hides karts and objects its own camera cannot see, which a head
 // turn in VR reveals. object_culling false draws them anyway (see
@@ -303,11 +327,23 @@ inline constexpr bool kVrObjectCullingDefault = false;
 #endif
 // The cockpit hands follow the headset's hand tracking (the controllers' touch
 // sensors while they are held, the cameras once they are put down, when bare
-// hands also drive). Opt-in, and only offered on the Quest for now; the
+// hands also drive). Only offered on the Quest for now, where it is on; the
 // launcher's Settings page shows the same default.
+#if defined(__ANDROID__)
+inline constexpr bool kVrHandTrackingDefault = true;
+#else
 inline constexpr bool kVrHandTrackingDefault = false;
-// Hand steering tuning ranges; the defaults are mkw::vr::WheelTuning's.
+#endif
+// Hand steering tuning ranges; the defaults are mkw::vr::WheelTuning's, but for
+// the kart's full-lock angle, which the Quest halves (a more sensitive wheel).
 inline constexpr float kVrWheelDegreesMin = 20.0f, kVrWheelDegreesMax = 180.0f;
+#if defined(__ANDROID__)
+inline constexpr float kVrWheelKartDegreesDefault = 45.0f;
+#define MKW_VR_WHEEL_KART_DEGREES_DEFAULT_TEXT "45.0"
+#else
+inline constexpr float kVrWheelKartDegreesDefault = 90.0f;
+#define MKW_VR_WHEEL_KART_DEGREES_DEFAULT_TEXT "90.0"
+#endif
 inline constexpr float kVrWheelGrabDistanceMin = 0.15f, kVrWheelGrabDistanceMax = 0.8f;
 inline constexpr float kVrWheelGrabAssistMin = 0.7f, kVrWheelGrabAssistMax = 2.0f;
 inline constexpr float kVrWheelResponseMin = 0.5f, kVrWheelResponseMax = 2.0f;
@@ -327,12 +363,8 @@ inline bool IsSupportedVrPerformanceLevel(std::string_view value) {
 // 4x4 pixel blocks, the higher the level the closer to the centre. Whether the
 // GPU device gets fragment density maps at all is decided at launch, so going
 // from "off" to a level takes a restart; between levels and back to "off" it is
-// live. The Quest starts at "medium"; elsewhere it does nothing.
-#if defined(__ANDROID__)
-inline constexpr const char* kVrFoveationDefault = "medium";
-#else
+// live. Off by default; elsewhere than the Quest it does nothing.
 inline constexpr const char* kVrFoveationDefault = "off";
-#endif
 inline constexpr std::array<std::string_view, 4> kVrFoveationLevels{"off", "low", "medium", "high"};
 
 inline bool IsSupportedVrFoveation(std::string_view value) {
@@ -347,8 +379,32 @@ inline uint32_t VrFoveationLevelIndex(std::string_view value) {
 // What the desktop window shows while the headset is running: "normal" leaves
 // the ordinary desktop view alone, "both", "left" and "right" mirror the
 // headset's eyes, and "none" blacks the window out. Matches
-// AuroraStereoMirrorView.
+// AuroraStereoMirrorView. The Quest has no desktop to show it on.
+#if defined(__ANDROID__)
+inline constexpr const char* kVrMirrorViewDefault = "none";
+#define MKW_VR_MIRROR_VIEW_DEFAULT_TOML "\"none\""
+#else
 inline constexpr const char* kVrMirrorViewDefault = "normal";
+#define MKW_VR_MIRROR_VIEW_DEFAULT_TOML "\"normal\""
+#endif
+// VR frame interpolation's target (0 off, 1 Auto: the headset's rate), the
+// display refresh rate (0 the headset's own) and the race HUD screen's width:
+// the Quest interpolates to a 72 Hz display, the desktop to its headset's rate.
+#if defined(__ANDROID__)
+inline constexpr uint32_t kVrFrameInterpolationFpsDefault = 72;
+#define MKW_VR_FRAME_INTERPOLATION_FPS_DEFAULT_TEXT "72"
+inline constexpr uint32_t kVrRefreshRateDefault = 72;
+#define MKW_VR_REFRESH_RATE_DEFAULT_TEXT "72"
+inline constexpr float kVrHudWidthMetersDefault = 2.5f;
+#define MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "2.5"
+#else
+inline constexpr uint32_t kVrFrameInterpolationFpsDefault = 1;
+#define MKW_VR_FRAME_INTERPOLATION_FPS_DEFAULT_TEXT "1"
+inline constexpr uint32_t kVrRefreshRateDefault = 0;
+#define MKW_VR_REFRESH_RATE_DEFAULT_TEXT "0"
+inline constexpr float kVrHudWidthMetersDefault = 2.4f;
+#define MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "2.4"
+#endif
 
 inline bool IsSupportedVrMirrorView(std::string_view value) {
     return value == "normal" || value == "both" || value == "left" || value == "right" || value == "none";
@@ -576,7 +632,7 @@ inline void EnsureConfigFile() {
               "# \"normal\" keeps the ordinary desktop view, \"both\", \"left\" and\n"
               "# \"right\" mirror the headset's eyes, and \"none\" blacks the window\n"
               "# out. Changeable live from the F10 menu.\n"
-              "mirror_view = \"normal\"\n"
+              "mirror_view = " MKW_VR_MIRROR_VIEW_DEFAULT_TOML "\n"
               "# What the headset's controllers are to the game: \"wii_remote\"\n"
               "# is a Wii Remote (right hand, with motion and a pointer aimed at\n"
               "# the virtual screen) plus a Nunchuk (left hand); \"gamepad\" is one\n"
@@ -584,16 +640,16 @@ inline void EnsureConfigFile() {
               "# to other controllers. Changeable live from the F10 menu.\n"
               "controller_mode = \"wii_remote\"\n"
               "# VR interpolation: 0 = Off, 1 = Auto, or 72/90/120 FPS. Live.\n"
-              "frame_interpolation_fps = 0\n"
+              "frame_interpolation_fps = " MKW_VR_FRAME_INTERPOLATION_FPS_DEFAULT_TEXT "\n"
               "# Headset display refresh rate in Hz, 0 = the headset's own choice.\n"
               "# With interpolation every refresh is a new image; without it, 120 Hz\n"
               "# shows each 60 Hz game frame twice. Meta runtimes only (a Quest 3\n"
               "# offers 72, 80, 90, 120). Live.\n"
-              "refresh_rate = 0\n"
+              "refresh_rate = " MKW_VR_REFRESH_RATE_DEFAULT_TEXT "\n"
               "render_scale = " MKW_VR_RENDER_SCALE_DEFAULT_TEXT "\n"
               "world_units_per_meter = 500.0\n"
               "hud_distance_meters = 2.0\n"
-              "hud_width_meters = 2.4\n"
+              "hud_width_meters = " MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "\n"
               "# During a race, put the game's 2D layer (minimap, position,\n"
               "# item roulette, lap times) on a virtual screen fixed in front of\n"
               "# the kart camera instead of stretching it across the whole view.\n"
@@ -627,14 +683,14 @@ inline void EnsureConfigFile() {
               "# it at the Player 1 driver's head instead of behind the kart. The\n"
               "# intro always shows the game's own camera. Only during a\n"
               "# single-screen race.\n"
-              "first_person = false\n"
+              "first_person = " MKW_VR_FIRST_PERSON_DEFAULT_TOML "\n"
               "# Clicking the right thumbstick, on the VR controllers or on any\n"
               "# gamepad while VR runs, switches the current race between first\n"
               "# person and the game's camera; the next race starts as above.\n"
               "first_person_toggle_click = true\n"
               "# While you are a Bullet Bill in first person: \"inside\" rides in\n"
               "# the bullet, \"game\" shows the game's camera until it ends.\n"
-              "bullet_bill_camera = \"inside\"\n"
+              "bullet_bill_camera = " MKW_VR_BULLET_BILL_CAMERA_DEFAULT_TOML "\n"
               "# Where the head sits: \"cockpit\" puts it at the driver's own eyes,\n"
               "# behind the steering wheel, at a life-size scale that allows for\n"
               "# the character's height, so the wheel is within reach.\n"
@@ -692,12 +748,12 @@ inline void EnsureConfigFile() {
               "# pulse on grab and release. All changeable live from the F10 menu.\n"
               "hand_steering = true\n"
               "# Show the settled inventory item in one cockpit hand: left, right, or off.\n"
-              "cockpit_item_hand = \"left\"\n"
+              "cockpit_item_hand = " MKW_VR_COCKPIT_ITEM_HAND_DEFAULT_TOML "\n"
               "# Swing that hand forward or back to throw the item that way.\n"
               "cockpit_item_throw = true\n"
               "# How big that item is, in metres across its largest side.\n"
-              "cockpit_item_size = 0.28\n"
-              "wheel_kart_degrees = 90.0\n"
+              "cockpit_item_size = " MKW_VR_COCKPIT_ITEM_SIZE_DEFAULT_TEXT "\n"
+              "wheel_kart_degrees = " MKW_VR_WHEEL_KART_DEGREES_DEFAULT_TEXT "\n"
               "wheel_bike_degrees = 45.0\n"
               "wheel_grab_distance = 0.35\n"
               "wheel_grab_assist = 1.0\n"
@@ -1931,7 +1987,7 @@ inline float VrHudDistanceMeters(float fallback = 2.0f) {
     return std::clamp(Get().vrHudDistanceMeters.value_or(fallback), 0.25f, 10.0f);
 }
 
-inline float VrHudWidthMeters(float fallback = 2.4f) {
+inline float VrHudWidthMeters(float fallback = kVrHudWidthMetersDefault) {
     return std::clamp(Get().vrHudWidthMeters.value_or(fallback), 0.25f, 20.0f);
 }
 
@@ -2005,7 +2061,7 @@ inline bool VrMultiview(bool fallback = true) {
     return Get().vrMultiview.value_or(fallback);
 }
 
-inline bool VrFirstPerson(bool fallback = false) {
+inline bool VrFirstPerson(bool fallback = kVrFirstPersonDefault) {
     return Get().vrFirstPerson.value_or(fallback);
 }
 
@@ -2078,10 +2134,11 @@ inline std::string VrControllerMode(std::string fallback = kVrControllerModeDefa
 }
 
 inline uint32_t VrFrameInterpolationFps() {
-    return mkw::vr::NormalizeFrameInterpolationFps(Get().vrFrameInterpolationFps.value_or(0));
+    return mkw::vr::NormalizeFrameInterpolationFps(
+        Get().vrFrameInterpolationFps.value_or(kVrFrameInterpolationFpsDefault));
 }
 
-inline uint32_t VrRefreshRate(uint32_t fallback = 0) {
+inline uint32_t VrRefreshRate(uint32_t fallback = kVrRefreshRateDefault) {
     return Get().vrRefreshRate.value_or(fallback);
 }
 
@@ -2175,7 +2232,8 @@ inline mkw::vr::WheelTuning VrWheelTuning() {
     const auto& config = Get();
     mkw::vr::WheelTuning tuning{};
     tuning.kartDegrees =
-        std::clamp(config.vrWheelKartDegrees.value_or(tuning.kartDegrees), kVrWheelDegreesMin, kVrWheelDegreesMax);
+        std::clamp(config.vrWheelKartDegrees.value_or(kVrWheelKartDegreesDefault), kVrWheelDegreesMin,
+                   kVrWheelDegreesMax);
     tuning.bikeDegrees =
         std::clamp(config.vrWheelBikeDegrees.value_or(tuning.bikeDegrees), kVrWheelDegreesMin, kVrWheelDegreesMax);
     tuning.grabDistance = std::clamp(config.vrWheelGrabDistance.value_or(tuning.grabDistance),
