@@ -77,9 +77,8 @@ performance_level = "boost"
 ```
 
 Those are the desktop's defaults. The Quest's are the settings tuned on a Quest 3 (2026-10-22), which
-differ in `mirror_view = "none"`, `frame_interpolation_fps = 72`,
-`refresh_rate = 72`, `hud_width_meters = 2.5`, `first_person = true`, `bullet_bill_camera = "game"`,
-`cockpit_item_hand = "right"`, `cockpit_item_size = 0.2`, `wheel_kart_degrees = 45`,
+differ in `mirror_view = "none"`, `refresh_rate = 72`, `hud_width_meters = 2.5`, `first_person = true`,
+`bullet_bill_camera = "game"`, `cockpit_item_hand = "right"`, `cockpit_item_size = 0.2`, `wheel_kart_degrees = 45`,
 `hand_tracking = true`, `object_culling = true` and `foveation = "off"`; the Quest launcher writes
 only `render_scale` into its first Config.toml, and every other absent key reads as that default.
 The Quest 1 and 2 (`ro.product.device` `monterey` and `hollywood`) start lighter: `render_scale = 0.8`
@@ -140,8 +139,8 @@ for 1/2/3/4/1-screen transitions with VR interpolation on and off. Actual headse
 needs visual validation for course effects, HUD layout, pause/resume, and scene transitions.
 
 **F10 > VR > VR frame interpolation (experimental)** offers **Off, Auto, 72, 90, 120** and
-applies immediately. `frame_interpolation_fps` stores `0` for Off, `1` for Auto (the desktop's
-default), or the selected rate (`72`, the Quest 3's default; the Quest 1 and 2 default to Off). The earlier `frame_interpolation = true` checkbox migrates to Auto.
+applies immediately. `frame_interpolation_fps` stores `0` for Off, `1` for Auto (the default on
+the desktop and the Quest 3; the Quest 1 and 2 default to Off), or the selected rate. The earlier `frame_interpolation = true` checkbox migrates to Auto.
 Auto renders at the headset's display deadlines; the numbered choices cap the rate of new
 stereo frames. They do not change the headset's physical refresh setting. For VDXR with Virtual
 Desktop set to 90 Hz, select Auto or 90. The menu shows both the detected headset rate and the

@@ -58,10 +58,10 @@ int main() {
     Require(!RuntimeConfigFile::kVrHandTrackingDefault);
 #endif
 
-    // An absent [vr] frame_interpolation_fps reads as Auto on the desktop, 72 FPS on the Quest 3
-    // and Off on the Quest 1 and 2, whose render scale also starts lower.
+    // An absent [vr] frame_interpolation_fps reads as Auto on the desktop and the Quest 3, and
+    // Off on the Quest 1 and 2, whose render scale also starts lower.
 #if defined(__ANDROID__)
-    Require(RuntimeConfigFile::VrFrameInterpolationFpsDefault() == (RuntimeConfigFile::IsEarlierQuest() ? 0u : 72u));
+    Require(RuntimeConfigFile::VrFrameInterpolationFpsDefault() == (RuntimeConfigFile::IsEarlierQuest() ? 0u : 1u));
     Require(RuntimeConfigFile::VrRenderScaleDefault() == (RuntimeConfigFile::IsEarlierQuest() ? 0.8f : 1.0f));
 #else
     Require(RuntimeConfigFile::VrFrameInterpolationFpsDefault() == 1);

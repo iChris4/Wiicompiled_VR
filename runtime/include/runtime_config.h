@@ -413,15 +413,15 @@ inline constexpr const char* kVrMirrorViewDefault = "none";
 inline constexpr const char* kVrMirrorViewDefault = "normal";
 #define MKW_VR_MIRROR_VIEW_DEFAULT_TOML "\"normal\""
 #endif
-// VR frame interpolation's target (0 off, 1 Auto: the headset's rate): the
-// Quest 3 interpolates to its 72 Hz display, the Quest 1 and 2 do not, and the
-// desktop interpolates to its headset's rate.
+// VR frame interpolation's target (0 off, 1 Auto: the headset's rate): Auto on
+// the desktop and the Quest 3, off on the Quest 1 and 2.
 inline uint32_t VrFrameInterpolationFpsDefault() {
 #if defined(__ANDROID__)
-    return IsEarlierQuest() ? 0u : 72u;
-#else
-    return 1u;
+    if (IsEarlierQuest()) {
+        return 0u;
+    }
 #endif
+    return 1u;
 }
 // The display refresh rate (0 the headset's own) and the race HUD screen's width.
 #if defined(__ANDROID__)

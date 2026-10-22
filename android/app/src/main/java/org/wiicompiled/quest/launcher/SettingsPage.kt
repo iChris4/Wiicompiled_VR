@@ -951,8 +951,8 @@ class SettingsPage(
         val CONTROLLER_MODES = listOf("wii_remote", "gamepad", "none")
         val INTERPOLATION_FPS = listOf(0L, 1L, 72L, 90L, 120L)
 
-        /** runtime_config.h's VrFrameInterpolationFpsDefault(): Off on the Quest 1 and 2, 72 on later ones. */
-        val INTERPOLATION_FPS_DEFAULT = if (GameStorage.isEarlierQuest) 0L else 72L
+        /** runtime_config.h's VrFrameInterpolationFpsDefault(): Off on the Quest 1 and 2, Auto on later ones. */
+        val INTERPOLATION_FPS_DEFAULT = if (GameStorage.isEarlierQuest) 0L else 1L
         // runtime_config.h [vr] refresh_rate; 0 is the headset's own rate.
         val REFRESH_RATES = listOf(0L, 72L, 80L, 90L, 120L)
 
