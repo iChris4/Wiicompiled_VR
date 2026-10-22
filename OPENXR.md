@@ -77,11 +77,13 @@ performance_level = "boost"
 ```
 
 Those are the desktop's defaults. The Quest's are the settings tuned on a Quest 3 (2026-10-22), which
-differ in `render_scale` (1.0, as on PC), `mirror_view = "none"`, `frame_interpolation_fps = 72`,
+differ in `mirror_view = "none"`, `frame_interpolation_fps = 72`,
 `refresh_rate = 72`, `hud_width_meters = 2.5`, `first_person = true`, `bullet_bill_camera = "game"`,
 `cockpit_item_hand = "right"`, `cockpit_item_size = 0.2`, `wheel_kart_degrees = 45`,
 `hand_tracking = true`, `object_culling = true` and `foveation = "off"`; the Quest launcher writes
 only `render_scale` into its first Config.toml, and every other absent key reads as that default.
+The Quest 1 and 2 (`ro.product.device` `monterey` and `hollywood`) start lighter: `render_scale = 0.8`
+and `frame_interpolation_fps = 0`.
 *Reset VR settings* (see [Settings in the headset](#settings-in-the-headset)) returns to these.
 
 The seven `wheel_*` hand-steering tuning keys are described in
@@ -139,7 +141,7 @@ needs visual validation for course effects, HUD layout, pause/resume, and scene 
 
 **F10 > VR > VR frame interpolation (experimental)** offers **Off, Auto, 72, 90, 120** and
 applies immediately. `frame_interpolation_fps` stores `0` for Off, `1` for Auto (the desktop's
-default), or the selected rate (`72`, the Quest's default). The earlier `frame_interpolation = true` checkbox migrates to Auto.
+default), or the selected rate (`72`, the Quest 3's default; the Quest 1 and 2 default to Off). The earlier `frame_interpolation = true` checkbox migrates to Auto.
 Auto renders at the headset's display deadlines; the numbered choices cap the rate of new
 stereo frames. They do not change the headset's physical refresh setting. For VDXR with Virtual
 Desktop set to 90 Hz, select Auto or 90. The menu shows both the detected headset rate and the
@@ -177,8 +179,8 @@ settings are ignored. Completed rendering wakes the XR thread immediately. A 50 
 still protects pauses and window dragging without eager repeats during rendering.
 
 `render_scale` scales the per-eye size recommended by the OpenXR runtime (0.25 to 2, never above the
-runtime's maximum). It defaults to 1.0 on PC and on the Quest (0.8 there until 2026-10-22,
-when the Quest's defaults became its tester's settings). It is live: **F10 → VR → Render resolution** (also on the headset panel's VR tab) sets it
+runtime's maximum). It defaults to 1.0 on PC and the Quest 3, and to 0.8 on the Quest 1 and 2
+(0.8 on every Quest until 2026-10-22, when the Quest's defaults became its tester's settings). It is live: **F10 → VR → Render resolution** (also on the headset panel's VR tab) sets it
 in percent, applies it when the slider is let go, and saves it. Below the slider, *Each eye* gives
 the left eye's size now and, while they differ, the size the slider's value gives.
 

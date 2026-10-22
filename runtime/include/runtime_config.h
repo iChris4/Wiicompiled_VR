@@ -19,6 +19,10 @@
 #include <utility>
 #include <vector>
 #include <toml.hpp>
+#if defined(__ANDROID__)
+#include <cstring>
+#include <sys/system_properties.h>
+#endif
 #include "platform/host_platform.h"
 #include "vr/frame_interpolation_pacing.h"
 #include "vr/steering_wheel.h"
@@ -203,10 +207,32 @@ inline constexpr int kPortableSearchDepth = 4;
 inline constexpr uint32_t kPostProcessingBloomPath = 0x10u;
 inline constexpr uint32_t kDisabledPostProcessingPathsDefault = kPostProcessingBloomPath;
 
-// Headset eye size as a fraction of what the OpenXR runtime recommends; the
-// Quest launcher's first Config.toml (GameStorage.kt) writes the same value.
-inline constexpr float kVrRenderScaleDefault = 1.0f;
-#define MKW_VR_RENDER_SCALE_DEFAULT_TEXT "1.0"
+#if defined(__ANDROID__)
+// The Quest 1 (monterey) and Quest 2 (hollywood), whose older GPUs start on
+// lighter defaults than the Quest 3's: render scale 0.8 and no VR frame
+// interpolation. Aurora's Quest 1 checks read the same property, and the Quest
+// launcher (GameStorage.isEarlierQuest) the same device name.
+inline bool IsEarlierQuest() {
+    static const bool earlier = [] {
+        char device[PROP_VALUE_MAX]{};
+        return __system_property_get("ro.product.device", device) > 0 &&
+               (std::strcmp(device, "monterey") == 0 || std::strcmp(device, "hollywood") == 0);
+    }();
+    return earlier;
+}
+#endif
+
+// Headset eye size as a fraction of what the OpenXR runtime recommends: 1.0,
+// and 0.8 on the Quest 1 and 2. The Quest launcher's first Config.toml
+// (GameStorage.kt) writes the same value.
+inline float VrRenderScaleDefault() {
+#if defined(__ANDROID__)
+    if (IsEarlierQuest()) {
+        return 0.8f;
+    }
+#endif
+    return 1.0f;
+}
 // The range the file accepts and the F10 bar's slider offers; the Quest
 // launcher's settings page (SettingsPage.kt) repeats it.
 inline constexpr float kVrRenderScaleMin = 0.25f;
@@ -387,19 +413,23 @@ inline constexpr const char* kVrMirrorViewDefault = "none";
 inline constexpr const char* kVrMirrorViewDefault = "normal";
 #define MKW_VR_MIRROR_VIEW_DEFAULT_TOML "\"normal\""
 #endif
-// VR frame interpolation's target (0 off, 1 Auto: the headset's rate), the
-// display refresh rate (0 the headset's own) and the race HUD screen's width:
-// the Quest interpolates to a 72 Hz display, the desktop to its headset's rate.
+// VR frame interpolation's target (0 off, 1 Auto: the headset's rate): the
+// Quest 3 interpolates to its 72 Hz display, the Quest 1 and 2 do not, and the
+// desktop interpolates to its headset's rate.
+inline uint32_t VrFrameInterpolationFpsDefault() {
 #if defined(__ANDROID__)
-inline constexpr uint32_t kVrFrameInterpolationFpsDefault = 72;
-#define MKW_VR_FRAME_INTERPOLATION_FPS_DEFAULT_TEXT "72"
+    return IsEarlierQuest() ? 0u : 72u;
+#else
+    return 1u;
+#endif
+}
+// The display refresh rate (0 the headset's own) and the race HUD screen's width.
+#if defined(__ANDROID__)
 inline constexpr uint32_t kVrRefreshRateDefault = 72;
 #define MKW_VR_REFRESH_RATE_DEFAULT_TEXT "72"
 inline constexpr float kVrHudWidthMetersDefault = 2.5f;
 #define MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "2.5"
 #else
-inline constexpr uint32_t kVrFrameInterpolationFpsDefault = 1;
-#define MKW_VR_FRAME_INTERPOLATION_FPS_DEFAULT_TEXT "1"
 inline constexpr uint32_t kVrRefreshRateDefault = 0;
 #define MKW_VR_REFRESH_RATE_DEFAULT_TEXT "0"
 inline constexpr float kVrHudWidthMetersDefault = 2.4f;
@@ -640,13 +670,14 @@ inline void EnsureConfigFile() {
               "# to other controllers. Changeable live from the F10 menu.\n"
               "controller_mode = \"wii_remote\"\n"
               "# VR interpolation: 0 = Off, 1 = Auto, or 72/90/120 FPS. Live.\n"
-              "frame_interpolation_fps = " MKW_VR_FRAME_INTERPOLATION_FPS_DEFAULT_TEXT "\n"
+              "frame_interpolation_fps = " << VrFrameInterpolationFpsDefault() << "\n"
               "# Headset display refresh rate in Hz, 0 = the headset's own choice.\n"
               "# With interpolation every refresh is a new image; without it, 120 Hz\n"
               "# shows each 60 Hz game frame twice. Meta runtimes only (a Quest 3\n"
               "# offers 72, 80, 90, 120). Live.\n"
               "refresh_rate = " MKW_VR_REFRESH_RATE_DEFAULT_TEXT "\n"
-              "render_scale = " MKW_VR_RENDER_SCALE_DEFAULT_TEXT "\n"
+              "render_scale = " << std::fixed << std::setprecision(1) << VrRenderScaleDefault()
+           << std::defaultfloat << "\n"
               "world_units_per_meter = 500.0\n"
               "hud_distance_meters = 2.0\n"
               "hud_width_meters = " MKW_VR_HUD_WIDTH_METERS_DEFAULT_TEXT "\n"
@@ -1975,7 +2006,7 @@ inline bool VrRequired(bool fallback = false) {
     return Get().vrRequired.value_or(fallback);
 }
 
-inline float VrRenderScale(float fallback = kVrRenderScaleDefault) {
+inline float VrRenderScale(float fallback = VrRenderScaleDefault()) {
     return std::clamp(Get().vrRenderScale.value_or(fallback), kVrRenderScaleMin, kVrRenderScaleMax);
 }
 
@@ -2135,7 +2166,7 @@ inline std::string VrControllerMode(std::string fallback = kVrControllerModeDefa
 
 inline uint32_t VrFrameInterpolationFps() {
     return mkw::vr::NormalizeFrameInterpolationFps(
-        Get().vrFrameInterpolationFps.value_or(kVrFrameInterpolationFpsDefault));
+        Get().vrFrameInterpolationFps.value_or(VrFrameInterpolationFpsDefault()));
 }
 
 inline uint32_t VrRefreshRate(uint32_t fallback = kVrRefreshRateDefault) {

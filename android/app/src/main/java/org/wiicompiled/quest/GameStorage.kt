@@ -1,6 +1,7 @@
 package org.wiicompiled.quest
 
 import android.content.Context
+import android.os.Build
 import java.io.File
 import java.security.MessageDigest
 import org.wiicompiled.quest.launcher.TomlConfig
@@ -21,8 +22,14 @@ object GameStorage {
     const val DISC_DIRECTORY = "DATA"
     /** The Retro Rewind pack the modded product reads (`[paths] retro_rewind_root`). */
     const val MOD_DIRECTORY = "RetroRewind6"
-    /** `[vr] render_scale` until the player changes it; must match kVrRenderScaleDefault on Android. */
-    const val DEFAULT_RENDER_SCALE = 1.0
+    /**
+     * The Quest 1 (monterey) and Quest 2 (hollywood), whose older GPUs start on lighter
+     * defaults: runtime_config.h's IsEarlierQuest reads the same device name.
+     */
+    val isEarlierQuest: Boolean = Build.DEVICE == "monterey" || Build.DEVICE == "hollywood"
+
+    /** `[vr] render_scale` until the player changes it; must match VrRenderScaleDefault() on Android. */
+    val DEFAULT_RENDER_SCALE: Double = if (isEarlierQuest) 0.8 else 1.0
 
     enum class DiscStatus { Missing, Incomplete, Ready }
 
