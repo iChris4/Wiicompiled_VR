@@ -17,7 +17,7 @@ Build from the repository root on Windows:
 
 ```powershell
 ./Launcher/Build-Installer.ps1 -OutputDirectory Launcher/dist-vr
-./Launcher/Verify-Release.ps1 -Tag v0.2.45 -SetupPath (Resolve-Path Launcher/dist-vr/WiiCompiled-Setup.exe)
+./Launcher/Verify-Release.ps1 -Tag v0.2.46 -SetupPath (Resolve-Path Launcher/dist-vr/WiiCompiled-Setup.exe)
 ./Launcher/dist-vr/WiiCompiled-Setup.exe --self-test
 ./Launcher/Test-Recompilation.ps1 -StageDirectory build/vr-synthetic-validation
 dotnet test translator/Translator.sln -c Release
