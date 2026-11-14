@@ -355,6 +355,8 @@ object GameBuild {
                 translator(
                     tools, "checking the Retro-WFC payload",
                     "validate-retro-wfc-payload", "--directory", File(workspace, RETRO_WFC_DIRECTORY).absolutePath,
+                    // Required since v0.9.0's region support: the payload file is named per game.
+                    "--game-id", BuildConfig.DISC_GAME_ID,
                 )?.let { return it }
             }
             // A modded game needs a base translation that knows this Code.pul, so the pack's own
