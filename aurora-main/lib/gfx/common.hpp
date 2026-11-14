@@ -486,6 +486,8 @@ void set_stereo_hud_screen(bool enabled, float width, float distance) noexcept;
 bool get_stereo_hud_screen_enabled() noexcept;
 // The screen's width and distance in world units, kept while the 2D layer is off it.
 void get_stereo_hud_screen_size(float& width, float& distance) noexcept;
+// The same screen with its height (from the presented aspect), as the immersive window uses it.
+void get_stereo_window_screen(float& halfWidth, float& halfHeight, float& distance) noexcept;
 
 // What the desktop window presents while a stereo provider is feeding a
 // headset. Live, and read once per presentation group by the frame worker.

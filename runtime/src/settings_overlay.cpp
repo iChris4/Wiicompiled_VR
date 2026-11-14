@@ -12,6 +12,8 @@
 #include "music_attenuation.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "runtime_product.h"
+#include "voice_chat.h"
 #include "vr/camera_toggle.h"
 #include "vr/mkw_vr_culling.h"
 #include "vr/mkw_vr_first_person.h"
@@ -625,7 +627,7 @@ const char* KeyBindingName(int scancode) {
     }
 }
 
-enum class RebindKind { KeyboardButton, KeyboardAxis, Controller, MuteHotkey };
+enum class RebindKind { KeyboardButton, KeyboardAxis, Controller, MuteHotkey, VoiceHotkey };
 struct RebindState {
     bool active = false;
     bool openPopup = false;
@@ -691,6 +693,10 @@ void CompleteRebind(uint32_t value) {
         if (alternateValue != PAD_NATIVE_BUTTON_INVALID) config += ',' + NativeBindingConfig(alternateValue);
         for (size_t i = 0; i < kControllerButtons.size(); ++i)
             if (kControllerButtons[i].padButton == capture.target) RuntimeConfigFile::SetControllerButton(i, config);
+    } else if (capture.kind == RebindKind::VoiceHotkey) {
+        VoiceChat::SetHotkey(capture.target, static_cast<int>(static_cast<int32_t>(value)));
+        g_rebind.active = false;
+        return;
     } else if (capture.kind == RebindKind::MuteHotkey) {
         g_muteHotkey = static_cast<int32_t>(value);
         RuntimeConfigFile::SetMuteHotkey(g_muteHotkey);
@@ -718,7 +724,7 @@ void DrawRebindPrompt() {
         ImGui::Text("Rebind: %s", g_rebind.label.c_str());
         ImGui::TextUnformatted(g_rebind.kind == RebindKind::Controller
             ? "Press a controller button, pull a trigger, or move a stick."
-            : g_rebind.kind == RebindKind::MuteHotkey
+            : g_rebind.kind == RebindKind::MuteHotkey || g_rebind.kind == RebindKind::VoiceHotkey
                 ? "Press a keyboard key."
                 : "Press a keyboard key or click a mouse button.");
         ImGui::TextUnformatted("Release any held input first. Backspace or Delete clears the mapping.");
@@ -743,6 +749,7 @@ void DrawRebindPrompt() {
             const uint32_t mouse = SDL_GetMouseState(nullptr, nullptr);
             for (int i = 1; i <= 5 && g_rebind.active; ++i)
                 if (!overControl && g_rebind.kind != RebindKind::MuteHotkey &&
+                    g_rebind.kind != RebindKind::VoiceHotkey &&
                     (mouse & ~g_rebind.mouse & (1u << (i - 1))) != 0) CompleteRebind(static_cast<uint32_t>(-i - 1));
             g_rebind.mouse = mouse;
         } else if (g_rebind.active && SDL_GetKeyboardFocus() != nullptr && g_rebind.kind == RebindKind::Controller) {
@@ -773,6 +780,11 @@ void DrawKeyBinding(const char* label, int scancode, RebindKind kind, uint16_t t
     ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
     ImGui::TextUnformatted(label);
 
+}
+
+// Voice chat's push-to-talk, mute and deafen keys (VoiceChat::DrawSettings).
+void DrawVoiceHotkey(const char* label, int scancode, int target) {
+    DrawKeyBinding(label, scancode, RebindKind::VoiceHotkey, static_cast<uint16_t>(target), Scaled(150.0f));
 }
 
 bool DrawKeyboardSettings(uint32_t port) {
@@ -2744,6 +2756,12 @@ void DrawTopBar() {
         ImGui::EndMenu();
     }
 
+    if (RuntimeProduct::IsRetroRewind() && ImGui::BeginMenu("Voice Chat")) {
+        VoiceChat::DrawSettings(&DrawVoiceHotkey);
+        DrawRebindPrompt();
+        ImGui::EndMenu();
+    }
+
     if (ImGui::BeginMenu("Diagnostics")) {
         DrawDiagnosticsSettings();
         ImGui::EndMenu();
@@ -3003,11 +3021,66 @@ void DrawVrSettingsPanelWindow() {
             });
             tab("Controllers", DrawControllerSettings);
             tab("Audio", DrawAudioSettings);
+            if (RuntimeProduct::IsRetroRewind()) {
+                tab("Voice", [] { VoiceChat::DrawSettings(nullptr); });
+            }
             tab("Diagnostics", DrawDiagnosticsSettings);
             ImGui::EndTabBar();
         }
     }
     ImGui::End();
+}
+
+// Voice chat's headset badge: who is talking, over immersive races only (menus and Flat Screen show
+// the desktop overlay already). Its own small context at the panel's pixel density, left middle of
+// the race's screen, clear of the item box (top left) and the lap and rank (right). Same draw data
+// rule as the panel below; hidden while the panel is open, which lists the same players.
+struct VoiceBadge {
+    ImGuiContext* context = nullptr;
+    bool shown = false;
+};
+VoiceBadge g_voiceBadge;
+constexpr float kVoiceBadgeWidthPixels = 480.0f;
+constexpr float kVoiceBadgeHeightPixels = 180.0f;
+constexpr float kVoiceBadgeWidthFraction =
+    mkw::vr::kSettingsPanelWidthFraction * kVoiceBadgeWidthPixels / mkw::vr::kSettingsPanelWidthPixels;
+
+void DrawVoiceHeadsetBadge() {
+    VoiceBadge& badge = g_voiceBadge;
+    const bool wanted = mkw::vr::OpenXRIsRunning() && !mkw::vr::OpenXRSettingsPanelOpen() &&
+                        mkw::vr::MkwVRPolicyGetSnapshot().presentation == mkw::vr::VRPresentationMode::ImmersiveRace &&
+                        VoiceChat::HeadsetBadgeWanted();
+    if (!wanted) {
+        if (badge.shown) {
+            aurora_imgui_set_stereo_badge(nullptr, 0.0f, 0.0f, 0.0f);
+            badge.shown = false;
+        }
+        return;
+    }
+    if (badge.context == nullptr) {
+        badge.context = CreateVrSettingsPanelContext();
+    }
+    ImGuiContext* const desktop = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(badge.context);
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(kVoiceBadgeWidthPixels, kVoiceBadgeHeightPixels);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.MouseDrawCursor = false;
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::SetNextWindowBgAlpha(0.6f);
+    if (ImGui::Begin("##VoiceBadge", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing)) {
+        VoiceChat::DrawHeadsetBadge();
+    }
+    ImGui::End();
+    ImGui::Render();
+    ImDrawData* const drawData = ImGui::GetDrawData();
+    ImGui::SetCurrentContext(desktop);
+    aurora_imgui_set_stereo_badge(drawData, kVoiceBadgeWidthFraction, -1.0f, 0.0f);
+    badge.shown = true;
 }
 
 // Called once per presented frame after the desktop menus, with the frame
@@ -3144,6 +3217,9 @@ void HandleEvents(const AuroraEvent* events) noexcept {
             IsToggleKey(ev->sdl, g_vrRecenterScancode)) {
             mkw::vr::OpenXRRequestRecenter();
         }
+        if (!g_rebind.active) {
+            VoiceChat::HandleEvent(ev->sdl);
+        }
         if (!g_rebind.active && g_muteHotkey != PAD_KEY_INVALID &&
             IsToggleKey(ev->sdl, static_cast<SDL_Scancode>(g_muteHotkey))) {
             g_audioMuted = !g_audioMuted;
@@ -3233,12 +3309,14 @@ void Draw() noexcept {
         DrawShaderCompilationStatus();
     }
     DrawFpsOverlay();
+    VoiceChat::DrawOverlay();
     DrawTopBar();
     DrawExitPrompt();
     controller_mapping_wizard::Draw();
     ApplyInputBlockState();
     DrawStartupScreen();
     DrawVrSettingsPanel();
+    DrawVoiceHeadsetBadge();
 }
 
 bool StartupScreenVisible() noexcept {

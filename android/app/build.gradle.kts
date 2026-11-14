@@ -28,6 +28,9 @@ val prepareRuntimeResources by tasks.registering(Copy::class) {
     from(File(assets, "wii")) { into("runtime_resources/wii_bootstrap") }
     from(File(assets, "dsp/dsp_coef.bin")) { into("runtime_resources") }
     from(File(assets, "pipeline/initial_pipeline_cache.db")) { into("runtime_resources") }
+    // The CA bundle the native TLS checks servers against: the guest's HTTPS and voice chat's
+    // signaling connection (mbed TLS has no access to Android's own trust store).
+    from(File(assets, "certs/cacert.pem")) { into("runtime_resources") }
     into(runtimeResources)
 }
 

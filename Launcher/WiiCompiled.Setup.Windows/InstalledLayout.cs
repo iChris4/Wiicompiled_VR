@@ -26,8 +26,11 @@ internal static class InstalledLayout
     /// </summary>
     public static readonly string[] DependencyNames =
     [
-        "abseil-cpp", "cppwinrt", "dawn_prebuilt", "fmt", "freetype", "imgui", "libusb", "native_prebuilt",
-        "openxr", "png", "SDL", "sqlite3", "tracy", "vulkan_headers", "xxhash", "zlib", "zstd"
+        "abseil-cpp", "cppwinrt", "dawn_prebuilt", "fmt", "freetype", "imgui", "libusb",
+        // Room voice chat (runtime/cmake/VoiceChat.cmake).
+        "mkw_libdatachannel", "mkw_libjuice", "mkw_mbedtls_upstream", "mkw_miniaudio", "mkw_opus", "mkw_plog",
+        "mkw_rnnoise", "mkw_rnnoise_model", "mkw_usrsctp",
+        "native_prebuilt", "openxr", "png", "SDL", "sqlite3", "tracy", "vulkan_headers", "xxhash", "zlib", "zstd"
     ];
 }
 

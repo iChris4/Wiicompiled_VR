@@ -14,6 +14,7 @@
 #include "runtime_log.h"
 #include "perf_stats.h"
 #include "runtime_config.h"
+#include "voice_chat.h"
 #include "vr/mkw_vr_first_person.h"
 #include "vr/mkw_vr_policy.h"
 #include "vr/openxr_integration.h"
@@ -703,6 +704,9 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
 
     mkw::vr::OpenXRServiceProducerFrameBoundary();
     const SceneAnchorPublication anchor = PublishVrSceneAnchor();
+    // Voice chat reads the room and, in races, where the other karts are relative to this frame's
+    // camera and seat. One atomic load while voice chat is off.
+    VoiceChat::OnFramePresented(anchor.valid ? anchor.anchor.data() : nullptr, anchor.unitsPerMeter);
     record.anchor = anchor.anchor;
     record.anchorValid = anchor.valid;
     record.view = anchor.view;

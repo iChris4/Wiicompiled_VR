@@ -2623,6 +2623,14 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
     std::lock_guard submitLock(g_queueSubmitMutex);
     g_queue.Submit(1, &panel);
   }
+  // The badge's canvas has its own size too, so it gets its own submission.
+  if (const auto badge =
+          stereo_overlay::prepare_badge(stereo_frame_provider_active() ? ctx.stereoOverlay.badgeDrawData : nullptr,
+                                        ctx.stereoOverlay.badgeWidthFraction, ctx.stereoOverlay.badgeCenterX,
+                                        ctx.stereoOverlay.badgeCenterY)) {
+    std::lock_guard submitLock(g_queueSubmitMutex);
+    g_queue.Submit(1, &badge);
+  }
 
   if (ctx.replayInterpolatedFrames) {
     for (uint32_t interpolatedFrame = 0; interpolatedFrame < ctx.interpolatedFrameCount; ++interpolatedFrame) {

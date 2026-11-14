@@ -685,6 +685,49 @@
     <string name="audio_muted">Mute</string>
     <string name="audio_muted_helper">Silences the game without changing the volumes above.</string>
 
+    <!-- Voice tab -->
+    <string name="settings_tab_voice">Voice</string>
+    <string name="section_voice">Voice chat</string>
+    <string name="voice_enabled">Voice chat</string>
+    <string name="voice_enabled_helper">Talk with the players in your Retro Rewind online room who use voice chat (WiiCompiled VR or MKW-VoiceChat). Voice goes directly between players, so they can see your IP address, and anyone can join a room\'s voice chat.</string>
+    <string name="voice_microphone">Microphone</string>
+    <string name="voice_microphone_allowed">Allowed. You can talk once you are in an online room.</string>
+    <string name="voice_microphone_missing">Not allowed yet: without it you only hear the room. The game cannot ask in VR, so allow it here.</string>
+    <string name="voice_microphone_allow">Allow</string>
+    <string name="voice_microphone_allowed_button">Allowed</string>
+    <string name="voice_microphone_denied">The microphone was refused. Allow it in the headset\'s Settings, under this app\'s permissions.</string>
+    <string name="voice_talk_mode">Talk</string>
+    <string name="voice_talk_mode_helper">Push to talk: hold the left thumbstick in.</string>
+    <string name="voice_talk_activation">Voice activation</string>
+    <string name="voice_talk_open">Open mic</string>
+    <string name="voice_talk_push">Push to talk</string>
+    <string name="voice_activation_level">Activation level</string>
+    <string name="voice_activation_level_helper">How loud you must speak to be heard. Raise it if noise opens your microphone.</string>
+    <string name="voice_output_volume">Voices volume</string>
+    <string name="voice_microphone_volume">Microphone volume</string>
+    <string name="voice_positional">Positional voices in races</string>
+    <string name="voice_positional_helper">Each player\'s voice comes from their kart, around your head.</string>
+    <string name="voice_overlay">Show who is talking</string>
+    <string name="voice_overlay_helper">On the menu screen, and in races as a small badge at the left of the race.</string>
+    <string name="voice_overlay_off">Off</string>
+    <string name="voice_overlay_local">My status</string>
+    <string name="voice_overlay_speakers">Players speaking</string>
+    <string name="voice_overlay_both">Both</string>
+    <string name="voice_mute_options">Mute</string>
+    <string name="voice_mute_none">Nobody</string>
+    <string name="voice_mute_everyone">Everyone</string>
+    <string name="voice_mute_friends">My friends</string>
+    <string name="voice_mute_but_friends">Everyone but my friends</string>
+    <string name="voice_mute_teammates">My teammates</string>
+    <string name="voice_mute_but_teammates">Everyone but my teammates</string>
+    <string name="voice_mute_new_players">Mute players who join after me</string>
+    <string name="section_voice_processing">Microphone processing</string>
+    <string name="voice_echo_cancellation">Headset echo cancellation</string>
+    <string name="voice_echo_cancellation_helper">The headset\'s voice-call processing keeps the game\'s sound out of your microphone.</string>
+    <string name="voice_noise_suppression">Extra noise suppression</string>
+    <string name="voice_noise_suppression_helper">RNNoise on top of the headset\'s own; costs some CPU.</string>
+    <string name="voice_normalization">Automatic level</string>
+
     <!-- About tab -->
     <string name="about_version">Version</string>
     <string name="section_about_storage">Files</string>

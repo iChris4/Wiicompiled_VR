@@ -365,9 +365,16 @@ void aurora_set_stereo_panel_layer(bool enabled) { aurora::stereo_overlay::set_l
 
 void aurora_imgui_set_stereo_overlay(ImDrawData* drawData, float widthFraction) {
   std::lock_guard lock(aurora::imgui::g_stereoOverlayMutex);
-  aurora::imgui::g_stereoOverlay = {
-      .drawData = drawData,
-      .widthFraction = drawData != nullptr ? widthFraction : 0.f,
-  };
+  aurora::imgui::g_stereoOverlay.drawData = drawData;
+  aurora::imgui::g_stereoOverlay.widthFraction = drawData != nullptr ? widthFraction : 0.f;
+}
+
+void aurora_imgui_set_stereo_badge(ImDrawData* drawData, float widthFraction, float centerX, float centerY) {
+  std::lock_guard lock(aurora::imgui::g_stereoOverlayMutex);
+  auto& overlay = aurora::imgui::g_stereoOverlay;
+  overlay.badgeDrawData = drawData;
+  overlay.badgeWidthFraction = drawData != nullptr ? widthFraction : 0.f;
+  overlay.badgeCenterX = centerX;
+  overlay.badgeCenterY = centerY;
 }
 }

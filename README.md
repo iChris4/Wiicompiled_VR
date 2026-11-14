@@ -63,6 +63,14 @@ your default camera; a right thumbstick click switches that race between the gam
 first person. On a Quest the hands can follow the headset's own hand tracking.
 See [`OPENXR.md`](OPENXR.md) for setup, configuration, and the current limitations.
 
+**Voice chat in Retro Rewind rooms.**
+Off by default; turn it on in F10 > Voice Chat (or the headset panel's Voice tab) and you talk with
+everyone in your Retro Rewind online room who runs it, on the PC or the Quest. It speaks the
+protocol of [MKW-VoiceChat](https://github.com/zurasaaa/MKW-VoiceChat), so its players are in the
+same rooms. In VR, voices come from each player's kart and a badge shows who is talking. Voice goes
+directly between players, so they see each other's IP addresses, and anyone can join a room's
+voice chat. See [`docs/voice-chat.md`](docs/voice-chat.md).
+
 **Music ducking.** 
 Start playing something else, Spotify, a YouTube video, and
 the game automatically mutes its own music until the other audio stops. Optional, if you'd
@@ -294,6 +302,8 @@ All translated output is verified against real hardware behavior and most import
   aurora's Direct3D, Vulkan and OpenGL backends.
 - **[OpenXR](https://www.khronos.org/openxr/)** - the Khronos cross-platform API used by the
   experimental VR renderer.
+- **zurasaaa** - voice chat's protocol and voice engine, ported from
+  **[MKW-VoiceChat](https://github.com/zurasaaa/MKW-VoiceChat)** (GPL-3.0).
 - **heurazy** - the VR cockpit's turning steering wheel and hand steering, ported from
   **[mario-kart-wii-VR-port](https://github.com/heurazy/mario-kart-wii-VR-port)** (GPL-3.0), and
   the cockpit's character body and the camera modes, ported from

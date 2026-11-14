@@ -1541,6 +1541,13 @@ static stereo_replay::HudScreen stereo_window_screen() noexcept {
   };
 }
 
+void get_stereo_window_screen(float& halfWidth, float& halfHeight, float& distance) noexcept {
+  const auto screen = stereo_window_screen();
+  halfWidth = screen.halfWidth;
+  halfHeight = screen.halfHeight;
+  distance = screen.distance;
+}
+
 static stereo_replay::HudScreen stereo_hud_screen() noexcept {
   if (!g_stereoHudScreenEnabled.load(std::memory_order_relaxed)) {
     return {};

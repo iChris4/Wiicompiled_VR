@@ -1,10 +1,12 @@
 package org.wiicompiled.quest.launcher
 
+import android.Manifest
 import android.app.Activity
 import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
@@ -124,6 +126,8 @@ class LauncherActivity : Activity() {
     /** Play is copying the enabled mods into Retro Rewind's Patches folder before starting it. */
     private var installingPatches = false
     private var trailsAway = true
+    /** Voice chat's microphone prompt was shown this session; Play never asks twice. */
+    private var microphoneAsked = false
     private var setupKind: Class<*>? = null
     private var mainAction = Action.Play
     private var secondaryAction: Action? = null
@@ -201,6 +205,8 @@ class LauncherActivity : Activity() {
             buildGame = ::buildGame,
             downloadModPack = ::downloadModPack,
             resetInstallation = ::resetInstallation,
+            microphoneAllowed = ::microphoneAllowed,
+            requestMicrophone = ::requestMicrophoneFromSettings,
         )
         patches = PatchesPage(this, patchesView) {
             openPicker(REQUEST_PATCH_FILES, multiple = true, noPicker = R.string.patches_no_picker)
@@ -1000,6 +1006,11 @@ class LauncherActivity : Activity() {
         if (launching) {
             return
         }
+        if (needsMicrophonePermission()) {
+            microphoneAsked = true
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MICROPHONE)
+            return
+        }
         launching = true
         trailsAway = true
         trails.leave {
@@ -1030,6 +1041,44 @@ class LauncherActivity : Activity() {
         GameSetup.State.Idle -> null
     }
 
+    /**
+     * Voice chat ([voicechat] enabled, Retro Rewind only) records in the game's process, which runs in
+     * VR where the system cannot show its permission prompt; so Play asks here first. Whatever the
+     * answer, the game starts: refused, it still hears the room.
+     */
+    private fun needsMicrophonePermission(): Boolean {
+        if (microphoneAsked || !profile.modPack) return false
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return false
+        val config = ConfigStore(GameStorage.configFile(this)).load() ?: return false
+        return config.bool("voicechat", "enabled") == true
+    }
+
+    private fun microphoneAllowed(): Boolean =
+        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    /** Settings > Voice: turning voice chat on, or the microphone row's Allow button. */
+    private fun requestMicrophoneFromSettings() {
+        if (microphoneAllowed()) return
+        microphoneAsked = true
+        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MICROPHONE_SETTINGS)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_MICROPHONE && requestCode != REQUEST_MICROPHONE_SETTINGS) return
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        Log.i(TAG, "Voice chat microphone ${if (granted) "allowed" else "refused"}")
+        if (requestCode == REQUEST_MICROPHONE) {
+            startGame()
+            return
+        }
+        // Refused twice, Android stops asking: only the headset's app permissions can allow it then.
+        if (!granted && !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
+            Toast.makeText(this, R.string.voice_microphone_denied, Toast.LENGTH_LONG).show()
+        }
+        settings.refresh()
+    }
+
     private fun percent(state: GameSetup.State.Working): Int =
         if (state.total > 0) (state.done * 100 / state.total).toInt() else 0
 
@@ -1046,6 +1095,8 @@ class LauncherActivity : Activity() {
         const val REQUEST_MII_FILES = 4
         const val REQUEST_MII_EXPORT = 5
         const val REQUEST_MII_EXPORT_FOLDER = 6
+        const val REQUEST_MICROPHONE = 7
+        const val REQUEST_MICROPHONE_SETTINGS = 8
         const val PREFERENCES = "launcher"
         const val KEY_LAST_DROPPED_IMPORT = "lastDroppedImport"
         const val EXTRA_DEBUG_BUILD_GAME = "org.wiicompiled.quest.debug.BUILD_GAME"

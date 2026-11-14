@@ -19,9 +19,13 @@ namespace aurora::stereo_overlay {
 // the panel's canvas is not the desktop's size. Null draw data hides the panel,
 // and so does any failure; both return a null command buffer.
 wgpu::CommandBuffer prepare(ImDrawData* drawData, float widthFraction) noexcept;
+// The badge (aurora_imgui_set_stereo_badge): the same, into its own texture. Submit it after the
+// panel's and before any other ImGui pass, for the same reason.
+wgpu::CommandBuffer prepare_badge(ImDrawData* drawData, float widthFraction, float centerX, float centerY) noexcept;
 
 // Draws the most recently prepared panel over a finished immersive eye, on the
-// 2D layer's virtual screen seen through that eye's frustum and view.
+// 2D layer's virtual screen seen through that eye's frustum and view, then the
+// badge (which layer mode does not take away).
 void composite_immersive(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& eye,
                          const Mat4x4<float>& eyeFrustum, const Mat3x4<float>& viewFromCenter,
                          uint32_t eyeIndex) noexcept;

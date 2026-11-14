@@ -74,7 +74,8 @@ endfunction()
 function(mkw_runtime_link_dependencies target scope)
     target_link_libraries(${target} ${scope}
         aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx)
-    target_link_libraries(${target} ${scope} mkw_platform mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls)
+    target_link_libraries(${target} ${scope} mkw_platform mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls
+        mkw::voicechat)
     if(MKW_ENABLE_OPENXR)
         target_link_libraries(${target} ${scope} ${MKW_OPENXR_TARGET})
     endif()

@@ -43,6 +43,8 @@ class SettingsPage(
     private val buildGame: () -> Unit,
     private val downloadModPack: () -> Unit,
     private val resetInstallation: () -> Unit,
+    private val microphoneAllowed: () -> Boolean,
+    private val requestMicrophone: () -> Unit,
 ) {
 
     enum class Tab(val label: Int) {
@@ -51,6 +53,7 @@ class SettingsPage(
         Graphics(R.string.settings_tab_graphics),
         Controls(R.string.settings_tab_controls),
         Audio(R.string.settings_tab_audio),
+        Voice(R.string.settings_tab_voice),
         Other(R.string.settings_tab_other),
         About(R.string.settings_tab_about),
     }
@@ -110,6 +113,7 @@ class SettingsPage(
             Tab.Graphics -> buildGraphics()
             Tab.Controls -> buildControls()
             Tab.Audio -> buildAudio()
+            Tab.Voice -> buildVoice()
             Tab.Other -> buildOther()
             Tab.About -> buildAbout()
         }
@@ -497,6 +501,117 @@ class SettingsPage(
         }
     }
 
+    /**
+     * Voice chat ([voicechat], docs/voice-chat.md), here as well as in the game's Voice tab because
+     * the microphone is a runtime permission and the game runs in VR, where no prompt can show:
+     * turning voice chat on here asks for it at once.
+     */
+    private fun buildVoice() {
+        val voice = { c: TomlConfig -> c.bool("voicechat", "enabled") ?: false }
+        section(R.string.section_voice) {
+            toggle(
+                R.string.voice_enabled, R.string.voice_enabled_helper,
+                read = voice,
+                write = { c, value -> c.setBool("voicechat", "enabled", value) },
+                onChanged = { enabled -> if (enabled && !microphoneAllowed()) requestMicrophone() },
+            )
+            val allowed = microphoneAllowed()
+            action(
+                R.string.voice_microphone,
+                if (allowed) R.string.voice_microphone_allowed else R.string.voice_microphone_missing,
+                if (allowed) R.string.voice_microphone_allowed_button else R.string.voice_microphone_allow,
+                enabled = !allowed,
+                onClick = requestMicrophone,
+            )
+            choice(
+                R.string.voice_talk_mode, R.string.voice_talk_mode_helper,
+                listOf(R.string.voice_talk_activation, R.string.voice_talk_open, R.string.voice_talk_push),
+                read = { stringIndex(it, "voicechat", "talk_mode", TALK_MODES) },
+                write = { c, index -> c.setString("voicechat", "talk_mode", TALK_MODES[index]) },
+                enabledIf = voice,
+            )
+            slider(
+                R.string.voice_activation_level, R.string.voice_activation_level_helper, 1.0, 100.0, 1.0,
+                read = { number(it, "voicechat", "voice_activation_threshold", 1.0, 100.0, 25.0) },
+                format = { "%.0f".format(it) },
+                write = { c, value -> c.setInteger("voicechat", "voice_activation_threshold", value.roundToInt().toLong()) },
+                enabledIf = { voice(it) && stringIndex(it, "voicechat", "talk_mode", TALK_MODES) == 0 },
+            )
+            slider(
+                R.string.voice_output_volume, null, 0.0, 300.0, 5.0,
+                read = { number(it, "voicechat", "playback_volume", 0.0, 3.0, 1.0) * 100.0 },
+                format = { "%.0f%%".format(it) },
+                write = { c, value -> c.setFloat("voicechat", "playback_volume", value / 100.0) },
+                enabledIf = voice,
+            )
+            slider(
+                R.string.voice_microphone_volume, null, 25.0, 500.0, 5.0,
+                read = { number(it, "voicechat", "microphone_gain", 0.25, 5.0, 1.0) * 100.0 },
+                format = { "%.0f%%".format(it) },
+                write = { c, value -> c.setFloat("voicechat", "microphone_gain", value / 100.0) },
+                enabledIf = voice,
+            )
+            toggle(
+                R.string.voice_positional, R.string.voice_positional_helper,
+                read = { it.bool("voicechat", "positional") ?: true },
+                write = { c, value -> c.setBool("voicechat", "positional", value) },
+                enabledIf = voice,
+            )
+            choice(
+                R.string.voice_overlay, R.string.voice_overlay_helper,
+                listOf(R.string.voice_overlay_off, R.string.voice_overlay_local, R.string.voice_overlay_speakers,
+                       R.string.voice_overlay_both),
+                read = {
+                    (if (it.bool("voicechat", "overlay_local_status") ?: true) 1 else 0) or
+                        (if (it.bool("voicechat", "overlay_player_speakers") ?: true) 2 else 0)
+                },
+                write = { c, index ->
+                    c.setBool("voicechat", "overlay_local_status", (index and 1) != 0)
+                    c.setBool("voicechat", "overlay_player_speakers", (index and 2) != 0)
+                },
+                enabledIf = voice,
+            )
+            choice(
+                R.string.voice_mute_options, null,
+                listOf(R.string.voice_mute_none, R.string.voice_mute_everyone, R.string.voice_mute_friends,
+                       R.string.voice_mute_but_friends, R.string.voice_mute_teammates, R.string.voice_mute_but_teammates),
+                read = { c -> MUTE_PRESETS.indexOfFirst { key -> key != null && (c.bool("voicechat", key) ?: false) }.coerceAtLeast(0) },
+                write = { c, index ->
+                    for ((preset, key) in MUTE_PRESETS.withIndex()) {
+                        if (key != null) c.setBool("voicechat", key, preset == index)
+                    }
+                },
+                enabledIf = voice,
+            )
+            toggle(
+                R.string.voice_mute_new_players, null,
+                read = { it.bool("voicechat", "mute_new_players") ?: false },
+                write = { c, value -> c.setBool("voicechat", "mute_new_players", value) },
+                enabledIf = voice,
+            )
+        }
+        section(R.string.section_voice_processing) {
+            toggle(
+                R.string.voice_echo_cancellation, R.string.voice_echo_cancellation_helper,
+                read = { it.bool("voicechat", "platform_voice_processing") ?: true },
+                write = { c, value -> c.setBool("voicechat", "platform_voice_processing", value) },
+                enabledIf = voice,
+            )
+            toggle(
+                R.string.voice_noise_suppression, R.string.voice_noise_suppression_helper,
+                read = { it.bool("voicechat", "noise_suppression") ?: false },
+                write = { c, value -> c.setBool("voicechat", "noise_suppression", value) },
+                enabledIf = voice,
+            )
+            toggle(
+                R.string.voice_normalization, null,
+                read = { it.bool("voicechat", "normalization") ?: true },
+                write = { c, value -> c.setBool("voicechat", "normalization", value) },
+                enabledIf = voice,
+            )
+        }
+    }
+
     /** What the player's own files are and what makes them, as the PC launcher's Other tab does. */
     private fun buildOther() {
         section(R.string.section_about_storage) {
@@ -619,12 +734,16 @@ class SettingsPage(
             read: (TomlConfig) -> Boolean,
             write: (TomlConfig, Boolean) -> Unit,
             enabledIf: ((TomlConfig) -> Boolean)? = null,
+            onChanged: ((Boolean) -> Unit)? = null,
         ) {
             val control = Switch(activity).apply {
                 isChecked = read(config)
                 thumbTintList = checkedColors(R.color.neutral_50, R.color.neutral_300)
                 trackTintList = checkedColors(R.color.primary_400, R.color.neutral_600)
-                setOnCheckedChangeListener { _, checked -> commit { write(it, checked) } }
+                setOnCheckedChangeListener { _, checked ->
+                    commit { write(it, checked) }
+                    onChanged?.invoke(checked)
+                }
             }
             val row = row(title, helper, control)
             row.setOnClickListener { if (control.isEnabled) control.toggle() }
@@ -965,6 +1084,15 @@ class SettingsPage(
         val SUPPORTED_RESOLUTIONS = listOf(0.0, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
         const val BLOOM_PATH = 0x10L
         const val UINT32_MAX = 0xFFFF_FFFFL
+        /** voice_chat.cpp's talk_mode values, in the order of the choice. */
+        val TALK_MODES = listOf("voice_activation", "open_mic", "push_to_talk")
+
+        /** MKW-VoiceChat's mute presets (one at a time), null for none. */
+        val MUTE_PRESETS = listOf(
+            null, "mute_everyone", "mute_only_friends", "mute_everyone_but_friends", "mute_teammates",
+            "mute_everyone_but_teammates",
+        )
+
         val VOLUMES = listOf(
             R.string.audio_master to "volume",
             R.string.audio_music to "music_volume",

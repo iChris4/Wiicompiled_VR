@@ -165,6 +165,8 @@ struct RuntimeUserConfig {
     // used by the base product; Retro Rewind supplies its own ID through the
     // standard Dolphin /dev/dolphin interface.
     std::optional<std::string> discordClientId;
+    // The [voicechat] table as written; voice_chat_settings.cpp reads its keys.
+    std::optional<toml::value> voiceChatTable;
     std::optional<std::string> nandRoot;
     std::optional<std::string> dvdRoot;
     // The one canonical Retro Rewind installation, owned and updated by the frontend. Setup records
@@ -826,6 +828,11 @@ inline void EnsureConfigFile() {
               "# to WiiCompiled's Discord application ID for basic base-game presence.\n"
               "enabled = true\n"
               "# client_id = \"123456789012345678\"\n\n"
+              "[voicechat]\n"
+              "# Room voice chat with players in the same Retro Rewind online room who use\n"
+              "# WiiCompiled VR or MKW-VoiceChat. Off by default: voice is peer-to-peer, so the\n"
+              "# room's voice members see each other's IP addresses. See F10 > Voice Chat.\n"
+              "enabled = false\n\n"
               "[paths]\n"
               "# dvd_root = \"D:\\\\MarioKartWii\\\\DATA\"\n"
               "# nand_root = \"D:\\\\WiiNand\"\n"
@@ -1175,6 +1182,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.networkEnabled = FindConfigValue<bool>(document, "network", "enabled");
     config.discordPresenceEnabled = FindConfigValue<bool>(document, "discord", "enabled");
     config.discordClientId = FindConfigValue<std::string>(document, "discord", "client_id");
+    if (document.is_table() && document.contains("voicechat") && document.at("voicechat").is_table()) {
+        config.voiceChatTable = document.at("voicechat");
+    }
 
     config.nandRoot = FindConfigValue<std::string>(document, "paths", "nand_root");
     config.dvdRoot = FindConfigValue<std::string>(document, "paths", "dvd_root");

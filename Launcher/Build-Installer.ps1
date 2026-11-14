@@ -118,7 +118,7 @@ Assert-File (Join-Path $portableTools 'Ninja\ninja.exe') 'Portable Ninja'
 # to compile (launcher/Prepare-NativePrebuilt.ps1).
 # Kept in step with InstalledLayout.DependencyNames by Test-PinnedFacts.ps1: the installed host
 # refuses to call a toolkit complete unless every one of these directories is present.
-$requiredDependencies = @('abseil-cpp','cppwinrt','dawn_prebuilt','fmt','freetype','imgui','libusb','native_prebuilt','openxr','png','SDL','sqlite3','tracy','vulkan_headers','xxhash','zlib','zstd')
+$requiredDependencies = @('abseil-cpp','cppwinrt','dawn_prebuilt','fmt','freetype','imgui','libusb','mkw_libdatachannel','mkw_libjuice','mkw_mbedtls_upstream','mkw_miniaudio','mkw_opus','mkw_plog','mkw_rnnoise','mkw_rnnoise_model','mkw_usrsctp','native_prebuilt','openxr','png','SDL','sqlite3','tracy','vulkan_headers','xxhash','zlib','zstd')
 $missingSources = @($requiredDependencies | Where-Object { $_ -ne 'native_prebuilt' } |
     Where-Object { -not (Test-Path -LiteralPath (Join-Path $dependencySources $_) -PathType Container) })
 if ($missingSources.Count -gt 0) {

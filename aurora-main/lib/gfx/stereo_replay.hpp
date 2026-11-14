@@ -313,11 +313,15 @@ inline Mat4x4<float> compose_hud_screen_projection(const Mat4x4<float>& eyeFrust
 }
 
 // The headset settings panel (aurora_imgui_set_stereo_overlay): a rectangle
-// centred on the virtual screen, in the same world units as the screen.
+// centred on the virtual screen, in the same world units as the screen. The
+// badge (aurora_imgui_set_stereo_badge) is the same rectangle moved off centre
+// by centerX/centerY, +x right and +y up on the screen's plane.
 struct OverlayPanel {
   float halfWidth = 0.0f;
   float halfHeight = 0.0f;
   float distance = 0.0f;
+  float centerX = 0.0f;
+  float centerY = 0.0f;
 
   [[nodiscard]] bool valid() const noexcept { return halfWidth > 0.0f && halfHeight > 0.0f && distance > 0.0f; }
 };
@@ -333,6 +337,21 @@ inline OverlayPanel overlay_panel_on_screen(float screenWidth, float screenDista
   return {.halfWidth = halfWidth, .halfHeight = halfWidth / panelAspect, .distance = screenDistance};
 }
 
+// A panel `widthFraction` of the screen's width whose centre sits at (x, y) in the
+// screen's own -1..1 coordinates (+y up), moved inwards as needed to stay on it.
+inline OverlayPanel overlay_panel_at(const HudScreen& screen, float widthFraction, float panelAspect, float x,
+                                     float y) noexcept {
+  if (!screen.valid() || !(panelAspect > 0.0f) || !(widthFraction > 0.0f)) {
+    return {};
+  }
+  OverlayPanel panel = overlay_panel_on_screen(2.0f * screen.halfWidth, screen.distance, widthFraction, panelAspect);
+  const float limitX = std::max(0.0f, screen.halfWidth - panel.halfWidth);
+  const float limitY = std::max(0.0f, screen.halfHeight - panel.halfHeight);
+  panel.centerX = std::clamp(x * screen.halfWidth, -limitX, limitX);
+  panel.centerY = std::clamp(y * screen.halfHeight, -limitY, limitY);
+  return panel;
+}
+
 // Clip position of a point on the panel for one eye of an immersive frame, as a
 // matrix applied to (x, y, 0, 1) with x and y running -1..1 across the panel,
 // +y up. It is the 2D layer's chain with the panel's corners in place of a
@@ -342,9 +361,11 @@ inline OverlayPanel overlay_panel_on_screen(float screenWidth, float screenDista
 inline Mat4x4<float> compose_overlay_panel_projection(const Mat4x4<float>& eyeFrustum,
                                                       const Mat3x4<float>& viewFromCenter,
                                                       const OverlayPanel& panel) noexcept {
+  // The panel's own -1..1 corners, shifted by its centre in units of its half extents (zero for the
+  // centred settings panel, which leaves this the identity it always was).
   Mat4x4<float> corners{};
-  corners.m0 = {1.0f, 0.0f, 0.0f, 0.0f};
-  corners.m1 = {0.0f, 1.0f, 0.0f, 0.0f};
+  corners.m0 = {1.0f, 0.0f, 0.0f, panel.centerX / panel.halfWidth};
+  corners.m1 = {0.0f, 1.0f, 0.0f, panel.centerY / panel.halfHeight};
   corners.m3 = {0.0f, 0.0f, 0.0f, 1.0f};
   const HudScreen screen{.halfWidth = panel.halfWidth, .halfHeight = panel.halfHeight, .distance = panel.distance};
   auto out = compose_hud_screen_projection(eyeFrustum, viewFromCenter, screen, corners);

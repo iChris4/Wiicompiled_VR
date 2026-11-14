@@ -66,15 +66,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 )""";
 
-struct State {
-  webgpu::TextureWithSampler panel;
-  wgpu::RenderPipeline pipeline;
-  wgpu::BindGroupLayout bindGroupLayout;
-  wgpu::TextureFormat pipelineFormat = wgpu::TextureFormat::Undefined;
+// One ImGui canvas laid over the eyes: the settings panel or the badge.
+struct Slot {
+  webgpu::TextureWithSampler texture;
   std::array<wgpu::Buffer, AURORA_STEREO_EYE_COUNT> uniforms;
   std::array<wgpu::BindGroup, AURORA_STEREO_EYE_COUNT> bindGroups;
   float widthFraction = 0.f;
+  float centerX = 0.f;
+  float centerY = 0.f;
   bool visible = false;
+};
+
+struct State {
+  Slot panelSlot;
+  Slot badgeSlot;
+  wgpu::RenderPipeline pipeline;
+  wgpu::BindGroupLayout bindGroupLayout;
+  wgpu::TextureFormat pipelineFormat = wgpu::TextureFormat::Undefined;
   // Stands in for the panel in a layer while it is not showing.
   webgpu::TextureWithSampler transparent;
   bool transparentCleared = false;
@@ -89,7 +97,8 @@ bool ensure_pipeline() {
     return true;
   }
   state.pipeline = {};
-  state.bindGroups = {};
+  state.panelSlot.bindGroups = {};
+  state.badgeSlot.bindGroups = {};
 
   wgpu::ShaderSourceWGSL source{};
   source.code = kShader;
@@ -184,41 +193,43 @@ bool ensure_pipeline() {
   if (!state.pipeline) {
     return false;
   }
-  for (auto& uniform : state.uniforms) {
-    if (!uniform) {
-      const wgpu::BufferDescriptor bufferDescriptor{
-          .label = "Headset panel uniform",
-          .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
-          .size = sizeof(Mat4x4<float>),
-      };
-      uniform = g_device.CreateBuffer(&bufferDescriptor);
+  for (Slot* slot : {&state.panelSlot, &state.badgeSlot}) {
+    for (auto& uniform : slot->uniforms) {
+      if (!uniform) {
+        const wgpu::BufferDescriptor bufferDescriptor{
+            .label = "Headset panel uniform",
+            .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+            .size = sizeof(Mat4x4<float>),
+        };
+        uniform = g_device.CreateBuffer(&bufferDescriptor);
+      }
     }
   }
   state.pipelineFormat = format;
   return true;
 }
 
-void composite(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& target, const Mat4x4<float>& clipFromPanel,
-               uint32_t eyeIndex) noexcept {
+void composite(Slot& slot, const wgpu::CommandEncoder& encoder, const wgpu::TextureView& target,
+               const Mat4x4<float>& clipFromPanel, uint32_t eyeIndex) noexcept {
   auto& state = g_state;
-  if (!state.visible || !state.pipeline || eyeIndex >= AURORA_STEREO_EYE_COUNT || !target) {
+  if (!slot.visible || !state.pipeline || eyeIndex >= AURORA_STEREO_EYE_COUNT || !target) {
     return;
   }
-  auto& bindGroup = state.bindGroups[eyeIndex];
+  auto& bindGroup = slot.bindGroups[eyeIndex];
   if (!bindGroup) {
     const std::array entries{
         wgpu::BindGroupEntry{
             .binding = 0,
-            .buffer = state.uniforms[eyeIndex],
+            .buffer = slot.uniforms[eyeIndex],
             .size = sizeof(Mat4x4<float>),
         },
         wgpu::BindGroupEntry{
             .binding = 1,
-            .sampler = state.panel.sampler,
+            .sampler = slot.texture.sampler,
         },
         wgpu::BindGroupEntry{
             .binding = 2,
-            .textureView = state.panel.view,
+            .textureView = slot.texture.view,
         },
     };
     const wgpu::BindGroupDescriptor descriptor{
@@ -231,7 +242,7 @@ void composite(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& tar
   }
   // Each eye has its own uniform, and every pass that reads it is submitted
   // before this worker writes it again.
-  g_queue.WriteBuffer(state.uniforms[eyeIndex], 0, &clipFromPanel, sizeof(clipFromPanel));
+  g_queue.WriteBuffer(slot.uniforms[eyeIndex], 0, &clipFromPanel, sizeof(clipFromPanel));
 
   const std::array attachments{
       wgpu::RenderPassColorAttachment{
@@ -253,17 +264,15 @@ void composite(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& tar
   pass.End();
 }
 
-float panel_aspect() noexcept {
-  const auto& size = g_state.panel.size;
+float slot_aspect(const Slot& slot) noexcept {
+  const auto& size = slot.texture.size;
   return size.height != 0 ? static_cast<float>(size.width) / static_cast<float>(size.height) : 0.f;
 }
 
-} // namespace
-
-wgpu::CommandBuffer prepare(ImDrawData* drawData, float widthFraction) noexcept {
+wgpu::CommandBuffer prepare_slot(Slot& slot, ImDrawData* drawData, float widthFraction, const char* label) noexcept {
   ZoneScoped;
   auto& state = g_state;
-  state.visible = false;
+  slot.visible = false;
   if (drawData == nullptr || !(widthFraction > 0.f)) {
     return {};
   }
@@ -273,31 +282,31 @@ wgpu::CommandBuffer prepare(ImDrawData* drawData, float widthFraction) noexcept 
     return {};
   }
   const auto format = webgpu::g_graphicsConfig.surfaceConfiguration.format;
-  if (!state.panel.texture || state.panel.size.width != width || state.panel.size.height != height ||
-      state.panel.format != format) {
-    state.panel = webgpu::create_render_texture(width, height, false);
-    state.bindGroups = {};
+  if (!slot.texture.texture || slot.texture.size.width != width || slot.texture.size.height != height ||
+      slot.texture.format != format) {
+    slot.texture = webgpu::create_render_texture(width, height, false);
+    slot.bindGroups = {};
   }
   // The ImGui backend sets its viewport from the draw data, so a texture the
   // device clamped to a smaller size cannot hold the pass.
-  if (state.panel.size.width != width || state.panel.size.height != height) {
+  if (slot.texture.size.width != width || slot.texture.size.height != height) {
     return {};
   }
 
   const wgpu::CommandEncoderDescriptor encoderDescriptor{
-      .label = "Headset panel encoder",
+      .label = label,
   };
   auto encoder = g_device.CreateCommandEncoder(&encoderDescriptor);
   const std::array attachments{
       wgpu::RenderPassColorAttachment{
-          .view = state.panel.view,
+          .view = slot.texture.view,
           .loadOp = wgpu::LoadOp::Clear,
           .storeOp = wgpu::StoreOp::Store,
           .clearValue = {.r = 0.0, .g = 0.0, .b = 0.0, .a = 0.0},
       },
   };
   const wgpu::RenderPassDescriptor passDescriptor{
-      .label = "Headset panel ImGui pass",
+      .label = label,
       .colorAttachmentCount = attachments.size(),
       .colorAttachments = attachments.data(),
       .timestampWrites = gfx::gpu_timing_pass(gfx::GpuTimingCategory::Panel),
@@ -311,37 +320,62 @@ wgpu::CommandBuffer prepare(ImDrawData* drawData, float widthFraction) noexcept 
   if (!drawn) {
     return {};
   }
-  state.widthFraction = widthFraction;
-  state.visible = true;
+  slot.widthFraction = widthFraction;
+  slot.visible = true;
   return encoder.Finish();
+}
+
+} // namespace
+
+wgpu::CommandBuffer prepare(ImDrawData* drawData, float widthFraction) noexcept {
+  return prepare_slot(g_state.panelSlot, drawData, widthFraction, "Headset panel ImGui pass");
+}
+
+wgpu::CommandBuffer prepare_badge(ImDrawData* drawData, float widthFraction, float centerX, float centerY) noexcept {
+  auto buffer = prepare_slot(g_state.badgeSlot, drawData, widthFraction, "Headset badge ImGui pass");
+  g_state.badgeSlot.centerX = centerX;
+  g_state.badgeSlot.centerY = centerY;
+  return buffer;
 }
 
 void composite_immersive(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& eye,
                          const Mat4x4<float>& eyeFrustum, const Mat3x4<float>& viewFromCenter,
                          uint32_t eyeIndex) noexcept {
-  if (!g_state.visible || layer_mode()) {
-    return;
+  auto& state = g_state;
+  if (state.panelSlot.visible && !layer_mode()) {
+    float screenWidth = 0.f;
+    float screenDistance = 0.f;
+    gfx::get_stereo_hud_screen_size(screenWidth, screenDistance);
+    const auto panel = gfx::stereo_replay::overlay_panel_on_screen(screenWidth, screenDistance,
+                                                                   state.panelSlot.widthFraction,
+                                                                   slot_aspect(state.panelSlot));
+    if (panel.valid()) {
+      composite(state.panelSlot, encoder, eye,
+                gfx::stereo_replay::compose_overlay_panel_projection(eyeFrustum, viewFromCenter, panel), eyeIndex);
+    }
   }
-  float screenWidth = 0.f;
-  float screenDistance = 0.f;
-  gfx::get_stereo_hud_screen_size(screenWidth, screenDistance);
-  const auto panel = gfx::stereo_replay::overlay_panel_on_screen(screenWidth, screenDistance, g_state.widthFraction,
-                                                                 panel_aspect());
-  if (!panel.valid()) {
-    return;
+  if (state.badgeSlot.visible) {
+    gfx::stereo_replay::HudScreen screen;
+    gfx::get_stereo_window_screen(screen.halfWidth, screen.halfHeight, screen.distance);
+    const auto badge = gfx::stereo_replay::overlay_panel_at(screen, state.badgeSlot.widthFraction,
+                                                            slot_aspect(state.badgeSlot), state.badgeSlot.centerX,
+                                                            state.badgeSlot.centerY);
+    if (badge.valid()) {
+      composite(state.badgeSlot, encoder, eye,
+                gfx::stereo_replay::compose_overlay_panel_projection(eyeFrustum, viewFromCenter, badge), eyeIndex);
+    }
   }
-  composite(encoder, eye, gfx::stereo_replay::compose_overlay_panel_projection(eyeFrustum, viewFromCenter, panel),
-            eyeIndex);
 }
 
 void composite_flat(const wgpu::CommandEncoder& encoder, const wgpu::TextureView& eye, const wgpu::Extent3D& size,
                     uint32_t eyeIndex) noexcept {
-  if (!g_state.visible || layer_mode() || size.width == 0 || size.height == 0) {
+  auto& slot = g_state.panelSlot;
+  if (!slot.visible || layer_mode() || size.width == 0 || size.height == 0) {
     return;
   }
   const float imageAspect = static_cast<float>(size.width) / static_cast<float>(size.height);
-  composite(encoder, eye,
-            gfx::stereo_replay::overlay_panel_flat_projection(g_state.widthFraction, panel_aspect(), imageAspect),
+  composite(slot, encoder, eye,
+            gfx::stereo_replay::overlay_panel_flat_projection(slot.widthFraction, slot_aspect(slot), imageAspect),
             eyeIndex);
 }
 
@@ -355,9 +389,10 @@ bool layer_source(const wgpu::CommandEncoder& encoder, uint32_t width, uint32_t 
   if (width == 0 || height == 0) {
     return false;
   }
-  if (state.visible && state.panel.texture && state.panel.size.width == width && state.panel.size.height == height &&
-      state.panel.format == format) {
-    out = {.texture = &state.panel.texture, .view = &state.panel.view, .size = state.panel.size, .format = format};
+  const auto& panel = state.panelSlot;
+  if (panel.visible && panel.texture.texture && panel.texture.size.width == width &&
+      panel.texture.size.height == height && panel.texture.format == format) {
+    out = {.texture = &panel.texture.texture, .view = &panel.texture.view, .size = panel.texture.size, .format = format};
     return true;
   }
   if (!state.transparent.texture || state.transparent.size.width != width ||

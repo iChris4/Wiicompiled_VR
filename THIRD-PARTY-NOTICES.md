@@ -97,6 +97,20 @@ palm profiles from its calibration workshop (`runtime/include/vr/body_hand_profi
 camera modes (`runtime/include/vr/vr_controls.h`), the Bullet Bill flag read
 (`runtime/include/vr/mkw_vr_player.h`) and their tests.
 
+### MKW-VoiceChat - GPL-3.0
+
+- Source: <https://github.com/zurasaaa/MKW-VoiceChat> (version 0.14.8)
+- Author: zurasaaa
+- License: GNU General Public License v3.0, the license of WiiCompiled.
+
+Voice chat (`docs/voice-chat.md`) speaks MKW-VoiceChat's protocol, and its voice engine is ported
+from it: the audio engine, processing chain, Opus codec wrapper, adaptive jitter buffer, WebRTC
+peer transport, signaling client and voice client in `runtime/voicechat/core`, and the packet,
+ICE bundle and signaling formats in `runtime/voicechat/proto`. The room reads in
+`runtime/include/voicechat/voice_room_mkw.h` use the RKNet offsets its runtime bridge reads. The
+files carry that attribution in their headers. The RNNoise compatibility header
+`runtime/voicechat/third_party/rnnoise/os_support.h` is the same shim MKW-VoiceChat vendors.
+
 ### pugixml - MIT
 
 Copyright (c) 2006-2025 Arseny Kapoulkine.
@@ -141,7 +155,8 @@ Source: <https://github.com/higan-emu/libco>. Full license text:
 ## Fetched at build time and redistributed in release builds
 
 These are pinned in `aurora-main/extern/CMakeLists.txt`, `aurora-main/CMakeLists.txt`,
-`aurora-main/cmake/AuroraDawnProvider.cmake`, and (for Mbed TLS) `runtime/CMakeLists.txt`. They are
+`aurora-main/cmake/AuroraDawnProvider.cmake`, (for Mbed TLS) `runtime/CMakeLists.txt`, and (for
+voice chat) `runtime/cmake/VoiceChat.cmake`. They are
 not stored in this repository; the build downloads them - each fetch is pinned to an exact version
 with a checked SHA-256 - and links or redistributes the resulting binaries. Their license texts are
 included in the installer's `licenses/` folder. The Windows installer bundles the pinned source
@@ -150,6 +165,13 @@ trees themselves (fetched by `Launcher/Prepare-Dependencies.ps1`) so end-user bu
 | Component | Version | License | Upstream |
 | --- | --- | --- | --- |
 | Mbed TLS | 3.6.7 | Apache-2.0 / GPL-2.0-or-later | <https://github.com/Mbed-TLS/mbedtls> |
+| Opus (voice chat) | 1.6.1 | BSD-3-Clause | <https://github.com/xiph/opus> |
+| RNNoise and its v0.2 model (voice chat) | 0.2, model 0b50c45 | BSD-3-Clause | <https://github.com/xiph/rnnoise> |
+| miniaudio (voice chat) | 0.11.25 | Public domain (Unlicense) or MIT-0 | <https://github.com/mackron/miniaudio> |
+| libdatachannel (voice chat) | 0.24.5 | **MPL-2.0** - see below | <https://github.com/paullouisageneau/libdatachannel> |
+| libjuice (voice chat) | 1.7.2 | **MPL-2.0** - see below | <https://github.com/paullouisageneau/libjuice> |
+| usrsctp (voice chat) | commit fec583d | BSD-3-Clause | <https://github.com/sctplab/usrsctp> |
+| plog (voice chat) | commit 94899e0 | MIT | <https://github.com/SergiusTheBest/plog> |
 | Dawn (WebGPU) | `v20260603.191052` prebuilt | BSD-3-Clause | <https://dawn.googlesource.com/dawn> |
 | Tint (part of Dawn) | with Dawn | BSD-3-Clause | <https://dawn.googlesource.com/dawn> |
 | DirectXShaderCompiler (`dxcompiler.dll`) | with Dawn | NCSA / University of Illinois Open Source | <https://github.com/microsoft/DirectXShaderCompiler> |
@@ -203,6 +225,11 @@ and in the toolchain's `llvm/licenses/`).
 libiconv is LGPL-licensed and ships as the unmodified shared library `libiconv.so`, which can be
 replaced; its complete corresponding source is available from the Termux package repository and
 from GNU, and this project will supply it on request for the version shipped.
+
+libdatachannel and libjuice are under the Mozilla Public License 2.0, a file-level copyleft that
+allows linking into this GPL-3.0 program. They are built unmodified from the pinned upstream
+archives, and their complete source is the one the installer ships under
+`BuildWorkspace\Dependencies` (and the upstream tags above).
 
 ### Dual-licensed components - elections made by this project
 

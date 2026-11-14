@@ -206,6 +206,11 @@ if(NOT MKW_PLATFORM_WINDOWS)
     endif()
 endif()
 
+# Room voice chat: mkw::voicechat (the engine, or a stub without MKW_ENABLE_VOICECHAT) and
+# mkw_voicechat_proto. Before the project-wide compile definitions below, so its third-party
+# trees build with their own settings only.
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/VoiceChat.cmake")
+
 set(MKW_TRANSLATED_COMPILE_JOBS 0 CACHE STRING
     "Cap on concurrently compiling translated shard TUs via a Ninja job pool (0 = uncapped). \
 Scheduling only - never affects output bytes, so it is deliberately outside the canonical flag fingerprint.")
@@ -504,6 +509,7 @@ if(MKW_BUILD_TESTS)
     # The VR camera, input, policy and OpenXR contracts; they need the vendored
     # toml11 and the OpenXR loader target configured above.
     include("${CMAKE_CURRENT_LIST_DIR}/cmake/VrTests.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/VoiceChatTests.cmake")
 endif()
 
 set(MKW_RUNTIME_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
@@ -559,7 +565,7 @@ else()
         target_compile_definitions(mkw_macos_native_compile PRIVATE SDL_MAIN_HANDLED TARGET_PC)
         target_link_libraries(mkw_macos_native_compile PRIVATE
             aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx
-            mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls)
+            mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls mkw::voicechat)
         if(MKW_PLATFORM_MACOS_X86_64)
             target_link_libraries(mkw_macos_native_compile PRIVATE mkw::libco)
             target_compile_options(mkw_macos_native_compile PRIVATE
@@ -588,7 +594,7 @@ else()
         # mkw_mbedtls: network_ssl.cpp, the TLS backend the Android products link.
         target_link_libraries(mkw_android_native_compile PRIVATE
             aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx
-            mkw::pugixml mkw::toml11 mkw::cryptopp mkw::libco mkw_mbedtls)
+            mkw::pugixml mkw::toml11 mkw::cryptopp mkw::libco mkw_mbedtls mkw::voicechat)
         if(MKW_ENABLE_OPENXR)
             target_link_libraries(mkw_android_native_compile PRIVATE ${MKW_OPENXR_TARGET})
         endif()

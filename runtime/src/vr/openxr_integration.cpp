@@ -5,6 +5,7 @@
 #endif
 
 #include "vr/openxr_integration.h"
+#include "vr/openxr_voice.h"
 
 #include "runtime_config.h"
 #include "gx_thread.h"
@@ -1370,6 +1371,7 @@ private:
         }
         if (!immersive) {
             last_immersive_ = false;
+            OpenXRPublishHeadRotation(nullptr);
             return;
         }
 
@@ -1403,6 +1405,8 @@ private:
                          position_valid && base_position_valid_, units_per_meter,
                          lean_back_radians, destination.eyes[eye].viewFromCenter);
         }
+        // Voice chat places race voices around the listener's head.
+        OpenXRPublishHeadRotation(destination.eyes[0].viewFromCenter);
         BuildCockpit(source, position_valid, units_per_meter, lean_back_radians, destination.cockpit);
     }
 

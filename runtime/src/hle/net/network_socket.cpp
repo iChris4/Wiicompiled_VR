@@ -1,5 +1,7 @@
 #include "network_internal.h"
 
+#include "voicechat/voice_api.h"
+
 namespace NetworkHle {
 
 static int32_t NewWiiSocket(uint32_t af, uint32_t type, uint32_t protocol) {
@@ -27,6 +29,7 @@ int32_t DeleteWiiSocket(uint32_t fd) {
         return -SO_EBADF;
     }
     ClearSslSessionsForSocket(fd);
+    mkw::voicechat::ObserveSocketClosed(fd);
     CloseNativeSocket(s->native);
     *s = {};
     s->native = kInvalidSocket;
@@ -188,6 +191,11 @@ int32_t HandleIpTopIoctl(uint32_t cmd, uint32_t inBuf, uint32_t inLen, uint32_t 
             result = SocketErrorResult(NormalizeConnectError(NativeLastError()), false);
         } else {
             result = SocketResult(ret, false);
+        }
+        // Voice chat finds the GameSpy login on the socket aimed at its port; a nonblocking connect
+        // in progress (as the game's are) records no peer port below.
+        if (cmd == IOCTL_SO_CONNECT && s->type == SOCK_STREAM) {
+            mkw::voicechat::ObserveTcpConnect(requestFd, ntohs(addr.sin_port));
         }
         if (cmd == IOCTL_SO_CONNECT && result == 0) {
             s->peerPort = ntohs(addr.sin_port);
@@ -467,6 +475,11 @@ int32_t HandleIpTopIoctlv(uint32_t cmd, const std::vector<IoVector>& in, const s
         const int ret = sendto(s->native, reinterpret_cast<const char*>(sendData), static_cast<int>(sendSize),
                                static_cast<int>(flags), destPtr, destLen);
         const int hostError = ret < 0 ? NativeLastError() : 0;
+        // Voice chat learns the online login from the GPCM stream (port 29900). It copies what was
+        // sent and never alters it.
+        if (ret > 0 && !destPtr && !patchedWrite && s->type == SOCK_STREAM) {
+            mkw::voicechat::ObserveTcpSend(fd, s->peerPort, data, static_cast<std::size_t>(ret));
+        }
         // Diagnostics may change the native error; use the send result captured above.
         int32_t result = ret >= 0 ? SocketResult(ret) : SocketErrorResult(hostError);
         if (patchedWrite && ret == static_cast<int>(sendSize)) {
@@ -517,6 +530,11 @@ int32_t HandleIpTopIoctlv(uint32_t cmd, const std::vector<IoVector>& in, const s
             WriteWiiSockAddr(out[1].address, from, static_cast<uint32_t>(fromLen));
         }
         const int32_t result = ret >= 0 ? SocketResult(ret) : SocketErrorResult(nativeErr);
+        // A peek leaves the bytes queued; they are observed when actually read.
+        if (ret > 0 && s->type == SOCK_STREAM && (flags & 0x02u) == 0) {
+            mkw::voicechat::ObserveTcpReceive(fd, s->peerPort, reinterpret_cast<const uint8_t*>(data),
+                                              static_cast<std::size_t>(ret));
+        }
         if (ret < 0 && result != -SO_EAGAIN && result != s->lastLoggedRecvError) {
             s->lastLoggedRecvError = result;
             NetFail("recv failed fd=%u host=%d wii=%d", fd, nativeErr, result);

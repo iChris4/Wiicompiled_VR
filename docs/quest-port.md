@@ -645,6 +645,25 @@ partial wake lock. A multi-minute extraction then survives the panel being
 closed and the headset being taken off. `DiscChecksTest` covers the acceptance
 rules and their messages.
 
+### Voice chat
+
+Voice chat (`docs/voice-chat.md`) runs in the game process like on the PC; the Quest differences:
+
+- `RECORD_AUDIO` is a runtime permission. `QuestActivity` runs in VR where the system cannot show
+  its prompt, so `LauncherActivity` asks when Play starts a Retro Rewind game with
+  `[voicechat] enabled = true`, once per launcher session. Refused, the game still hears the room
+  (the audio engine falls back to playback only and the Voice tab says why).
+- miniaudio opens AAudio (OpenSL ES as fallback) on the voice worker thread, never a guest fiber.
+  Capture uses the voice-communication input preset (`platform_voice_processing`, on by default),
+  which turns on the headset's echo canceller and noise suppressor so the strap speakers do not
+  open the microphone; RNNoise is therefore off by default here. Playback uses the game usage, so
+  nothing is routed or ducked as a call.
+- mbed TLS cannot read Android's trust store: `cacert.pem` now travels in `runtime_resources`
+  (the guest's HTTPS gets it too).
+- Opus, RNNoise, miniaudio, libdatachannel, libjuice, usrsctp and mbed TLS are static libraries on
+  the kit probes' link lines, so the game kit carries them with no extra rule; adding them changed
+  the kit fingerprint, and both games are rebuilt.
+
 ### No game code in the APK: the game kit
 
 Like the PC installer, which compiles the translated game on the player's machine, the base

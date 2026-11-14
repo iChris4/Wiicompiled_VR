@@ -9,6 +9,7 @@
 #include <windows.h>
 #endif
 
+#include "vr/openxr_voice.h"
 #include "vr/openxr_input.h"
 #include "physical_wheel.h"
 #include "runtime_config.h"
@@ -1068,6 +1069,8 @@ void OpenXRInput::Sync(XrTime predicted_display_time, const OpenXRPointerScreen&
     // While the panel has the controllers, and always when they are nothing to
     // the game, the game sees them idle.
     const bool withheld = panel.withheld || mode == OpenXRControllerMode::None;
+    // Voice chat's optional push-to-talk (F10 > Voice Chat), idle like any game input.
+    OpenXRPublishVoiceButton(!withheld && hands[0].thumbstick_click);
     // Pointer first: the game thread reads it as soon as it sees the panel open.
     PublishSettingsPanel(input_time, settings_panel, panel);
     if (open != was_open) {

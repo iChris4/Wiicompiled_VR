@@ -24,6 +24,8 @@ $auroraDawn = Join-Path $repoRoot 'aurora-main\cmake\AuroraDawnProvider.cmake'
 $auroraLibUsb = Join-Path $repoRoot 'aurora-main\cmake\AuroraLibUSB.cmake'
 $auroraSdl = Join-Path $repoRoot 'aurora-main\cmake\AuroraSDL3Provider.cmake'
 $runtimeCMake = Join-Path $repoRoot 'runtime\CMakeLists.txt'
+$voiceCMake = Join-Path $repoRoot 'runtime\cmake\VoiceChat.cmake'
+$mbedtlsPin = Join-Path $repoRoot 'runtime\cmake\MbedTLSPin.cmake'
 if (-not (Test-Path -LiteralPath $auroraCMake -PathType Leaf)) {
     throw 'Aurora sources are missing: this fork vendors them in aurora-main\. Restore that directory first.'
 }
@@ -127,6 +129,68 @@ $packages = @(
         Sha256 = 'eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3'
         Uris = @('https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz')
         Pins = @(@{ File = $auroraExtern; Text = 'https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz' })
+    },
+    # Room voice chat (runtime/cmake/VoiceChat.cmake). mbed TLS is the pin the non-Windows network
+    # HLE already uses; Windows needs it for voice chat's WebRTC transport only.
+    [pscustomobject]@{
+        Name = 'mkw_mbedtls_upstream'; File = 'mbedtls-3.6.7.tar.bz2'
+        Sha256 = 'a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6'
+        Uris = @('https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2')
+        Pins = @(@{ File = $mbedtlsPin; Text = 'set(MKW_MBEDTLS_VERSION "3.6.7")' },
+                 @{ File = $mbedtlsPin; Text = 'a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6' })
+    },
+    [pscustomobject]@{
+        Name = 'mkw_opus'; File = 'opus-1.6.1.tar.gz'
+        Sha256 = 'bf0b97ec7a65890b8db90ef94c4d6c18de12584c3085031953a10986f5917745'
+        Uris = @('https://github.com/xiph/opus/archive/v1.6.1.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=bf0b97ec7a65890b8db90ef94c4d6c18de12584c3085031953a10986f5917745' })
+    },
+    [pscustomobject]@{
+        Name = 'mkw_miniaudio'; File = 'miniaudio-0.11.25.tar.gz'
+        Sha256 = 'b900edcffe979816e2560a0580b9b1216d674b4f17fbadeca8f777a7f8ab0274'
+        Uris = @('https://github.com/mackron/miniaudio/archive/0.11.25.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=b900edcffe979816e2560a0580b9b1216d674b4f17fbadeca8f777a7f8ab0274' })
+        Prune = @('examples', 'research', 'tests', 'website')
+    },
+    [pscustomobject]@{
+        Name = 'mkw_rnnoise'; File = 'rnnoise-0.2.tar.gz'
+        Sha256 = 'e4a17eb1493b7551f9f7781d2acc67b8847d6ed7c4b64db0fd62c017021ae1ec'
+        Uris = @('https://github.com/xiph/rnnoise/archive/refs/tags/v0.2.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=e4a17eb1493b7551f9f7781d2acc67b8847d6ed7c4b64db0fd62c017021ae1ec' })
+    },
+    [pscustomobject]@{
+        Name = 'mkw_rnnoise_model'; File = 'rnnoise_data-0b50c45.tar.gz'
+        Sha256 = '4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43'
+        Uris = @('https://media.xiph.org/rnnoise/models/rnnoise_data-0b50c45.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43' })
+        # Only src/rnnoise_data.[ch] is compiled: not the training checkpoint or the small model.
+        Prune = @('models', 'src\rnnoise_data_little.c', 'src\rnnoise_data_little.h')
+    },
+    [pscustomobject]@{
+        Name = 'mkw_plog'; File = 'plog-94899e0b926ac1b0f4750bfbd495167b4a6ae9ef.tar.gz'
+        Sha256 = '92a08bce559b5f28aa88d3fd9071567414b9f43a83fe2a05a6dd14f1da536072'
+        Uris = @('https://github.com/SergiusTheBest/plog/archive/94899e0b926ac1b0f4750bfbd495167b4a6ae9ef.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=92a08bce559b5f28aa88d3fd9071567414b9f43a83fe2a05a6dd14f1da536072' })
+    },
+    [pscustomobject]@{
+        Name = 'mkw_usrsctp'; File = 'usrsctp-fec583d54493f879d2ae44a743423bf8a04371ab.tar.gz'
+        Sha256 = 'e5c114afe73c9a0ec419fab5f5b3f63f3ce57b09b90d06ea85e63dca8aed3e7c'
+        Uris = @('https://github.com/sctplab/usrsctp/archive/fec583d54493f879d2ae44a743423bf8a04371ab.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=e5c114afe73c9a0ec419fab5f5b3f63f3ce57b09b90d06ea85e63dca8aed3e7c' })
+    },
+    [pscustomobject]@{
+        Name = 'mkw_libjuice'; File = 'libjuice-1.7.2.tar.gz'
+        Sha256 = '75159867c4a5a689a6559e11aa0d30c9eba12ce73a4ae3d898b521467e1f635d'
+        Uris = @('https://github.com/paullouisageneau/libjuice/archive/refs/tags/v1.7.2.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=75159867c4a5a689a6559e11aa0d30c9eba12ce73a4ae3d898b521467e1f635d' })
+    },
+    [pscustomobject]@{
+        Name = 'mkw_libdatachannel'; File = 'libdatachannel-0.24.5.tar.gz'
+        Sha256 = '454537c3cd526bed935d847bb2dff4046f266eef84d43b2a5f2f2f293c0026f4'
+        Uris = @('https://github.com/paullouisageneau/libdatachannel/archive/refs/tags/v0.24.5.tar.gz')
+        Pins = @(@{ File = $voiceCMake; Text = 'SHA256=454537c3cd526bed935d847bb2dff4046f266eef84d43b2a5f2f2f293c0026f4' })
+        # 50 MB of browser examples; the library builds with NO_EXAMPLES and NO_TESTS.
+        Prune = @('examples', 'pages', 'test')
     }
 )
 
@@ -229,6 +293,14 @@ function Install-Package($Package, [string]$Target, [string]$RequiredFile) {
     $ready = if ($RequiredFile) { Test-Path -LiteralPath $RequiredFile -PathType Leaf } else { Test-Path -LiteralPath $Target -PathType Container }
     if ($ready -and (Test-Stamp $Target (Get-Stamp $Package))) { return }
     Expand-Package (Get-Archive $Package) $Target
+    # Parts of an archive no build reads (examples, tests, unused data), dropped from the tree the
+    # installer ships.
+    if ($Package.PSObject.Properties['Prune']) {
+        foreach ($relative in $Package.Prune) {
+            $path = Join-Path $Target $relative
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+        }
+    }
     [IO.File]::WriteAllText($Target + '.source', (Get-Stamp $Package))
     Write-Host "Prepared $($Package.Name)"
 }

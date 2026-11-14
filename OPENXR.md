@@ -1368,6 +1368,25 @@ GPU line then shows one `eyes` figure instead of `eyeL` and `eyeR`. In that pass
 its pair of eye uniforms, indexed by the view; a draw the eyes keep on its recorded transforms, such as
 the dynamic shadows' tint quad, binds two copies of the uniform it recorded with.
 
+## Voice chat in the headset
+
+Voice chat (Retro Rewind rooms, `docs/voice-chat.md`) has its own tab in the headset panel. Two parts
+are VR-specific:
+
+- **Positional voices** (`[voicechat] positional`, on). In a race each voice comes from its
+  player's kart, placed through the same chain the eyes use: the scene's camera, the first-person
+  anchor when it is engaged, then the head rotation the pacing thread built this frame's eyes with
+  (`vr/openxr_voice.h`, published from `BuildPublishedFrame`). Plain stereo panning with a gentle
+  roll-off; centred outside races.
+- **The badge.** The desktop overlay's who-is-talking list reaches the headset on menu screens. In
+  an immersive race a small badge is laid on the race's 2D screen at its left edge, through a second
+  overlay slot beside the settings panel's (`aurora_imgui_set_stereo_badge`, drawn by
+  `stereo_overlay::composite_immersive`). It is drawn into the eyes even in panel layer mode, never
+  as a compositor layer, hidden while the panel is open, and exists only while someone talks or for
+  3 s after mute or deafen changed: otherwise there is no ImGui frame, no pass and no composite.
+- **Push to talk** in VR is holding the left thumbstick in (`talk_mode = "push_to_talk"`); the
+  default is voice activation, with mute and deafen in the Voice tab.
+
 ## Diagnostics
 
 **F10 > Diagnostics** holds three bug-report aids.

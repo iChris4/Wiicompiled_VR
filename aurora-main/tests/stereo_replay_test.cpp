@@ -293,6 +293,71 @@ TEST(StereoReplayTest, OverlayPanelCornersFollowTheEyeChain) {
   }
 }
 
+TEST(StereoReplayTest, BadgeOffsetMovesThePanelOnTheScreenPlane) {
+  Mat4x4<float> eyeFrustum{};
+  eyeFrustum.m0 = {1.15f, 0.0f, 0.08f, 0.0f};
+  eyeFrustum.m1 = {0.0f, 1.02f, -0.03f, 0.0f};
+  const float angle = -0.2f;
+  const float c = std::cos(angle);
+  const float s = std::sin(angle);
+  Mat3x4<float> viewFromCenter{};
+  viewFromCenter.m0 = {c, 0.0f, s, -6.0f};
+  viewFromCenter.m1 = {0.0f, 1.0f, 0.0f, 3.0f};
+  viewFromCenter.m2 = {-s, 0.0f, c, 2.0f};
+
+  // A 1200 x 675 screen 1000 ahead; a 3:1 badge a fifth of its width, at the middle of its left edge.
+  const HudScreen screen{.halfWidth = 600.0f, .halfHeight = 337.5f, .distance = 1000.0f};
+  const auto badge = overlay_panel_at(screen, 0.2f, 3.0f, -1.0f, 0.0f);
+  ASSERT_TRUE(badge.valid());
+  EXPECT_FLOAT_EQ(badge.halfWidth, 120.0f);
+  EXPECT_FLOAT_EQ(badge.halfHeight, 40.0f);
+  // Pulled in so its left edge stays on the screen.
+  EXPECT_FLOAT_EQ(badge.centerX, -480.0f);
+  EXPECT_FLOAT_EQ(badge.centerY, 0.0f);
+
+  const auto composed = compose_overlay_panel_projection(eyeFrustum, viewFromCenter, badge);
+  for (const Vec4<float> corner : {Vec4<float>{-1.0f, 1.0f, 0.0f, 1.0f}, Vec4<float>{1.0f, -1.0f, 0.0f, 1.0f},
+                                   Vec4<float>{0.0f, 0.0f, 0.0f, 1.0f}}) {
+    const Vec4<float> centerPoint{badge.centerX + corner[0] * badge.halfWidth,
+                                  badge.centerY + corner[1] * badge.halfHeight, -badge.distance, 1.0f};
+    const float eyeX = dot4(viewFromCenter.m0, centerPoint);
+    const float eyeY = dot4(viewFromCenter.m1, centerPoint);
+    const float eyeZ = dot4(viewFromCenter.m2, centerPoint);
+    EXPECT_NEAR(dot4(composed.m0, corner), eyeFrustum.m0[0] * eyeX + eyeFrustum.m0[2] * eyeZ, 1e-2f);
+    EXPECT_NEAR(dot4(composed.m1, corner), eyeFrustum.m1[1] * eyeY + eyeFrustum.m1[2] * eyeZ, 1e-2f);
+    EXPECT_NEAR(dot4(composed.m3, corner), -eyeZ, 1e-2f);
+  }
+
+  // Corners stay on the screen; a centred request with no room to move is centred.
+  const auto topRight = overlay_panel_at(screen, 0.2f, 3.0f, 1.0f, 1.0f);
+  EXPECT_FLOAT_EQ(topRight.centerX, 480.0f);
+  EXPECT_FLOAT_EQ(topRight.centerY, 297.5f);
+  EXPECT_FALSE(overlay_panel_at(HudScreen{}, 0.2f, 3.0f, 0.0f, 0.0f).valid());
+}
+
+TEST(StereoReplayTest, CentredPanelMatrixIsUnchangedByTheBadgeOffset) {
+  Mat4x4<float> eyeFrustum{};
+  eyeFrustum.m0 = {1.1f, 0.0f, 0.05f, 0.0f};
+  eyeFrustum.m1 = {0.0f, 1.0f, 0.02f, 0.0f};
+  Mat3x4<float> viewFromCenter{};
+  viewFromCenter.m0 = {1.0f, 0.0f, 0.0f, 1.0f};
+  viewFromCenter.m1 = {0.0f, 1.0f, 0.0f, 2.0f};
+  viewFromCenter.m2 = {0.0f, 0.0f, 1.0f, 3.0f};
+  const OverlayPanel panel{.halfWidth = 450.0f, .halfHeight = 337.5f, .distance = 1000.0f};
+  const HudScreen asScreen{.halfWidth = 450.0f, .halfHeight = 337.5f, .distance = 1000.0f};
+  Mat4x4<float> identityCorners{};
+  identityCorners.m0 = {1.0f, 0.0f, 0.0f, 0.0f};
+  identityCorners.m1 = {0.0f, 1.0f, 0.0f, 0.0f};
+  identityCorners.m3 = {0.0f, 0.0f, 0.0f, 1.0f};
+  const auto expected = compose_hud_screen_projection(eyeFrustum, viewFromCenter, asScreen, identityCorners);
+  const auto composed = compose_overlay_panel_projection(eyeFrustum, viewFromCenter, panel);
+  for (size_t i = 0; i < 4; ++i) {
+    EXPECT_FLOAT_EQ(composed.m0[i], expected.m0[i]);
+    EXPECT_FLOAT_EQ(composed.m1[i], expected.m1[i]);
+    EXPECT_FLOAT_EQ(composed.m3[i], expected.m3[i]);
+  }
+}
+
 TEST(StereoReplayTest, OverlayPanelOnAFlatEyeKeepsItsAspect) {
   // A 4:3 panel three quarters across a 2064x2208 eye image.
   const float imageAspect = 2064.0f / 2208.0f;

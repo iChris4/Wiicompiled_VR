@@ -16,6 +16,10 @@
          which older builds still need. -->
     <uses-permission android:name="horizonos.permission.HAND_TRACKING" />
     <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
+    <!-- Room voice chat ([voicechat] enabled): a runtime permission. The launcher asks before Play,
+         because the game's process runs in VR where no prompt can show; without it the game
+         still hears the room. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <queries>
         <provider android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />
