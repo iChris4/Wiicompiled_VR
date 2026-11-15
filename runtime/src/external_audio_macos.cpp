@@ -1,4 +1,5 @@
-#if defined(__APPLE__)
+// macOS only: the CoreAudio HAL process list has no visionOS counterpart.
+#if defined(__APPLE__) && !defined(MKW_PLATFORM_VISIONOS)
 
 #include "external_audio_macos.h"
 

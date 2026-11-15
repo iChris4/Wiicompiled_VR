@@ -17,6 +17,18 @@
 #include <utility>
 #include <vector>
 
+#if defined(MKW_PLATFORM_VISIONOS)
+
+// Apple Vision Pro: there is no Steam client to hand a controller layout to, and the iOS-family
+// SDK has neither libproc nor a URL handler to spawn.
+namespace SteamInputLayout {
+void Initialize(bool, uint32_t) {}
+void HandleEvents(const AuroraEvent*) {}
+void Release() noexcept {}
+} // namespace SteamInputLayout
+
+#else
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -601,3 +613,5 @@ void Release() noexcept {
 }
 
 } // namespace SteamInputLayout
+
+#endif // !defined(MKW_PLATFORM_VISIONOS)

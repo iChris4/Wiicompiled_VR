@@ -92,6 +92,11 @@
 // Renames main() to SDL_main(), which SDLActivity's nativeRunMain resolves
 // from libmain.so with dlsym once the Java side has set up the surface.
 #include <SDL3/SDL_main.h>
+#elif defined(MKW_PLATFORM_VISIONOS)
+// The SwiftUI app owns main(); it starts the runtime on its own thread through
+// mkw_runtime_main (src/platform/visionos/visionos_host.mm). Stdout and stderr
+// go nowhere on a device, so the transcript is mirrored to the unified log.
+#include <os/log.h>
 #endif
 #include <dolphin/vi.h>
 
@@ -279,9 +284,10 @@ void WriteProcessTranscriptChunk(ProcessTranscriptState& state, const char* data
 
 void PumpTranscriptPipe(ProcessTranscriptState& state, int readFd, int mirrorFd) {
     std::array<char, 4096> buffer{};
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
     // Android sends stdout/stderr to /dev/null, so the mirror fd shows nothing;
-    // forward complete lines to logcat as well (tag WiiCompiled).
+    // forward complete lines to logcat as well (tag WiiCompiled). visionOS has
+    // the same problem and gets them in the unified log (Console.app, Xcode).
     std::string pendingLine;
 #endif
     for (;;) {
@@ -314,18 +320,26 @@ void PumpTranscriptPipe(ProcessTranscriptState& state, int readFd, int mirrorFd)
         }
 
         WriteProcessTranscriptChunk(state, buffer.data(), static_cast<size_t>(bytesRead));
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
+        const auto forwardLine = [](const char* line) {
 #if defined(__ANDROID__)
+            __android_log_write(ANDROID_LOG_INFO, "WiiCompiled", line);
+#else
+            static os_log_t log = os_log_create("org.wiicompiled.vision", "runtime");
+            os_log(log, "%{public}s", line);
+#endif
+        };
         pendingLine.append(buffer.data(), static_cast<size_t>(bytesRead));
         size_t lineStart = 0;
         for (size_t newline = pendingLine.find('\n'); newline != std::string::npos;
              newline = pendingLine.find('\n', lineStart)) {
             const std::string line = pendingLine.substr(lineStart, newline - lineStart);
-            __android_log_write(ANDROID_LOG_INFO, "WiiCompiled", line.c_str());
+            forwardLine(line.c_str());
             lineStart = newline + 1;
         }
         pendingLine.erase(0, lineStart);
         if (pendingLine.size() > 3500) {
-            __android_log_write(ANDROID_LOG_INFO, "WiiCompiled", pendingLine.c_str());
+            forwardLine(pendingLine.c_str());
             pendingLine.clear();
         }
 #endif
@@ -1511,10 +1525,10 @@ int RuntimeMain(int argc, char** argv) {
         const std::string auroraCachePath = RuntimeConfigFile::PathToUtf8(rendererCacheDirectory);
         auroraConfig.userPath = auroraUserPath.c_str();
         auroraConfig.cachePath = auroraCachePath.c_str();
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
         // Aurora defaults resourcesPath to SDL_GetBasePath(), which is empty on
-        // Android; the transferable pipeline cache lives with the other bundled
-        // resources the activity unpacked.
+        // Android (and with SDL's offscreen driver on visionOS); the transferable
+        // pipeline cache lives with the other bundled resources.
         std::string auroraResourcesPath;
         if (const auto resources = RuntimeConfigFile::ExecutableDirectory()) {
             auroraResourcesPath = RuntimeConfigFile::PathToUtf8(*resources);
@@ -1752,7 +1766,15 @@ int RuntimeMain(int argc, char** argv) {
     }
 }
 
+#if defined(MKW_PLATFORM_VISIONOS)
+// The visionOS app bridge (src/platform/visionos/visionos_host.mm) calls this on
+// the game thread once the immersive space is open; main() belongs to SwiftUI.
+extern "C" int mkw_runtime_main(int argc, char** argv) {
+    return RuntimeMain(argc, argv);
+}
+#else
 int main(int argc, char** argv) {
     return RuntimeMain(argc, argv);
 }
+#endif
 extern "C" bool g_dynamicAspectRatioEnabled = false;

@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <utility>
@@ -37,6 +38,18 @@
 #if defined(__ANDROID__)
 #include <sys/system_properties.h>
 #include <time.h>
+#elif defined(__APPLE__)
+#include <time.h>
+#endif
+
+// Where bare hands drive (openxr_hand_tracking.h): the Quest, whose runtime
+// tracks the hands once the controllers are put down, and the Vision Pro,
+// which has nothing but hands. A PC runtime can drive real controllers through
+// simple_controller and synthesize joints for them, so it is left out.
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
+#define MKW_BARE_HANDS 1
+#else
+#define MKW_BARE_HANDS 0
 #endif
 
 namespace mkw::vr {
@@ -274,6 +287,8 @@ bool Injected(const char*) { return false; }
 
 #if defined(_WIN32)
 using ConvertNowToXrTime = XrResult(XRAPI_PTR*)(XrInstance, const LARGE_INTEGER*, XrTime*);
+#elif defined(__APPLE__)
+using ConvertNowToXrTime = XrResult(XRAPI_PTR*)(XrInstance, const struct timespec*, XrTime*);
 #endif
 #endif
 
@@ -546,7 +561,7 @@ void OpenXRInput::LoadInputClock() {
     if (enabled("XR_KHR_win32_convert_performance_counter_time")) {
         m_runtime->GetInstanceProcAddress("xrConvertWin32PerformanceCounterToTimeKHR", &function);
     }
-#elif defined(__ANDROID__)
+#elif defined(__ANDROID__) || defined(__APPLE__)
     if (enabled("XR_KHR_convert_timespec_time")) {
         m_runtime->GetInstanceProcAddress("xrConvertTimespecTimeToTimeKHR", &function);
     }
@@ -572,7 +587,7 @@ XrTime OpenXRInput::InputSampleTime(XrTime predicted_display_time) const {
                                                                                   &counter, &now))) {
         return predicted_display_time;
     }
-#elif defined(__ANDROID__)
+#elif defined(__ANDROID__) || defined(__APPLE__)
     timespec spec{};
     if (clock_gettime(CLOCK_MONOTONIC, &spec) != 0 ||
         XR_FAILED(reinterpret_cast<ConvertNowToXrTime>(m_convert_now_to_xr_time)(m_runtime->Instance(),
@@ -1014,7 +1029,7 @@ void OpenXRInput::Sync(XrTime predicted_display_time, const OpenXRPointerScreen&
     const bool hand_tracking_on = RuntimeConfigFile::VrHandTracking();
     UpdateHandTrackers();
     LocateHands(predicted_display_time, seat);
-#if defined(__ANDROID__)
+#if MKW_BARE_HANDS
     // A bare hand (no controller in it: it drives simple_controller, or the
     // cameras track it): its pinch and menu gesture come from the runtime's
     // recognition, and the menu gesture pauses from either hand.
@@ -1097,7 +1112,7 @@ void OpenXRInput::Sync(XrTime predicted_display_time, const OpenXRPointerScreen&
     // steers through the left stick and keeps its grips from the game.
     UpdateDriving(predicted_display_time, seat, hands, withheld);
 
-#if defined(__ANDROID__)
+#if MKW_BARE_HANDS
     // Bare hands in the cockpit. While one of them holds the wheel it holds the
     // gas and a free hand's pinch uses an item; with none on the wheel (the
     // pause menu, the results, coasting) a right pinch stays A. The game's own
@@ -1568,6 +1583,26 @@ void OpenXRInput::UpdateDriving(XrTime display_time, const driving::SeatFrame& s
     }
     m_wheel_held = wheel.held;
     snapshot.held = wheel.held;
+#if defined(MKW_PLATFORM_VISIONOS)
+    // What the bare hands read as, once a second while one is in the cockpit:
+    // the headset panel's readout for a console, where the grasp thresholds
+    // and the pinch are tuned when the panel cannot be opened by hand. Not on
+    // the Quest, whose race logs nothing periodic and whose panel shows this.
+    if ((snapshot.hands[0].bare || snapshot.hands[1].bare) &&
+        (m_bare_logged_at == 0 || display_time - m_bare_logged_at >= 1'000'000'000)) {
+        m_bare_logged_at = display_time;
+        std::ostringstream message;
+        message << "OpenXR bare hands:";
+        for (uint32_t hand = 0; hand < kHands; ++hand) {
+            const DrivingHand& state = snapshot.hands[hand];
+            message << (hand == 0 ? " left " : " | right ") << (state.bare ? "bare" : "-")
+                    << " grasp=" << std::fixed << std::setprecision(2) << state.grasp
+                    << (state.held ? " holding" : "") << (state.pinch ? " pinch" : "");
+        }
+        message << " | steering=" << std::setprecision(2) << wheel.steering;
+        Log(OpenXRLogLevel::Info, message.str());
+    }
+#endif
     driving::ApplyHandSteering(hands, wheel);
     const float max_angle = driving::MaxWheelAngle(anchor.bike, tuning);
     if (hardware_wheel) {

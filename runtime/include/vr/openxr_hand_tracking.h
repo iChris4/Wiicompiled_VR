@@ -23,8 +23,11 @@
 //   through the wheel's tracking grace. That decides the wheel grab (the palm's
 //   position, a grasp from the fingers' flexion) and the flick.
 //
-// Only the Android build applies these: a PC runtime can drive real controllers
-// through simple_controller and synthesize joints for them.
+// The Android and visionOS builds apply these (openxr_input.cpp's
+// MKW_BARE_HANDS): the Vision Pro's own OpenXR provider serves the joints, the
+// camera data source and the pinch from ARKit, and answers simple_controller
+// while a hand tracker exists. A PC runtime can drive real controllers through
+// simple_controller and synthesize joints for them, so it is left out.
 
 #include "vr/openxr_wii_remote.h"
 

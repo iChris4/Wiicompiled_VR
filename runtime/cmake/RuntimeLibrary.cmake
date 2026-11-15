@@ -22,6 +22,11 @@ elseif(MKW_PLATFORM_ANDROID)
     # the Snapdragon XR2 Gen 1 (Quest 2) core; Quest 3 / Pro are supersets.
     set(MKW_ANDROID_CPU "cortex-a77" CACHE STRING "AArch64 -mcpu target for the Android products")
     set(MKW_BASELINE_ARCH_FLAG -mcpu=${MKW_ANDROID_CPU})
+elseif(MKW_PLATFORM_VISIONOS)
+    # Cross-compiled too. Apple Vision Pro carries an M2 (2024) or later, and the simulator runs
+    # on an Apple Silicon Mac, so the M1 feature set is the floor for both.
+    set(MKW_VISIONOS_CPU "apple-m1" CACHE STRING "AArch64 -mcpu target for the visionOS products")
+    set(MKW_BASELINE_ARCH_FLAG -mcpu=${MKW_VISIONOS_CPU})
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
     set(MKW_BASELINE_ARCH_FLAG -mcpu=native)
 else()
@@ -89,6 +94,12 @@ function(mkw_runtime_link_dependencies target scope)
         # libvulkan for the OpenXR-side device, android/log for AHardwareBuffer,
         # JNI and logcat.
         target_link_libraries(${target} ${scope} mkw::libco android log vulkan ${CMAKE_DL_LIBS})
+    elseif(MKW_PLATFORM_VISIONOS)
+        # The Metal stereo backend (openxr_metal.mm) and the host bridge
+        # (platform/visionos/visionos_host.mm) talk to Metal and IOSurface directly.
+        foreach(framework Metal IOSurface QuartzCore Foundation CoreFoundation)
+            target_link_libraries(${target} ${scope} "-framework ${framework}")
+        endforeach()
     endif()
     if(MKW_PLATFORM_MACOS)
         # CoreAudio framework is required for automatic music muting on macOS.

@@ -60,7 +60,9 @@ or handlebar turns with your steering, and hand steering by heurazy lets you gra
 tracked controllers and turn it. Your own character sits there with you, its arms following the
 controllers (character body by heurazy). Each race shows the game's camera through its intro, then
 your default camera; a right thumbstick click switches that race between the game's camera and
-first person. On a Quest the hands can follow the headset's own hand tracking.
+first person. On a Quest the hands can follow the headset's own hand tracking, and on a Quest or an
+Apple Vision Pro you can race with bare hands: hold the wheel to steer and accelerate, flick your
+hands for a trick, pinch with an open hand to use an item.
 See [`OPENXR.md`](OPENXR.md) for setup, configuration, and the current limitations.
 
 **Voice chat in Retro Rewind rooms.**
@@ -225,7 +227,9 @@ can be built as its **own static profile**: instead of applying `Code.pul` as ru
 the Kamek/Pulsar code is statically translated together with the base game into a separate native
 executable.
 
-Wheel Wizard drives this too.
+Wheel Wizard drives this too. On the Quest and the Apple Vision Pro the launcher's own game
+picker does the same: **Mario Kart Wii** or **Retro Rewind**, with the pack downloaded from
+Retro Rewind's server on the headset.
 
 ## Building from source
 
@@ -247,6 +251,12 @@ For everything beyond that, feeding in your own `main.dol`/`StaticR.rel`, runnin
 translation, generating the manifest and build graph, and compiling, see [`translator/README.md`](translator/README.md).
 
 For a step-by-step guide on compiling both WiiCompiled and Retro Rewind from source on macOS (Apple Silicon), see the [macOS Build Guide](docs/building-macos.md).
+
+The Meta Quest build is described in [`docs/quest-port.md`](docs/quest-port.md). For the Apple Vision Pro
+(experimental, hands and a Bluetooth controller for input) follow
+[`docs/visionos-getting-started.md`](docs/visionos-getting-started.md): one script takes your own disc to the
+headset from a Mac with Xcode (there is no build to download; visionOS only runs apps you signed yourself).
+The port's design is in [`docs/visionos-port.md`](docs/visionos-port.md).
 
 ## FAQ
 

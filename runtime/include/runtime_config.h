@@ -355,9 +355,10 @@ inline constexpr bool kVrObjectCullingDefault = false;
 #endif
 // The cockpit hands follow the headset's hand tracking (the controllers' touch
 // sensors while they are held, the cameras once they are put down, when bare
-// hands also drive). Only offered on the Quest for now, where it is on; the
+// hands also drive). On by default where it is offered: the Quest, and the
+// Vision Pro, which has nothing but hands ("Drive with your hands"); each
 // launcher's Settings page shows the same default.
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
 inline constexpr bool kVrHandTrackingDefault = true;
 #else
 inline constexpr bool kVrHandTrackingDefault = false;

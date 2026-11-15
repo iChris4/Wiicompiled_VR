@@ -100,6 +100,9 @@ struct BootDefaults {
 };
 
 // An existing setting.txt always takes precedence, in every region.
+// The visionOS launcher writes the same file (with the PAL defaults above) before the
+// game's first start, so a Mii made there carries this console's identity (MiiIds in
+// visionos/App/MiiDatabase.swift); keep the two encodings in step.
 inline std::optional<std::array<uint8_t, 256>> EncodeNew(
     const std::string& serial,
     const BootDefaults& defaults = BootDefaults{}) {

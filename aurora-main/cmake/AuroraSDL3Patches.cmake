@@ -401,6 +401,16 @@ static bool HIDAPI_DriverWii_InitDevice(SDL_HIDAPI_Device *device)
 
     values[0] = -(((float)x - ctx->m_fAccelZeroG[0]) / ctx->m_fAccelPerG[0]) * SDL_STANDARD_GRAVITY;
 ]==])
+  # visionOS: keep the virtual-joystick driver.
+  #
+  # SDL ties SDL_VIRTUAL_JOYSTICK to SDL_HIDAPI, which it switches off on
+  # visionOS (no HID access there), so the virtual driver disappears with it
+  # although it never touches HID. WiiCompiled's OpenXR input reaches the game
+  # through a virtual gamepad (runtime/src/vr/openxr_input.cpp), so on the
+  # Vision Pro the hands would otherwise never reach the game.
+  _aurora_sdl3_replace("${sdl_source_dir}/CMakeLists.txt" "virtual joystick on visionOS"
+[==[dep_option(SDL_VIRTUAL_JOYSTICK    "Enable the virtual-joystick driver" ON SDL_HIDAPI OFF)]==]
+[==[dep_option(SDL_VIRTUAL_JOYSTICK    "Enable the virtual-joystick driver" ON "SDL_HIDAPI OR VISIONOS" OFF)]==])
 endfunction()
 
 # Script mode (FetchContent PATCH_COMMAND).

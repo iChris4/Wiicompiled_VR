@@ -95,9 +95,9 @@ inline void ProcessAuroraEvents(const AuroraEvent* events) {
             }
             break;
         case AURORA_WINDOW_RESIZED:
-#if !defined(__ANDROID__)
-            // The Quest's surface is pinned to a size nobody sees; persisting it would only churn
-            // Config.toml on every quit.
+#if !defined(__ANDROID__) && !defined(MKW_PLATFORM_VISIONOS)
+            // The Quest's surface (and the Vision Pro's offscreen SDL window) is pinned to a size
+            // nobody sees; persisting it would only churn Config.toml on every quit.
             if (aurora_get_display_mode() == AURORA_DISPLAY_MODE_WINDOWED &&
                 event->windowSize.width != 0 && event->windowSize.height != 0) {
                 WindowPlacementPersistence::width = event->windowSize.width;

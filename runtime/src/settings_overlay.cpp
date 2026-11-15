@@ -154,9 +154,15 @@ constexpr std::array<const char*, 3> kVrRaceViewLabels{"Immersive", "Immersive w
 // Race intro: index 1 is [vr] flat_race_intro.
 int g_vrRaceIntroView = RuntimeConfigFile::VrFlatRaceIntro() ? 1 : 0;
 constexpr std::array<const char*, 2> kVrRaceIntroLabels{"Immersive", "Flat screen"};
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
+// Headsets that show the room: the Quest through XR_FB_passthrough, the Vision Pro through a
+// mixed-immersion space (the provider blends the layers over the surroundings).
 bool g_vrPassthrough = RuntimeConfigFile::VrPassthrough();
+#endif
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
 bool g_vrHandTracking = RuntimeConfigFile::VrHandTracking();
+#endif
+#if defined(__ANDROID__)
 // Menu labels for the foveation levels, index-matched to RuntimeConfigFile::kVrFoveationLevels and to
 // aurora_set_stereo_foveation.
 constexpr std::array<const char*, 4> kVrFoveationLabels{"Off", "Low", "Medium", "High"};
@@ -1443,7 +1449,25 @@ void DrawVrSteeringWheelSettings() {
                           RuntimeConfigFile::kVrCockpitItemSizeDefault);
     }
     ImGui::EndDisabled();
-#if defined(__ANDROID__)
+#if defined(MKW_PLATFORM_VISIONOS)
+    // The Vision Pro has nothing but hands, and shows the wearer's own.
+    ImGui::BeginDisabled(!g_vrHandSteering);
+    if (ImGui::Checkbox("Drive with your hands", &g_vrHandTracking)) {
+        RuntimeConfigFile::SetVrHandTracking(g_vrHandTracking);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "%s", mkw::vr::OpenXRHandTrackingAvailable()
+                      ? "Close a hand on the wheel to hold it, which also holds the gas, and turn it to "
+                        "steer; pinch with an open free hand to use an item; flick your hands up for a "
+                        "trick; pinch your little finger to pause. In menus, a pinch is A. Choose "
+                        "Automatic drift. Off, a fist near the wheel still takes hold of it and the "
+                        "finger pinches are the controller's buttons."
+                      : "This session started with hand steering and this option off, so it applies "
+                        "after a restart.");
+    }
+    ImGui::EndDisabled();
+#elif defined(__ANDROID__)
     ImGui::BeginDisabled(!g_vrHandSteering && g_vrCockpitItemHand == 2);
     if (ImGui::Checkbox("Tracked hands", &g_vrHandTracking)) {
         RuntimeConfigFile::SetVrHandTracking(g_vrHandTracking);
@@ -1465,6 +1489,8 @@ void DrawVrSteeringWheelSettings() {
                         "with hand steering and tracked hands off, so it applies after a restart.");
     }
     ImGui::EndDisabled();
+#endif
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
     if (g_vrHandSteering && g_vrHandTracking) {
         const mkw::vr::DrivingSnapshot driving = mkw::vr::OpenXRReadDriving();
         const auto hand = [&](size_t side) {
@@ -1814,7 +1840,7 @@ void DrawVrSettings() {
                                 eyes.scaled_height, g_vrRenderScalePercent);
         }
     }
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
     if (ImGui::Checkbox("Passthrough around the menu screen", &g_vrPassthrough)) {
         mkw::vr::OpenXRSetPassthrough(g_vrPassthrough);
         RuntimeConfigFile::SetVrPassthrough(g_vrPassthrough);
@@ -1826,6 +1852,8 @@ void DrawVrSettings() {
             "fully virtual; the immersive window and the Flat Screen race have the room "
             "around them too. Applies immediately.");
     }
+#endif
+#if defined(__ANDROID__)
     // Shows the live level Aurora holds.
     g_vrFoveation = static_cast<int>(aurora_get_stereo_foveation());
     if (ImGui::Combo("Foveated rendering", &g_vrFoveation, kVrFoveationLabels.data(),
@@ -2265,7 +2293,7 @@ void DrawVrCameraSettings() {
         RuntimeConfigFile::SetVrCockpitItemHand(RuntimeConfigFile::kVrCockpitItemHandDefault);
         RuntimeConfigFile::SetVrCockpitItemThrow(g_vrCockpitItemThrow);
         RuntimeConfigFile::SetVrCockpitItemSize(g_vrCockpitItemSize);
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
         g_vrHandTracking = RuntimeConfigFile::kVrHandTrackingDefault;
         RuntimeConfigFile::SetVrHandTracking(g_vrHandTracking);
 #endif

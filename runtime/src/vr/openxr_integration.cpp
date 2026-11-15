@@ -49,6 +49,14 @@
 #define XR_USE_TIMESPEC
 #include <openxr/openxr_platform.h>
 #define MKW_OPENXR_GRAPHICS_BACKEND 1
+#elif defined(MKW_PLATFORM_VISIONOS)
+// Apple Vision Pro: the private CompositorServices provider (vr/visionos) stands in for the
+// OpenXR loader and runtime; Aurora renders with Dawn's Metal backend into its IOSurfaces.
+#include "vr/openxr_metal.h"
+#include <time.h>
+#define XR_USE_TIMESPEC
+#include <openxr/openxr_platform.h>
+#define MKW_OPENXR_GRAPHICS_BACKEND 1
 #else
 #define MKW_OPENXR_GRAPHICS_BACKEND 0
 #endif
@@ -87,6 +95,9 @@ void ConfigurePolicy(bool enabled) noexcept {
 #if defined(_WIN32)
 using GraphicsBackend = OpenXRWindowsBackend;
 
+#elif defined(MKW_PLATFORM_VISIONOS)
+using GraphicsBackend = OpenXRMetalBackend;
+inline constexpr const char* kGraphicsBackendName = "Metal";
 #else
 // Direct presentation when [vr] direct_presentation and Aurora's Dawn allow it, else the
 // AHardwareBuffer bridge (openxr_vulkan_direct.h).
@@ -96,9 +107,10 @@ inline constexpr const char* kGraphicsBackendName = "Vulkan";
 
 // Whether the immersive window's eyes can be aimed through the window, so that only the window is
 // rendered: the backend has to show just the part of each eye image they fill. The Quest's shared
-// buffers and projection layer do; the PC backends copy whole eyes, so there the window's eyes stay
-// full size and are only masked.
-#if defined(__ANDROID__)
+// buffers and projection layer do, as does the Vision Pro's provider (the projection view's
+// imageRect is honoured); the PC backends copy whole eyes, so there the window's eyes stay full
+// size and are only masked.
+#if defined(__ANDROID__) || defined(MKW_PLATFORM_VISIONOS)
 inline constexpr bool kWindowShapedEyesSupported = true;
 #else
 inline constexpr bool kWindowShapedEyesSupported = false;
@@ -415,6 +427,12 @@ public:
         config.optional_extensions = {"XR_KHR_win32_convert_performance_counter_time",
                                       "XR_FB_display_refresh_rate", "XR_EXT_performance_settings"};
         AddHandMeshExtensions(config);
+#elif defined(MKW_PLATFORM_VISIONOS)
+        // The provider binds Metal through its own XrGraphicsBindingMetalMKW; no
+        // graphics extension exists for it to advertise.
+        config.required_extensions = {};
+        config.optional_extensions = {"XR_KHR_convert_timespec_time", "XR_FB_display_refresh_rate"};
+        AddHandMeshExtensions(config);
 #else
         // Either Vulkan binding extension is acceptable; the backend picks
         // whichever the runtime enabled, preferring enable2.
@@ -683,6 +701,8 @@ private:
 #if defined(_WIN32)
     AuroraBackend kRequiredAuroraBackend = BACKEND_D3D12;
     const char* kGraphicsBackendName = "D3D12";
+#elif defined(MKW_PLATFORM_VISIONOS)
+    static constexpr AuroraBackend kRequiredAuroraBackend = BACKEND_METAL;
 #else
     static constexpr AuroraBackend kRequiredAuroraBackend = BACKEND_VULKAN;
 #endif
@@ -1421,6 +1441,13 @@ private:
         if ((driving.hand_steering || RuntimeConfigFile::VrCockpitItemHand() != "off") &&
             !hand_meshes_loaded_ && runtime_ != nullptr) {
             hand_meshes_loaded_ = true;
+#if defined(MKW_PLATFORM_VISIONOS)
+            // The headset composites the wearer's own hands over the race
+            // (upperLimbVisibility), so no hand of ours is drawn: not the
+            // gloves, not the joints. The wheel still is, and so is the item
+            // held over a palm, which needs the hand's pose.
+            RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] cockpit hands: none (the headset shows your own)" << std::endl;
+#else
             // Tracked hands' trackers, when they exist, serve the mesh too.
             const XrHandTrackerEXT trackers[2]{input_ != nullptr ? input_->HandTracker(0) : XR_NULL_HANDLE,
                                                input_ != nullptr ? input_->HandTracker(1) : XR_NULL_HANDLE};
@@ -1428,6 +1455,7 @@ private:
             RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] cockpit hands: "
                                    << (loaded ? "the runtime's hand mesh" : "procedural gloves (no runtime hand mesh)")
                                    << std::endl;
+#endif
         }
         cockpit.active = driving.cockpit_active && position_valid && base_position_valid_ &&
                          (driving.synthetic_control || driving.hand_steering ||
@@ -1454,6 +1482,10 @@ private:
             auto& target = cockpit.hands[hand];
             const auto& from = driving.hands[hand];
             target.tracked = from.tracked;
+#if defined(MKW_PLATFORM_VISIONOS)
+            // Real hands, see above: posed for the held item, never drawn.
+            target.hidden = true;
+#endif
             target.held = from.held;
             // Whether the character body draws this hand travels with the
             // sealed frame (AuroraCockpitItem.characterHands, vi.cpp), which

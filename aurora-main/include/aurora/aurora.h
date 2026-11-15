@@ -128,6 +128,9 @@ enum { AURORA_VR_HAND_JOINT_COUNT = 26 };
 typedef struct {
   bool tracked;
   bool held;
+  // The headset shows the wearer's own hand: it is posed, for the item held
+  // over its palm, but not drawn.
+  bool hidden;
   // The hand-tracking joints below are valid: the hand is drawn from them
   // instead of curling from squeeze at seatFromGrip.
   bool jointsValid;

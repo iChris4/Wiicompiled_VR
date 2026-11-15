@@ -28,8 +28,25 @@ endif()
 
 if(WIN32 AND MINGW AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
     set(MKW_PLATFORM_WINDOWS TRUE)
+elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "visionOS"
+       AND (NOT CMAKE_SYSTEM_PROCESSOR OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|ARM64|aarch64)$")
+       AND (NOT CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "arm64"))
+    # Apple Vision Pro (and its simulator), cross-compiled with the visionOS SDK
+    # (-DCMAKE_SYSTEM_NAME=visionOS). Darwin underneath, so it shares the
+    # Apple Silicon macOS fibers, guest memory aliasing and Dawn Metal backend;
+    # the headset path is CompositorServices + ARKit behind the OpenXR
+    # vocabulary (runtime/src/vr/visionos), and each product is a framework the
+    # SwiftUI app in visionos/ embeds. See docs/visionos-port.md.
+    # A cross build leaves CMAKE_SYSTEM_PROCESSOR empty unless a toolchain file
+    # sets it; the only visionOS architecture is arm64.
+    set(MKW_PLATFORM_VISIONOS TRUE)
+    set(MKW_PLATFORM_APPLE TRUE)
+    if(NOT CMAKE_SYSTEM_PROCESSOR)
+        set(CMAKE_SYSTEM_PROCESSOR arm64)
+    endif()
 elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|arm64|ARM64)$")
     set(MKW_PLATFORM_MACOS TRUE)
+    set(MKW_PLATFORM_APPLE TRUE)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
         set(MKW_PLATFORM_MACOS_X86_64 TRUE)
     else()
@@ -45,7 +62,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR MATCHES "
     set(MKW_PLATFORM_ANDROID TRUE)
 else()
     message(FATAL_ERROR
-        "WiiCompiled supports 64-bit LLVM-MinGW Clang on Windows, native Linux x86_64/aarch64, Apple Clang on macOS x86_64/arm64, or the Android NDK on arm64-v8a")
+        "WiiCompiled supports 64-bit LLVM-MinGW Clang on Windows, native Linux x86_64/aarch64, Apple Clang on macOS x86_64/arm64 or visionOS arm64, or the Android NDK on arm64-v8a")
 endif()
 
 if(MKW_PLATFORM_WINDOWS)
@@ -56,6 +73,11 @@ endif()
 
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     message(FATAL_ERROR "WiiCompiled only supports Release builds")
+endif()
+if(MKW_PLATFORM_VISIONOS)
+    # The CompositorServices/ARKit provider and the Metal stereo backend are
+    # Objective-C++; everything else stays C++.
+    enable_language(OBJCXX)
 endif()
 
 option(MKW_BUILD_PRODUCTS "Build translated WiiCompiled product targets" ON)
@@ -221,7 +243,7 @@ set(MKW_CPPWINRT_INCLUDE_DIR "" CACHE PATH "Optional self-contained C++/WinRT in
 # available to explicit developer builds without making a nonfunctional SDK
 # fetch part of every normal build.
 set(MKW_ENABLE_OPENXR_DEFAULT OFF)
-if(MKW_PLATFORM_WINDOWS OR MKW_PLATFORM_ANDROID)
+if(MKW_PLATFORM_WINDOWS OR MKW_PLATFORM_ANDROID OR MKW_PLATFORM_VISIONOS)
     set(MKW_ENABLE_OPENXR_DEFAULT ON)
 endif()
 option(MKW_ENABLE_OPENXR "Build OpenXR VR support" ${MKW_ENABLE_OPENXR_DEFAULT})
@@ -293,13 +315,31 @@ else()
             set(AURORA_SDL3_PROVIDER vendor CACHE STRING "" FORCE)
         endif()
     endif()
+    if(MKW_PLATFORM_VISIONOS)
+        # No dawn-build release exists for visionOS, and the ios-arm64 package is
+        # a Mach-O built for the iOS platform, which the visionOS linker refuses.
+        # visionos/Build-VisionOSDawn.sh builds the pinned Dawn revision into an
+        # install tree of the package's layout; hand it over as a file:// URL.
+        set(AURORA_DAWN_PROVIDER package CACHE STRING "" FORCE)
+        if(NOT AURORA_DAWN_PACKAGE_URL)
+            message(FATAL_ERROR
+                "visionOS needs a Dawn built for the visionOS SDK: run visionos/Build-VisionOSDawn.sh "
+                "and pass -DAURORA_DAWN_PACKAGE_URL=file://<package>.tar.gz "
+                "(visionos/Build-VisionOS.sh does both)")
+        endif()
+        # SDL3 from source, static, on its offscreen video driver (aurora-main/lib/window.cpp):
+        # the headset is driven by CompositorServices, never by a UIKit window.
+        set(AURORA_SDL3_PROVIDER vendor CACHE STRING "" FORCE)
+        set(AURORA_SDL3_LINKAGE static CACHE STRING "" FORCE)
+        set(AURORA_DAWN_LINKAGE static CACHE STRING "" FORCE)
+    endif()
     set(DAWN_ENABLE_D3D11 OFF CACHE BOOL "" FORCE)
     if(MKW_PLATFORM_WINDOWS)
         set(DAWN_ENABLE_D3D12 ON CACHE BOOL "" FORCE)
         set(DAWN_ENABLE_VULKAN ON CACHE BOOL "" FORCE)
         set(DAWN_ENABLE_METAL OFF CACHE BOOL "" FORCE)
         set(TINT_BUILD_HLSL_WRITER ON CACHE BOOL "" FORCE)
-    elseif(MKW_PLATFORM_MACOS)
+    elseif(MKW_PLATFORM_APPLE)
         set(DAWN_ENABLE_D3D12 OFF CACHE BOOL "" FORCE)
         set(DAWN_ENABLE_VULKAN OFF CACHE BOOL "" FORCE)
         set(DAWN_ENABLE_METAL ON CACHE BOOL "" FORCE)
@@ -405,6 +445,12 @@ endif()
 if(MKW_PROJECT_COMPILE_DEFINITIONS)
     add_compile_definitions(${MKW_PROJECT_COMPILE_DEFINITIONS})
 endif()
+if(MKW_PLATFORM_VISIONOS)
+    # The runtime's own sources key their Apple Vision Pro branches on this
+    # rather than on TargetConditionals, so a file that never includes an Apple
+    # header (most of runtime/) still knows which Darwin it is built for.
+    add_compile_definitions(MKW_PLATFORM_VISIONOS=1)
+endif()
 
 if(MKW_PLATFORM_WINDOWS AND MKW_ENABLE_OPENXR)
     include(FetchContent)
@@ -416,7 +462,50 @@ if(MKW_PLATFORM_WINDOWS AND MKW_ENABLE_OPENXR)
 endif()
 
 set(MKW_OPENXR_TARGET "")
-if(MKW_ENABLE_OPENXR)
+if(MKW_ENABLE_OPENXR AND MKW_PLATFORM_VISIONOS)
+    # Apple Vision Pro has no OpenXR runtime. The pacing thread, the input
+    # actions and the swapchain protocol are written against the OpenXR
+    # headers, so the headers are fetched as on every other platform, but the
+    # loader is not built: mkw_openxr_visionos implements the xr* entry points
+    # the runtime calls on CompositorServices and ARKit
+    # (runtime/src/vr/visionos, docs/visionos-port.md).
+    if(MKW_OPENXR_SDK_DIR)
+        if(NOT EXISTS "${MKW_OPENXR_SDK_DIR}/include/openxr/openxr.h")
+            message(FATAL_ERROR
+                "MKW_OPENXR_SDK_DIR does not contain OpenXR-SDK headers: ${MKW_OPENXR_SDK_DIR}")
+        endif()
+        set(MKW_OPENXR_INCLUDE_DIR "${MKW_OPENXR_SDK_DIR}/include")
+    else()
+        include(FetchContent)
+        FetchContent_Declare(openxr
+            URL https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.61.tar.gz
+            URL_HASH SHA256=d5e2773d282642e6e250bd10266f316fc3ff3b8602c83db009a1f434205998e6
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            # No such directory: the SDK's own CMake (the loader) is deliberately never added.
+            SOURCE_SUBDIR include-only-no-cmake)
+        FetchContent_MakeAvailable(openxr)
+        set(MKW_OPENXR_INCLUDE_DIR "${openxr_SOURCE_DIR}/include")
+    endif()
+    add_library(mkw_openxr_headers INTERFACE)
+    target_include_directories(mkw_openxr_headers SYSTEM INTERFACE "${MKW_OPENXR_INCLUDE_DIR}")
+
+    add_library(mkw_openxr_visionos STATIC
+        "${CMAKE_CURRENT_LIST_DIR}/src/vr/visionos/xr_visionos_runtime.mm"
+        "${CMAKE_CURRENT_LIST_DIR}/src/vr/visionos/xr_visionos_input.mm"
+        "${CMAKE_CURRENT_LIST_DIR}/src/vr/visionos/xr_visionos_hand_tracking.mm"
+        "${CMAKE_CURRENT_LIST_DIR}/src/vr/visionos/xr_visionos_compositor.mm")
+    target_include_directories(mkw_openxr_visionos PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
+    target_link_libraries(mkw_openxr_visionos PUBLIC mkw_openxr_headers)
+    target_compile_features(mkw_openxr_visionos PUBLIC cxx_std_20)
+    target_compile_options(mkw_openxr_visionos PRIVATE -fobjc-arc -w)
+    target_compile_definitions(mkw_openxr_visionos PUBLIC MKW_PLATFORM_VISIONOS=1)
+    set_target_properties(mkw_openxr_visionos PROPERTIES UNITY_BUILD OFF)
+    foreach(framework CompositorServices ARKit Metal IOSurface QuartzCore Foundation)
+        target_link_libraries(mkw_openxr_visionos PUBLIC "-framework ${framework}")
+    endforeach()
+    set(MKW_OPENXR_TARGET mkw_openxr_visionos)
+    add_compile_definitions(MKW_ENABLE_OPENXR=1)
+elseif(MKW_ENABLE_OPENXR)
     if(NOT MKW_PLATFORM_WINDOWS AND NOT MKW_PLATFORM_LINUX AND NOT MKW_PLATFORM_ANDROID)
         message(WARNING "OpenXR is not wired for this platform; disabling MKW_ENABLE_OPENXR")
         set(MKW_ENABLE_OPENXR OFF)
@@ -471,18 +560,30 @@ endif()
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 set_source_files_properties(src/vr/openxr_vulkan_win32.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 set_source_files_properties(src/vr/openxr_vulkan_direct.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
-if(MKW_PLATFORM_MACOS)
+if(MKW_PLATFORM_APPLE)
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory.cpp")
-    if(MKW_PLATFORM_MACOS_ARM64)
+    if(MKW_PLATFORM_MACOS_ARM64 OR MKW_PLATFORM_VISIONOS)
         # HostContext's Apple Silicon backend is implemented in a small assembly
         # companion. It must be part of the product runtime as well as the
         # standalone context test; otherwise the final executable is missing
-        # mkw_co_init/mkw_co_switch at link time.
+        # mkw_co_init/mkw_co_switch at link time. visionOS is Darwin on the same
+        # ISA, so it shares the backend and the aliasing guest memory map.
         enable_language(ASM)
         list(APPEND SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/platform/macos/co_switch.S")
     endif()
 else()
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory_macos.cpp")
+endif()
+# The visionOS OpenXR provider is a library of its own (above); the runtime's Metal stereo backend
+# and the app bridge are Objective-C++ and never join a C++ unity batch.
+if(MKW_PLATFORM_VISIONOS AND MKW_ENABLE_OPENXR)
+    set(MKW_VISIONOS_RUNTIME_SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/src/vr/openxr_metal.mm"
+        "${CMAKE_CURRENT_LIST_DIR}/src/platform/visionos/visionos_host.mm")
+    set_source_files_properties(${MKW_VISIONOS_RUNTIME_SOURCES} PROPERTIES
+        LANGUAGE OBJCXX SKIP_UNITY_BUILD_INCLUSION ON SKIP_PRECOMPILE_HEADERS ON
+        COMPILE_OPTIONS "-fobjc-arc")
+    list(APPEND SOURCES ${MKW_VISIONOS_RUNTIME_SOURCES})
 endif()
 set(MKW_PLATFORM_SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/platform/host_platform.cpp")
 set(MKW_BASE_PRODUCT_SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/product/base_product.cpp")
@@ -496,8 +597,8 @@ list(REMOVE_ITEM SOURCES ${MKW_BASE_PRODUCT_SOURCE} ${MKW_RETRO_REWIND_PRODUCT_S
 
 # Keep these independent from Aurora's BUILD_TESTING option: they validate the
 # project's host-platform contracts, not Aurora's third-party test suite.
-# A cross-compiled Android tree cannot run them, so it does not build them.
-if(MKW_PLATFORM_ANDROID)
+# A cross-compiled Android or visionOS tree cannot run them, so it does not build them.
+if(MKW_PLATFORM_ANDROID OR MKW_PLATFORM_VISIONOS)
     set(MKW_BUILD_TESTS_DEFAULT OFF)
 else()
     set(MKW_BUILD_TESTS_DEFAULT ON)

@@ -26,6 +26,9 @@
 #if defined(_WIN32)
 #include <windows.h>
 #endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 
 #if defined(SDL_PLATFORM_ANDROID)
 #include <jni.h>
@@ -390,6 +393,15 @@ const AuroraEvent* poll_events() {
 
 bool create_window(AuroraBackend backend) {
   SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#if defined(__APPLE__) && TARGET_OS_VISION
+  // Apple Vision Pro: the window belongs to SDL's offscreen video driver
+  // (initialize() below). It is never shown, so it must not start hidden, or
+  // is_paused() would wait for a show that never comes; and it must not ask
+  // for a Metal view, which the offscreen driver cannot create. Dawn's surface
+  // gets a CAMetalLayer of its own (lib/dawn/MetalBinding.mm).
+  const bool visionos_offscreen = true;
+#else
+  const bool visionos_offscreen = false;
 #if TARGET_OS_IOS || TARGET_OS_TV
   flags |= SDL_WINDOW_FULLSCREEN;
   if (g_config.startHidden) {
@@ -401,6 +413,7 @@ bool create_window(AuroraBackend backend) {
     flags |= SDL_WINDOW_FULLSCREEN;
   }
 #endif
+#endif
   switch (backend) {
 #ifdef AURORA_ENABLE_GX
 #ifdef DAWN_ENABLE_BACKEND_VULKAN
@@ -410,7 +423,9 @@ bool create_window(AuroraBackend backend) {
 #endif
 #ifdef DAWN_ENABLE_BACKEND_METAL
   case BACKEND_METAL:
-    flags |= SDL_WINDOW_METAL;
+    if (!visionos_offscreen) {
+      flags |= SDL_WINDOW_METAL;
+    }
     break;
 #endif
 #ifdef DAWN_ENABLE_BACKEND_OPENGL
@@ -510,6 +525,15 @@ bool initialize() {
   /* We don't want to initialize anything input related here, otherwise the add events will get lost to the void */
   TRY(SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight"), "Error setting {}: {}", SDL_HINT_ORIENTATIONS,
       SDL_GetError());
+#if defined(__APPLE__) && TARGET_OS_VISION
+  // Apple Vision Pro: the app is a SwiftUI ImmersiveSpace and the headset is
+  // driven by CompositorServices, so SDL never owns a UIKit window or the main
+  // thread. Its offscreen driver keeps every video call free of UIKit, which
+  // is what lets the whole runtime run on a thread of its own; joysticks
+  // (GameController) and audio (CoreAudio) are unaffected by the choice.
+  TRY(SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen"), "Error setting {}: {}", SDL_HINT_VIDEO_DRIVER,
+      SDL_GetError());
+#endif
   TRY(SDL_InitSubSystem(SDL_INIT_EVENTS | SDL_INIT_VIDEO), "Error initializing SDL: {}", SDL_GetError());
 
 #if !defined(_WIN32) && !defined(__APPLE__)

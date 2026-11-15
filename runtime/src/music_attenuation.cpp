@@ -17,7 +17,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Media.Control.h>
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && !defined(MKW_PLATFORM_VISIONOS)
 #include "external_audio_macos.h"
 #elif defined(__linux__) && !defined(__ANDROID__)
 #include <dlfcn.h>
@@ -465,7 +465,7 @@ void MonitorLinuxMprisSessions() noexcept {
 }
 #endif
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(MKW_PLATFORM_VISIONOS)
 void MonitorMacOSAudio() noexcept {
     using namespace std::chrono_literals;
     for (;;) {
@@ -486,7 +486,7 @@ void StartMonitor() noexcept {
 #elif defined(__linux__) && !defined(__ANDROID__)
     // Detached so there is no shutdown ordering to manage against static audio state.
     std::thread(MonitorLinuxMprisSessions).detach();
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && !defined(MKW_PLATFORM_VISIONOS)
     std::thread(MonitorMacOSAudio).detach();
 #else
     g_mediaControlAvailable.store(false, std::memory_order_release);

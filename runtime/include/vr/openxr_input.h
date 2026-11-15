@@ -264,6 +264,7 @@ private:
     // from this input time (0 when none is playing).
     hand_tracking::FlickDetector m_flick;
     XrTime m_flick_start = 0;
+    XrTime m_bare_logged_at = 0; // the last bare-hands readout in the log
     bool m_injected_flick_held = false;
     // Throwing the held item.
     item_throw::ThrowDetector m_throw;

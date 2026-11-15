@@ -14,6 +14,7 @@
 #endif
 
 #if defined(__APPLE__)
+#include <TargetConditionals.h>
 #include <mach-o/dyld.h>
 #include <pwd.h>
 #endif
@@ -35,6 +36,14 @@ std::optional<std::filesystem::path> ExecutableDirectory() noexcept {
         buffer.resize(buffer.size() * 2);
     }
 #elif defined(__APPLE__)
+#if TARGET_OS_IPHONE
+    // visionOS: the app (visionos/) names the bundle's resource directory, where CMake copied
+    // wii_bootstrap/, dsp_coef.bin and initial_pipeline_cache.db. Without it the executable's own
+    // directory is the bundle root, which on the iOS family is that same directory.
+    if (const char* resources = std::getenv("MKW_APPLE_RESOURCES_DIR"); resources && *resources) {
+        return std::filesystem::path(resources);
+    }
+#endif
     uint32_t size = 0;
     if (_NSGetExecutablePath(nullptr, &size) != -1 || size == 0) {
         return std::nullopt;
@@ -81,6 +90,17 @@ std::filesystem::path ApplicationDataDirectory(std::string_view applicationName)
         return directory;
     }
 #elif defined(__APPLE__)
+#if TARGET_OS_IPHONE
+    // visionOS: the app's Documents directory, which the Files app and iTunes-style file sharing
+    // expose (UIFileSharingEnabled), so game data and Config.toml can be dropped in by hand. The
+    // app passes it explicitly; $HOME/Documents is the same place when it does not.
+    if (const char* data = std::getenv("MKW_APPLE_DATA_DIR"); data && *data) {
+        return std::filesystem::path(data) / applicationName;
+    }
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        return std::filesystem::path(home) / "Documents" / applicationName;
+    }
+#endif
     if (const char* home = std::getenv("HOME"); home && *home) {
         return std::filesystem::path(home) / "Library" / "Application Support" / applicationName;
     }

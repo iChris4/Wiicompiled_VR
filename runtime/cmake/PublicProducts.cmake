@@ -32,6 +32,27 @@ if(MKW_PLATFORM_ANDROID AND EXISTS "${DATA_INIT_BLOB_ASM}")
         message(STATUS "Rewrote the PE/COFF blob assembly for ELF: ${DATA_INIT_BLOB_ASM}")
     endif()
 endif()
+# The same rewrite for Mach-O, which visionOS needs from a translation the Windows installer or a
+# Linux host produced (`generate-data-init --target-os macos` already emits this syntax). Mach-O C
+# symbols carry a leading underscore, so each blob label gets that spelling as an alias too.
+function(mkw_rewrite_blob_asm_for_macho input output_var)
+    set(${output_var} "${input}" PARENT_SCOPE)
+    file(READ "${input}" _text)
+    if(_text MATCHES "\\.section \\.rdata" OR _text MATCHES "\\.section \\.rodata")
+        string(REPLACE ".section .rdata,\"dr\"" ".section __TEXT,__const" _macho "${_text}")
+        string(REPLACE ".section .rodata,\"a\",@progbits" ".section __TEXT,__const" _macho "${_macho}")
+        string(REGEX REPLACE "\\.section \\.note\\.GNU-stack[^\n]*\n?" "" _macho "${_macho}")
+        string(REGEX REPLACE "\\.globl (k[A-Za-z0-9_]+)\n\\1:" ".globl \\1\n.globl _\\1\n\\1:\n_\\1:" _macho "${_macho}")
+        get_filename_component(_name "${input}" NAME_WE)
+        set(_rewritten "${CMAKE_CURRENT_BINARY_DIR}/${_name}_macho.S")
+        file(WRITE "${_rewritten}" "${_macho}")
+        message(STATUS "Rewrote the blob assembly for Mach-O: ${_rewritten}")
+        set(${output_var} "${_rewritten}" PARENT_SCOPE)
+    endif()
+endfunction()
+if(MKW_PLATFORM_VISIONOS AND EXISTS "${DATA_INIT_BLOB_ASM}")
+    mkw_rewrite_blob_asm_for_macho("${DATA_INIT_BLOB_ASM}" DATA_INIT_BLOB_ASM)
+endif()
 if(EXISTS "${DATA_INIT_FILE}")
     list(APPEND MKW_GAME_DATA_SOURCES "${DATA_INIT_FILE}")
 endif()
@@ -171,6 +192,17 @@ if(MKW_HAVE_RETRO_REWIND)
         target_precompile_headers(mkw_retro_sensitive REUSE_FROM mkw_base_shared)
     endif()
 
+    if(MKW_PLATFORM_VISIONOS)
+        # Same Mach-O rewrite as the base data blobs above.
+        set(MKW_VISIONOS_RETRO_EXTRA_SOURCES)
+        foreach(source IN LISTS MKW_RETRO_EXTRA_SOURCES)
+            if(source MATCHES "\\.S$")
+                mkw_rewrite_blob_asm_for_macho("${source}" source)
+            endif()
+            list(APPEND MKW_VISIONOS_RETRO_EXTRA_SOURCES "${source}")
+        endforeach()
+        set(MKW_RETRO_EXTRA_SOURCES ${MKW_VISIONOS_RETRO_EXTRA_SOURCES})
+    endif()
     if(MKW_PLATFORM_ANDROID)
         # Same PE/COFF-to-ELF rewrite as the base data blobs above.
         set(MKW_ANDROID_RETRO_EXTRA_SOURCES)
@@ -267,6 +299,13 @@ function(mkw_configure_product target)
             "${MKW_IOKIT_FRAMEWORK}" "${MKW_COREFOUNDATION_FRAMEWORK}" "${MKW_COREAUDIO_FRAMEWORK}")
         target_link_options(${target} PRIVATE
             "LINKER:-U,_OBJC_CLASS_$_MTLLogStateDescriptor")
+    elseif(MKW_PLATFORM_VISIONOS)
+        # The product is a framework on visionOS (below); these are the system frameworks its
+        # objects need beyond what SDL3 and Dawn carry in their own link interfaces.
+        foreach(framework Metal IOSurface QuartzCore Foundation CoreFoundation
+                          CompositorServices ARKit GameController AVFoundation AudioToolbox CoreAudio)
+            target_link_libraries(${target} PUBLIC "-framework ${framework}")
+        endforeach()
     endif()
     if(EXISTS "${MKW_AURORA_DIR}/cmake/AuroraCopyRuntimeDLLs.cmake")
         include("${MKW_AURORA_DIR}/cmake/AuroraCopyRuntimeDLLs.cmake")
@@ -328,6 +367,11 @@ function(mkw_configure_product target)
     if(NOT EXISTS "${MKW_WII_BOOTSTRAP_SOURCE_DIR}/shared2/wc24")
         message(FATAL_ERROR "Missing Wii first-run bootstrap payload: ${MKW_WII_BOOTSTRAP_SOURCE_DIR}")
     endif()
+    if(MKW_PLATFORM_VISIONOS)
+        # A framework has no executable directory of its own; the app bundles these resources
+        # itself (visionos/CMakeLists.txt) where ExecutableDirectory() finds them.
+        return()
+    endif()
     add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${MKW_WII_BOOTSTRAP_SOURCE_DIR}" "$<TARGET_FILE_DIR:${target}>/wii_bootstrap" VERBATIM)
 
@@ -383,12 +427,34 @@ function(mkw_add_product_icon target)
     endif()
 endfunction()
 
+# visionOS: a product as an embeddable framework (visionos/CMakeLists.txt embeds and signs it;
+# the app finds it at Frameworks/<name>.framework and loads it with dlopen).
+function(mkw_visionos_game_framework target name)
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME ${name}
+        FRAMEWORK TRUE
+        FRAMEWORK_VERSION A
+        MACOSX_FRAMEWORK_IDENTIFIER "org.wiicompiled.vision.${name}"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.wiicompiled.vision.${name}"
+        XCODE_ATTRIBUTE_INSTALL_PATH "@rpath"
+        XCODE_ATTRIBUTE_DEFINES_MODULE NO
+        XCODE_ATTRIBUTE_SKIP_INSTALL YES)
+    target_link_libraries(${target} PRIVATE c++)
+endfunction()
+
 # Android ships each product as the shared library SDLActivity loads; the base
 # game keeps SDL's conventional "main" name and Retro Rewind gets its own so a
 # dual-flavour app can bundle both without a name clash.
 if(MKW_PLATFORM_ANDROID)
     add_library(WiiCompiled SHARED "${MKW_BASE_PRODUCT_SOURCE}")
     set_target_properties(WiiCompiled PROPERTIES OUTPUT_NAME main)
+elseif(MKW_PLATFORM_VISIONOS)
+    # visionOS ships each product as a framework the SwiftUI app embeds and loads with dlopen
+    # when the player presses Play, as the Quest's launcher loads libmain.so: the runtime's
+    # static initialisers read Config.toml, and they must run after the launcher's settings
+    # page has written it, not at app launch.
+    add_library(WiiCompiled SHARED "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_BASE_REGISTRATION_SOURCES})
+    mkw_visionos_game_framework(WiiCompiled WiiCompiledGame)
 else()
     add_executable(WiiCompiled "${MKW_BASE_PRODUCT_SOURCE}")
 endif()
@@ -417,6 +483,9 @@ if(MKW_HAVE_RETRO_REWIND)
     if(MKW_PLATFORM_ANDROID)
         add_library(RetroRewind SHARED "${MKW_RETRO_REWIND_PRODUCT_SOURCE}")
         set_target_properties(RetroRewind PROPERTIES OUTPUT_NAME main_retro_rewind)
+    elseif(MKW_PLATFORM_VISIONOS)
+        add_library(RetroRewind SHARED "${MKW_RETRO_REWIND_PRODUCT_SOURCE}" ${MKW_RETRO_REGISTRATION_SOURCES})
+        mkw_visionos_game_framework(RetroRewind RetroRewindGame)
     else()
         add_executable(RetroRewind "${MKW_RETRO_REWIND_PRODUCT_SOURCE}")
     endif()

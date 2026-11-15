@@ -51,6 +51,10 @@ if (AURORA_ENABLE_GX)
     if (AURORA_DAWN_VULKAN_ABI)
         target_compile_definitions(aurora_core PRIVATE AURORA_DAWN_VULKAN=${AURORA_DAWN_VULKAN_ABI})
     endif ()
+    # Apple/Metal counterpart for the Apple Vision Pro build: the IOSurface
+    # stereo bridge (aurora/metal_interop.h). Stubs off Apple or without the
+    # Dawn Metal backend.
+    target_sources(aurora_core PRIVATE lib/webgpu/metal_interop.cpp)
     target_link_libraries(aurora_core PRIVATE dawn::webgpu_dawn)
     # Fragment density maps for foveated eye rendering, from a Dawn built with Aurora's patches; the
     # value is the package's ABI version (include/aurora/dawn_fdm_abi.h).
@@ -79,6 +83,13 @@ if (AURORA_ENABLE_GX)
         target_link_options(aurora_core PUBLIC
             "LINKER:-weak_framework,Metal"
             "LINKER:-U,_OBJC_CLASS_$_MTLLogStateDescriptor")
+        # metal_interop.cpp retains IOSurfaces and MTLSharedEvents through CoreFoundation.
+        target_link_libraries(aurora_core PUBLIC "-framework IOSurface" "-framework CoreFoundation"
+                                                 "-framework QuartzCore")
+    endif ()
+    if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+        # MetalBinding.mm makes its own CAMetalLayer there (no UIKit window exists).
+        target_compile_definitions(aurora_core PRIVATE AURORA_VISIONOS=1)
     endif ()
     if (DAWN_ENABLE_D3D11)
         target_compile_definitions(aurora_core PRIVATE DAWN_ENABLE_BACKEND_D3D11)

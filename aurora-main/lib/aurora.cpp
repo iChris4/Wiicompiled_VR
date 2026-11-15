@@ -38,6 +38,9 @@
 #include <pthread.h>
 #include <unistd.h>
 #endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #include "system_info.hpp"
 #include "tracy/Tracy.hpp"
 
@@ -326,12 +329,14 @@ std::atomic<uint32_t> g_frameWorkerNativeThreadId{0};
 bool frame_worker_requested() noexcept {
 #ifdef AURORA_ENABLE_GX
   static const bool enabled = [] {
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !TARGET_OS_VISION
     // ImGui's SDL backend may raise an SDL window from ImGui::NewFrame(). On
     // macOS that reaches AppKit, whose window operations are main-thread-only;
     // doing it on the frame worker terminates the process with EXC_BREAKPOINT.
     // Keep all SDL/ImGui work on the calling thread until the worker no longer
-    // owns frame preparation on Apple platforms.
+    // owns frame preparation on Apple platforms. Apple Vision Pro is exempt: its
+    // SDL window is the offscreen driver's, which has no AppKit or UIKit behind
+    // it, and the headset's pacing (VR interpolation above all) wants the worker.
     return false;
 #endif
 #if defined(_WIN32)
@@ -1558,7 +1563,9 @@ std::shared_ptr<PresentationImage> acquire_presentation_image(size_t slot, uint3
 // (and copying the mirror image the desktop would show) is pure GPU cost there. Presentation snapshots are still
 // encoded: in menus the virtual-screen eyes are built from them. Desktop keeps its window mirror.
 bool headset_owns_display() noexcept {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_VISION)
+  // The Quest's Android surface and the Vision Pro's offscreen CAMetalLayer are
+  // both images nobody sees while the headset runs.
   return stereo_frame_provider_active();
 #else
   return false;
@@ -2882,12 +2889,18 @@ void record_frame_telemetry() {
   previousProcessCpu100ns = processCpu100ns;
   previousThreadCpu100ns = threadCpu100ns;
 #endif
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(AURORA_VISIONOS)
   {
-    // `adb shell setprop debug.wiicompiled.fpslog 1` before launch logs the game's rendered frame rate every five
-    // seconds. The headset compositor's own log (logcat tag VrApi) repeats frames, so it cannot show this.
+    // `adb shell setprop debug.wiicompiled.fpslog 1` before launch (on the Vision Pro: the app launched with
+    // `--fpslog`, which sets MKW_FPSLOG=1) logs the game's rendered frame rate every five seconds. The headset
+    // compositor's own log repeats frames, so it cannot show this.
     static const bool fpsLog = [] {
+#if defined(__ANDROID__)
       const bool on = android_debug::property_int("debug.wiicompiled.fpslog", 0) == 1;
+#else
+      const char* value = std::getenv("MKW_FPSLOG");
+      const bool on = value != nullptr && value[0] == '1';
+#endif
       // The same switch turns on the per-pass GPU timestamps reported below the frame-rate line, and the
       // count of why draws did not merge.
       gfx::gpu_timing_set_enabled(on);

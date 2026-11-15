@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The guest's 4 GiB flat address space is reserved at a fixed 480 GiB address
+	     (runtime/include/guest_flat_memory.h): visionOS 27 reserves 64 to 448 GiB for
+	     itself and starts the process's allocations at 448 GiB. This entitlement widens
+	     the address space from the 64 GiB default so the reservation is honoured. -->
+	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+	<true/>
+	<!-- Guest RAM, the texture and pipeline caches and Dawn together pass the
+	     default per-app memory limit. -->
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+</dict>
+</plist>

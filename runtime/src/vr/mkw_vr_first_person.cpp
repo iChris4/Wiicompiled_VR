@@ -10,6 +10,7 @@
 #include "hle_stubs.h"
 #include "gx_model_visibility.h"
 #include "memory.h"
+#include "ppc_runtime.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
 #include "vr/body_hand_profiles.h"

@@ -117,6 +117,18 @@ TEST_F(CockpitGeometry, TrackedHandDrawsAGloveAtItsGrip) {
   }
 }
 
+// The Vision Pro shows the wearer's own hands: a hidden hand keeps its pose for
+// the held item but adds nothing to the overlay.
+TEST_F(CockpitGeometry, HiddenHandDrawsNothing) {
+  AuroraCockpit cockpit{};
+  cockpit.nativeWheel = true;
+  cockpit.hands[1].tracked = true;
+  cockpit.hands[1].hidden = true;
+  cockpit.hands[1].squeeze = 1.0f;
+  set_identity(cockpit.hands[1].seatFromGrip, {0.2f, -0.3f, -0.4f});
+  EXPECT_TRUE(aurora::gfx::cockpit::geometry(cockpit).empty());
+}
+
 // The grip space OpenXR defines: -Z up the curled fingers' tube towards the
 // thumb, +X out of the palm. So the fingers run along Y (+Y on the right hand,
 // -Y on the left) and close towards +X, never out of the back of the hand.

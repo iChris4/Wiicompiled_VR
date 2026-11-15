@@ -245,9 +245,11 @@ inline void build_geometry(const AuroraCockpit& cockpit, std::vector<Vertex>& ve
   }
   std::array<std::shared_ptr<const HandMesh>,2> current;
   { std::lock_guard lock(meshMutex);current=meshes; }
-  // A hand the game's character model draws (the character body) gets none
-  // here; what it carries is drawn all the same (cockpit_item::render).
-  for(int side=0;side<2;++side) if(cockpit.hands[side].tracked && !cockpit.hands[side].characterHand) {
+  // A hand the game's character model draws (the character body), or one the
+  // headset shows as the wearer's own (hidden, the Vision Pro), gets none here;
+  // what it carries is drawn all the same (cockpit_item::render).
+  for(int side=0;side<2;++side) if(cockpit.hands[side].tracked && !cockpit.hands[side].characterHand &&
+                                    !cockpit.hands[side].hidden) {
     const auto& hand=cockpit.hands[side];
     const bool joints=hand.jointsValid && joints_finite(hand);
     if(current[side]) joints ? tracked_hand(vertices,hand,*current[side]) : runtime_hand(vertices,hand,*current[side]);

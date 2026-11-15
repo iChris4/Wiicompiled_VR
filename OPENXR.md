@@ -10,6 +10,10 @@ build; see [Windows Vulkan](#windows-vulkan).
 
 This is an experimental renderer, not yet a release-ready VR mode.
 
+Two standalone headsets share this same pacing thread and presentation policy behind their own
+graphics bindings: the Meta Quest (Android Vulkan, `docs/quest-port.md`) and the Apple Vision Pro
+(Metal, through a private OpenXR provider over CompositorServices and ARKit, `docs/visionos-port.md`).
+
 ## Requirements
 
 - A Windows OpenXR runtime selected as the system's active runtime.
@@ -361,7 +365,8 @@ available in F10 > VR. In cockpit view, the selected tracked hand holds one item
 game's `Race/Common.szs` after the roulette settles. The item stands upright just above the palm
 with its front toward the player, `cockpit_item_size` metres across its largest side (0.2 by
 default, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
-hand never tips it over. A triple (mushrooms, green or red shells, bananas) shows what is left of it
+hand never tips it over. On Apple Vision Pro no cockpit hand is drawn, so the item stands over the
+wearer's own palm, placed from the hand-tracking joints. A triple (mushrooms, green or red shells, bananas) shows what is left of it
 as copies of the single item at half the item size, drawn as instances of one model: three in a
 triangle, two at the back and a little higher with the third in front of them, then two side by
 side, then one in the middle. The display follows player 1's inventory: using, losing, or deploying the
@@ -836,6 +841,13 @@ it, so the cameras track that hand at once, while a held controller keeps workin
 from its touch sensors). The log says `OpenXR simultaneous hands and controllers on` (and `off`
 when the option goes off). Meta documents that it cannot run together with passthrough and wide
 motion mode both on, and not while body tracking is; this app uses neither of the last two.
+
+The Apple Vision Pro takes the same path with nothing to put down: its OpenXR provider
+(`docs/visionos-port.md`, "Input") is an `XR_EXT_hand_tracking` runtime over ARKit's skeletons,
+reports the cameras as the data source, an index pinch as the aim state's pinch and a little-finger
+pinch as its menu (visionOS has no palm-up gesture to give away), and answers `khr/simple_controller`
+while the app holds hand trackers, so `hand_tracking` (on by default there, "Drive with your hands")
+turns the rules below on and off live. No hand is drawn there: the headset shows the wearer's own.
 
 With tracked hands on, bare hands drive. A hand is bare while it has no controller in it (its
 squeeze action inactive) and either drives `khr/simple_controller` or has camera-tracked joints (a
