@@ -26,6 +26,7 @@ final class GameModel: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var discPresent = false
+    /// Always mixed: [vr] passthrough decides whether the room shows (WiiCompiledVisionApp).
     @Published var immersionStyle: any ImmersionStyle = .mixed
     /// [vr] real_arms: the immersive space shows the wearer's own arms and hands
     /// (upperLimbVisibility). Read from the game once it is loaded, then followed while it
@@ -85,7 +86,6 @@ final class GameModel: ObservableObject {
         offersRetroRewind = RetroRewindBuild.available && GameLibrary.isEmbedded(GameChoice.retroRewind.frameworkName)
         let remembered = GameChoice(rawValue: UserDefaults.standard.string(forKey: GameModel.selectedGameKey) ?? "")
         selectedGame = offersRetroRewind ? (remembered ?? .base) : .base
-        immersionStyle = (UserDefaults.standard.object(forKey: GameModel.wantsRoomKey) as? Bool ?? true) ? .mixed : .full
         refreshDisc()
         if selectedGame == .retroRewind { refreshPack() }
     }
@@ -265,17 +265,6 @@ final class GameModel: ObservableObject {
     func requestQuit() {
         GameLibrary.shared?.requestQuit()
     }
-
-    /// Whether the immersive space opens in the room (mixed) or fully immersive; the Settings
-    /// tab's "Show my room around the menu screen", remembered across launches.
-    var wantsRoom: Bool {
-        get { immersionStyle is MixedImmersionStyle }
-        set {
-            immersionStyle = newValue ? .mixed : .full
-            UserDefaults.standard.set(newValue, forKey: GameModel.wantsRoomKey)
-        }
-    }
-    private static let wantsRoomKey = "showRoom"
 }
 
 /// The games the app can carry, one embedded framework each (runtime/cmake/PublicProducts.cmake).

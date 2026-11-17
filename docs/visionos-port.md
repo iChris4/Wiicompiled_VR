@@ -94,11 +94,12 @@ pass waits on it. Aurora's side is `aurora-main/lib/webgpu/metal_interop.cpp`
 
 ### Passthrough and immersion
 
-The room is shown two ways at once. The SwiftUI `ImmersiveSpace` opens in
-*mixed* or *full* immersion (the launcher's Settings > Virtual screen > "Show my room", remembered across launches); in mixed
-immersion the compositor blends the drawable over the surroundings by alpha.
-The game's live `[vr] passthrough` setting (the same one as on the Quest, on by
-default) reaches the provider as `xr_visionos_set_frame_environment`: when set,
+The SwiftUI `ImmersiveSpace` always opens in *mixed* immersion, where the
+compositor blends the drawable over the surroundings by alpha. Whether the
+room shows is the game's live `[vr] passthrough` setting alone (the same one
+as on the Quest, on by default; "Show my room around the menu screen" in the
+launcher's Settings > Virtual screen, "Passthrough around the menu screen" in
+the settings panel). It reaches the provider as `xr_visionos_set_frame_environment`: when set,
 frames outside an immersive race clear the drawable transparent, so the room
 frames the virtual screen and the immersive window; immersive races draw
 opaque eyes and cover the room either way. A mixed space also shows the room
@@ -583,6 +584,8 @@ OpenXR input to the game, to HIDAPI, which it turns off on visionOS, so
   both games and builds, signs and installs the app, and both games start
   from Play. The Bullet Bill held in the cockpit is opaque, and "Show my real
   arms" shows the wearer's arms when on and the character body when off.
+  With the space always in mixed immersion, `[vr] passthrough` alone shows
+  the room around the menu screen, or black all around it when off.
 
 Not done: comfort tuning of the projection quad depth, the gesture thresholds,
 `render_scale`. Things to expect to tune first on hardware: the constant depth the

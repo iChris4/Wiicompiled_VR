@@ -39,7 +39,6 @@ final class ConfigStore: ObservableObject {
 /// runtime performance level, Touch-controller hand tracking) are left out.
 struct SettingsView: View {
     @StateObject private var store = ConfigStore()
-    @EnvironmentObject private var model: GameModel
 
     private static let rotations = ["yaw", "yaw_pitch", "full"]
     private static let seats = ["cockpit", "custom"]
@@ -166,13 +165,9 @@ struct SettingsView: View {
             SliderRow(title: "Screen width", help: "How wide the menu screen and race HUD are.",
                       range: 1.0...6.0, step: 0.1, format: { String(format: "%.1f m", $0) },
                       value: numberBinding("vr", "hud_width_meters", in: 0.25...20.0, default: 2.4))
-            // Not in Config.toml: the style the app opens its immersive space with (GameModel).
+            // [vr] passthrough, the settings panel's "Passthrough around the menu screen".
             ToggleRow(title: "Show my room around the menu screen",
-                      help: "Opens the game in your room (mixed immersion) rather than fully immersive. Races are fully immersive either way. Applies the next time you press Play.",
-                      isOn: Binding(get: { model.wantsRoom }, set: { model.wantsRoom = $0 }))
-                .disabled(model.phase == .running)
-            ToggleRow(title: "Passthrough around the menu screen",
-                      help: "Shows your room around the menus instead of black, when \"Show my room\" above is on. Immersive races stay fully virtual; the immersive window and the flat screen race have the room around them too.",
+                      help: "Shows your room around the menus instead of black. Immersive races cover it either way; the immersive window and the flat screen race have the room around them too. The settings panel's \"Passthrough around the menu screen\" is the same setting and switches it live.",
                       isOn: boolBinding("vr", "passthrough", default: true))
         }
     }

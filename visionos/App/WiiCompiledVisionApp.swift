@@ -22,11 +22,11 @@ struct WiiCompiledVisionApp: App {
         ImmersiveSpace(id: GameModel.immersiveSpaceID) {
             ImmersiveGame.layer(for: model)
         }
-        // Mixed immersion shows the room around the virtual screen and the
-        // immersive window when the game's passthrough setting asks for it (the
-        // provider clears the frame transparent there); full immersion is the
-        // headset with nothing else. The launcher offers the choice.
-        .immersionStyle(selection: $model.immersionStyle, in: .mixed, .full)
+        // Always mixed immersion: the game's live [vr] passthrough setting alone
+        // decides whether the room shows around the virtual screen and the
+        // immersive window (the provider clears the frame transparent there) or
+        // black does. Immersive races draw opaque eyes and cover it either way.
+        .immersionStyle(selection: $model.immersionStyle, in: .mixed)
         // The wearer's own arms over the race, or the character body in their place
         // ([vr] real_arms, which the runtime reads too).
         .upperLimbVisibility(model.realArms ? .visible : .hidden)
