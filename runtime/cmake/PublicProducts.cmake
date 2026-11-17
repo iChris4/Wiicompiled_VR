@@ -453,7 +453,9 @@ elseif(MKW_PLATFORM_VISIONOS)
     # when the player presses Play, as the Quest's launcher loads libmain.so: the runtime's
     # static initialisers read Config.toml, and they must run after the launcher's settings
     # page has written it, not at app launch.
-    add_library(WiiCompiled SHARED "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_BASE_REGISTRATION_SOURCES})
+    # The registration and dispatch tables come from mkw_base_registration below, as on every
+    # platform: listing them here as well registers the dispatch table twice, which aborts.
+    add_library(WiiCompiled SHARED "${MKW_BASE_PRODUCT_SOURCE}")
     mkw_visionos_game_framework(WiiCompiled WiiCompiledGame)
 else()
     add_executable(WiiCompiled "${MKW_BASE_PRODUCT_SOURCE}")
@@ -484,7 +486,8 @@ if(MKW_HAVE_RETRO_REWIND)
         add_library(RetroRewind SHARED "${MKW_RETRO_REWIND_PRODUCT_SOURCE}")
         set_target_properties(RetroRewind PROPERTIES OUTPUT_NAME main_retro_rewind)
     elseif(MKW_PLATFORM_VISIONOS)
-        add_library(RetroRewind SHARED "${MKW_RETRO_REWIND_PRODUCT_SOURCE}" ${MKW_RETRO_REGISTRATION_SOURCES})
+        # Registration from mkw_retro_registration below, as for the base game.
+        add_library(RetroRewind SHARED "${MKW_RETRO_REWIND_PRODUCT_SOURCE}")
         mkw_visionos_game_framework(RetroRewind RetroRewindGame)
     else()
         add_executable(RetroRewind "${MKW_RETRO_REWIND_PRODUCT_SOURCE}")

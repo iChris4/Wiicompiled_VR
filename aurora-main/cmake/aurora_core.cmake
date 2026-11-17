@@ -65,7 +65,11 @@ if (AURORA_ENABLE_GX)
     if (APPLE AND DAWN_ENABLE_METAL)
         find_library(AURORA_METALFX_FRAMEWORK MetalFX)
     endif ()
-    if (APPLE AND DAWN_ENABLE_METAL AND AURORA_METALFX_FRAMEWORK)
+    # MetalFX upscales the flat window on macOS. visionOS presents through the OpenXR eyes and
+    # its SDK has MetalFX but not the IOSurface umbrella header metalfx.mm imports, so it takes
+    # the stub (the F10 bar then shows the option as unavailable).
+    if (APPLE AND DAWN_ENABLE_METAL AND AURORA_METALFX_FRAMEWORK
+        AND NOT CMAKE_SYSTEM_NAME STREQUAL "visionOS")
         target_sources(aurora_core PRIVATE lib/webgpu/metalfx.mm)
         set_source_files_properties(lib/webgpu/metalfx.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
         target_link_options(aurora_core PUBLIC "LINKER:-weak_framework,MetalFX")
