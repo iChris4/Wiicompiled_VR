@@ -59,11 +59,14 @@ final class GameModel: ObservableObject {
 
     init() {
         // visionOS anchors an app's audio to its window scene by default, so the game fell
-        // silent when the launcher window closed. The game's sound belongs to the player,
-        // not to a window: anchor it to the listener's front, which outlives every scene.
+        // silent when the launcher window closed. Its sound also needs no help from the system:
+        // the race mixes its own 3D sound, and voice chat already turns remote voices against
+        // the head's rotation (OpenXRPublishHeadRotation), so head-tracking the mix again in the
+        // room pinned the stereo image as the player turned. Bypassing the system's
+        // spatialization plays the game's stereo straight to the ears, like headphones, and is
+        // tied to no scene.
         do {
-            try AVAudioSession.sharedInstance().setIntendedSpatialExperience(
-                .headTracked(soundStageSize: .automatic, anchoringStrategy: .front))
+            try AVAudioSession.sharedInstance().setIntendedSpatialExperience(.bypassed)
         } catch {
             lastError = "Could not set up the game's audio: \(error.localizedDescription)"
         }
