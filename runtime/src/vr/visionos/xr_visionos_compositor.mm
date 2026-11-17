@@ -174,6 +174,26 @@ struct Uniforms {
 // distance too; a diorama or a cockpit both live a few metres out.
 constexpr float kProjectionLayerDepthMeters = 3.0f;
 
+// Where the black around the layers is said to sit when the room is not shown
+// ([vr] passthrough off). A mixed-immersion space shows the room wherever the
+// drawable's depth is 0, the reverse-Z infinity, whatever its alpha (deciding in
+// tiles, so a cleared margin around the layers was left as a staircase), so an
+// opaque frame's backdrop is cleared to this distance's depth instead. The layers
+// draw over it whatever their depth (m_depthState passes always).
+constexpr float kOpaqueBackdropMeters = 100.0f;
+
+// The depth to clear a view to: infinity (0) when the room shows through the
+// cleared drawable, kOpaqueBackdropMeters through `projection` otherwise.
+double ClearDepth(const simd_float4x4& projection, bool alphaBlend) noexcept {
+    if (alphaBlend) {
+        return 0.0;
+    }
+    const simd_float4 clip = simd_mul(projection, simd_make_float4(0.0f, 0.0f, -kOpaqueBackdropMeters, 1.0f));
+    const float depth = clip.w > 0.0f ? clip.z / clip.w : 0.0f;
+    // A far plane nearer than the backdrop would put it out of range: keep it just in front.
+    return depth > 0.0f && depth <= 1.0f ? depth : 1e-6;
+}
+
 simd_float4x4 Scale(float x, float y, float z) noexcept {
     return simd_matrix(simd_make_float4(x, 0, 0, 0), simd_make_float4(0, y, 0, 0), simd_make_float4(0, 0, z, 0),
                        simd_make_float4(0, 0, 0, 1));
@@ -678,6 +698,9 @@ void Compositor::PresentEmpty(cp_frame_t frame, cp_drawable_t drawable, bool alp
     }
     id<MTLCommandBuffer> commandBuffer = [m_queue commandBuffer];
     const size_t textures = cp_drawable_get_texture_count(drawable);
+    // Both eyes share their near and far planes; the first view's projection serves.
+    const double clearDepth =
+        ClearDepth(cp_drawable_compute_projection(drawable, cp_axis_direction_convention_right_up_back, 0), alphaBlend);
     for (size_t i = 0; i < textures; ++i) {
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
         id<MTLTexture> color = cp_drawable_get_color_texture(drawable, i);
@@ -690,7 +713,7 @@ void Compositor::PresentEmpty(cp_frame_t frame, cp_drawable_t drawable, bool alp
             pass.depthAttachment.texture = depth;
             pass.depthAttachment.loadAction = MTLLoadActionClear;
             pass.depthAttachment.storeAction = MTLStoreActionStore;
-            pass.depthAttachment.clearDepth = 0.0; // reverse-Z: nothing, at infinity
+            pass.depthAttachment.clearDepth = clearDepth;
         }
         if (color.textureType == MTLTextureType2DArray) {
             pass.renderTargetArrayLength = color.arrayLength;
@@ -813,7 +836,7 @@ void Compositor::DrawLayers(cp_drawable_t drawable, id<MTLCommandBuffer> command
             pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, alphaBlend ? 0 : 1);
             if (depth != nil) {
                 pass.depthAttachment.loadAction = MTLLoadActionClear;
-                pass.depthAttachment.clearDepth = 0.0;
+                pass.depthAttachment.clearDepth = ClearDepth(projection, alphaBlend);
             }
             if (textureIndex < cleared.size()) {
                 cleared[textureIndex] = true;
