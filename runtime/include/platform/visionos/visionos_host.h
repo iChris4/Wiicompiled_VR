@@ -55,6 +55,12 @@ bool mkw_visionos_game_running(void);
 // The runtime's exit code once it returned; 0 before.
 int mkw_visionos_exit_code(void);
 
+// The [vr] real_arms preference ("Show my real arms" in the settings panel): whether
+// the immersive space shows the wearer's own arms (upperLimbVisibility). Read from
+// the loaded config, so valid once the framework is loaded; the app polls it to
+// follow the panel live.
+bool mkw_visionos_real_arms(void);
+
 // Asks the runtime to quit the way closing its window would. Returns once the
 // request is posted, not once the game stopped.
 void mkw_visionos_request_quit(void);

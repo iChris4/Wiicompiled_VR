@@ -27,6 +27,8 @@ struct WiiCompiledVisionApp: App {
         // provider clears the frame transparent there); full immersion is the
         // headset with nothing else. The launcher offers the choice.
         .immersionStyle(selection: $model.immersionStyle, in: .mixed, .full)
-        .upperLimbVisibility(.visible)
+        // The wearer's own arms over the race, or the character body in their place
+        // ([vr] real_arms, which the runtime reads too).
+        .upperLimbVisibility(model.realArms ? .visible : .hidden)
     }
 }

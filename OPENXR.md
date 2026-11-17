@@ -68,6 +68,7 @@ body_ik = true
 body_ik_hands_only = false
 body_ik_left_hand_roll = 90.0
 body_ik_right_hand_roll = -90.0
+real_arms = true
 first_person_rotation = "yaw_pitch"
 steering_wheel = true
 native_steering_wheel = true
@@ -262,7 +263,8 @@ same with less GPU memory traffic, which a tiled mobile GPU pays for at every sp
 plan" log line reports each new pass structure).
 `first_person` (the camera each race starts on), `bullet_bill_camera` and the `first_person_*` values
 are the first-person camera described below, and `body_ik`, `body_ik_hands_only` and the
-`body_ik_*_hand_roll` angles the [character body](#character-body) drawn in its cockpit. All are live and are also exposed in the F10
+`body_ik_*_hand_roll` angles the [character body](#character-body) drawn in its cockpit;
+`real_arms` (Apple Vision Pro only) shows the wearer's own arms instead. All are live and are also exposed in the F10
 settings bar.
 `performance_level` is the level asked of the runtime through `XR_EXT_performance_settings` for
 its CPU and GPU domains: `boost`, `sustained_high`, `sustained_low`, `power_savings`, or
@@ -365,8 +367,8 @@ available in F10 > VR. In cockpit view, the selected tracked hand holds one item
 game's `Race/Common.szs` after the roulette settles. The item stands upright just above the palm
 with its front toward the player, `cockpit_item_size` metres across its largest side (0.2 by
 default, 0.05 to 0.60; **Held item size** in F10 > VR and the Quest launcher, live). It turns only with the hand's heading, so rolling or tilting the
-hand never tips it over. On Apple Vision Pro no cockpit hand is drawn, so the item stands over the
-wearer's own palm, placed from the hand-tracking joints. A triple (mushrooms, green or red shells, bananas) shows what is left of it
+hand never tips it over. On Apple Vision Pro with `real_arms` on (the default) no cockpit hand is
+drawn, so the item stands over the wearer's own palm, placed from the hand-tracking joints. A triple (mushrooms, green or red shells, bananas) shows what is left of it
 as copies of the single item at half the item size, drawn as instances of one model: three in a
 triangle, two at the back and a little higher with the third in front of them, then two side by
 side, then one in the middle. The display follows player 1's inventory: using, losing, or deploying the
@@ -923,6 +925,14 @@ from the game's own skeleton, mesh and textures: the torso sits in the seat, the
 tracked controllers, and the head is hidden so it never blocks the view. `body_ik_hands_only = true`
 (*Character hands only*) hides the body and arms and keeps only the character's hands, following
 the controllers. Both are live. Nothing is added to the game's data.
+
+On Apple Vision Pro, `real_arms = true` (the default; **Show my real arms** in the settings panel's
+Camera tab, live, and in the launcher's Settings) keeps the wearer's own arms and hands composited
+over the race (`upperLimbVisibility`), and the character body is then neither posed nor drawn, so it
+never doubles them; nor is any cockpit hand, and the held item stands over the real palm. With
+`real_arms = false` the headset hides the arms and the cockpit is the other headsets' one: the
+character body as `body_ik` says, or hands drawn from the tracked joints (the provider has no
+runtime hand mesh). `real_arms` does nothing on the other headsets.
 
 It is drawn only while first person is what the race shows, with the cockpit seat, and not while
 you are a Bullet Bill. Standard rigs (both arms' `arm_*1`, `arm_*2` and `wrist_*1` bones, and a head

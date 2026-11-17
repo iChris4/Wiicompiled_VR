@@ -91,6 +91,7 @@ struct RuntimeUserConfig {
     std::optional<std::string> vrBulletBillCamera;
     std::optional<bool> vrBodyIk;
     std::optional<bool> vrBodyIkHandsOnly;
+    std::optional<bool> vrRealArms;
     std::optional<float> vrBodyIkLeftHandRoll;
     std::optional<float> vrBodyIkRightHandRoll;
     std::optional<float> vrCockpitUnitsPerMeter;
@@ -321,6 +322,11 @@ inline constexpr const char* kVrCockpitItemHandDefault = "right";
 // driver is hidden as first_person_hide_driver says and gloves are drawn.
 inline constexpr bool kVrBodyIkDefault = true;
 inline constexpr bool kVrBodyIkHandsOnlyDefault = false;
+// Apple Vision Pro: the headset shows the wearer's own arms and hands over the
+// race (the app's upperLimbVisibility), and then neither the character body nor
+// a cockpit hand is drawn over them. Off, the arms are hidden and the character
+// body (or the cockpit hands) is drawn as on the other headsets. Ignored elsewhere.
+inline constexpr bool kVrRealArmsDefault = true;
 // How far each character hand is turned about the forearm from where its
 // built-in palm profile puts it, in degrees, positive counter-clockwise as the
 // player looks along the arm: the profiles were recorded on another runtime's
@@ -751,6 +757,10 @@ inline void EnsureConfigFile() {
               "# as you look along the arm.\n"
               "body_ik_left_hand_roll = 90.0\n"
               "body_ik_right_hand_roll = -90.0\n"
+              "# Apple Vision Pro only: show your own arms and hands over the race.\n"
+              "# The character body is then not drawn over them; off, your arms\n"
+              "# are hidden and the character body (or the VR hands) is drawn.\n"
+              "real_arms = true\n"
               "# Where the view's orientation comes from: \"yaw\" levels the\n"
               "# horizon, \"yaw_pitch\" adds the kart's climb but no roll, and\n"
               "# \"full\" takes the kart's whole orientation so the view banks.\n"
@@ -1049,6 +1059,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     }
     config.vrBodyIk = FindConfigValue<bool>(document, "vr", "body_ik");
     config.vrBodyIkHandsOnly = FindConfigValue<bool>(document, "vr", "body_ik_hands_only");
+    config.vrRealArms = FindConfigValue<bool>(document, "vr", "real_arms");
     if (auto value = FindConfigFloat(document, "vr", "first_person_units_per_meter");
         value && *value >= 1.0f && *value <= 10000.0f) {
         config.vrFirstPersonUnitsPerMeter = *value;
@@ -1466,6 +1477,11 @@ inline bool SetVrBodyIkHandsOnly(bool value) {
     return WriteSetting("vr", "body_ik_hands_only", value ? "true" : "false");
 }
 
+inline bool SetVrRealArms(bool value) {
+    Mutable().vrRealArms = value;
+    return WriteSetting("vr", "real_arms", value ? "true" : "false");
+}
+
 // hand 0 is the left.
 inline bool SetVrBodyIkHandRoll(size_t hand, float value) {
     value = std::clamp(value, kVrBodyIkHandRollMin, kVrBodyIkHandRollMax);
@@ -1699,7 +1715,7 @@ inline constexpr std::string_view kVrPreferenceKeys[] = {
     "lean_back_degrees", "first_person", "first_person_toggle_click", "bullet_bill_camera", "first_person_seat",
     "cockpit_units_per_meter", "first_person_units_per_meter", "first_person_head_up_meters",
     "first_person_head_forward_meters", "first_person_head_right_meters", "first_person_rotation", "body_ik",
-    "body_ik_hands_only", "body_ik_left_hand_roll", "body_ik_right_hand_roll", "first_person_hide_driver",
+    "body_ik_hands_only", "body_ik_left_hand_roll", "body_ik_right_hand_roll", "real_arms", "first_person_hide_driver",
     "first_person_hidden_model", "steering_wheel", "native_steering_wheel", "placeholder_steering_wheel",
     "hand_steering", "wheel_kart_degrees", "wheel_bike_degrees", "wheel_grab_distance", "wheel_grab_assist",
     "wheel_response", "wheel_tracking_grace", "wheel_haptics", "cockpit_item_hand", "cockpit_item_throw",
@@ -1738,6 +1754,7 @@ inline bool ResetVrPreferences() {
     config.vrFirstPersonRotation.reset();
     config.vrBodyIk.reset();
     config.vrBodyIkHandsOnly.reset();
+    config.vrRealArms.reset();
     config.vrBodyIkLeftHandRoll.reset();
     config.vrBodyIkRightHandRoll.reset();
     config.vrFirstPersonHideDriver.reset();
@@ -2246,6 +2263,26 @@ inline bool VrBodyIk(bool fallback = kVrBodyIkDefault) {
 
 inline bool VrBodyIkHandsOnly(bool fallback = kVrBodyIkHandsOnlyDefault) {
     return Get().vrBodyIkHandsOnly.value_or(fallback);
+}
+
+// The [vr] real_arms preference as written; RealArmsShown() is what the headset does with it.
+inline bool VrRealArms(bool fallback = kVrRealArmsDefault) {
+    return Get().vrRealArms.value_or(fallback);
+}
+
+// Whether the headset shows the wearer's own arms over the race: only the Vision Pro can.
+inline bool VrRealArmsShown() {
+#if defined(MKW_PLATFORM_VISIONOS)
+    return VrRealArms();
+#else
+    return false;
+#endif
+}
+
+// Whether the character body is posed and drawn: body_ik, unless the wearer's own arms are
+// shown, which it would only double.
+inline bool VrCharacterBody() {
+    return VrBodyIk() && !VrRealArmsShown();
 }
 
 // hand 0 is the left.

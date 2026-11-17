@@ -120,6 +120,19 @@ int main() {
     Require(!Parse("[vr]\nbody_ik_hands_only = \"yes\"\n").vrBodyIkHandsOnly.has_value());
     Require(!Parse("[vr]\n").vrBodyIkHandsOnly.value_or(RuntimeConfigFile::kVrBodyIkHandsOnlyDefault));
 
+    // [vr] real_arms: the Vision Pro shows the wearer's own arms, and the
+    // character body gives way to them. Only that headset can, so on the hosts
+    // these tests build for the setting is never in effect and the character
+    // body is body_ik alone.
+    Require(RuntimeConfigFile::kVrRealArmsDefault);
+    Require(Parse("[vr]\nreal_arms = true\n").vrRealArms == true);
+    Require(Parse("[vr]\nreal_arms = false\n").vrRealArms == false);
+    Require(!Parse("[vr]\n").vrRealArms.has_value());
+    Require(!Parse("[vr]\nreal_arms = \"on\"\n").vrRealArms.has_value());
+    Require(Parse("[vr]\n").vrRealArms.value_or(RuntimeConfigFile::kVrRealArmsDefault));
+    Require(!RuntimeConfigFile::VrRealArmsShown());
+    Require(RuntimeConfigFile::VrCharacterBody() == RuntimeConfigFile::VrBodyIk());
+
     // [vr] bullet_bill_camera: ride inside the bullet, or show the game's camera.
     Require(std::string_view(RuntimeConfigFile::kVrBulletBillCameraDefault) == "game");
     for (std::string_view camera : {"inside", "game"}) {

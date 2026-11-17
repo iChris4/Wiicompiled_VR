@@ -1478,7 +1478,7 @@ void OpenXRInput::UpdateDriving(XrTime display_time, const driving::SeatFrame& s
     // The headset in the seated frame, which the character body leans with;
     // nothing else reads it, so it is only located for the body.
     XrSpaceLocation head_location{XR_TYPE_SPACE_LOCATION};
-    if (RuntimeConfigFile::VrBodyIk() &&
+    if (RuntimeConfigFile::VrCharacterBody() &&
         XR_SUCCEEDED(xrLocateSpace(m_runtime->ViewSpace(), m_runtime->AppSpace(), display_time, &head_location)) &&
         (head_location.locationFlags & kPoseValid) == kPoseValid) {
         const auto& pose = head_location.pose;

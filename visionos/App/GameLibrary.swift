@@ -33,6 +33,7 @@ final class GameLibrary: @unchecked Sendable {
     private let exitCodeFunction: IntFunction
     private let requestQuitFunction: VoidFunction
     private let lastErrorFunction: StringFunction
+    private let realArmsFunction: BoolFunction
 
     enum LoadError: LocalizedError {
         case missing(String)
@@ -101,6 +102,7 @@ final class GameLibrary: @unchecked Sendable {
         exitCodeFunction = try symbol("mkw_visionos_exit_code", as: IntFunction.self)
         requestQuitFunction = try symbol("mkw_visionos_request_quit", as: VoidFunction.self)
         lastErrorFunction = try symbol("mkw_visionos_last_error", as: StringFunction.self)
+        realArmsFunction = try symbol("mkw_visionos_real_arms", as: BoolFunction.self)
     }
 
     func setDirectories(data: String, resources: String) {
@@ -123,5 +125,7 @@ final class GameLibrary: @unchecked Sendable {
     var gameRunning: Bool { gameRunningFunction() }
     var exitCode: Int32 { exitCodeFunction() }
     func requestQuit() { requestQuitFunction() }
+    /// [vr] real_arms: whether the immersive space shows the wearer's own arms.
+    var realArms: Bool { realArmsFunction() }
     var lastError: String { lastErrorFunction().map { String(cString: $0) } ?? "" }
 }

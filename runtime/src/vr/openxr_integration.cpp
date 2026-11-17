@@ -1441,21 +1441,17 @@ private:
         if ((driving.hand_steering || RuntimeConfigFile::VrCockpitItemHand() != "off") &&
             !hand_meshes_loaded_ && runtime_ != nullptr) {
             hand_meshes_loaded_ = true;
-#if defined(MKW_PLATFORM_VISIONOS)
-            // The headset composites the wearer's own hands over the race
-            // (upperLimbVisibility), so no hand of ours is drawn: not the
-            // gloves, not the joints. The wheel still is, and so is the item
-            // held over a palm, which needs the hand's pose.
-            RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] cockpit hands: none (the headset shows your own)" << std::endl;
-#else
-            // Tracked hands' trackers, when they exist, serve the mesh too.
+            // Tracked hands' trackers, when they exist, serve the mesh too. The
+            // Vision Pro has no runtime hand mesh: with its real arms hidden
+            // ([vr] real_arms off) the hands are drawn from their joints.
             const XrHandTrackerEXT trackers[2]{input_ != nullptr ? input_->HandTracker(0) : XR_NULL_HANDLE,
                                                input_ != nullptr ? input_->HandTracker(1) : XR_NULL_HANDLE};
             const bool loaded = LoadRuntimeHandMeshes(*runtime_, trackers);
             RT_LOG(RT_TAG_RUNTIME) << "[mkw-vr] cockpit hands: "
                                    << (loaded ? "the runtime's hand mesh" : "procedural gloves (no runtime hand mesh)")
+                                   << (RuntimeConfigFile::VrRealArmsShown() ? ", none drawn while the headset shows your own"
+                                                                            : "")
                                    << std::endl;
-#endif
         }
         cockpit.active = driving.cockpit_active && position_valid && base_position_valid_ &&
                          (driving.synthetic_control || driving.hand_steering ||
@@ -1482,10 +1478,10 @@ private:
             auto& target = cockpit.hands[hand];
             const auto& from = driving.hands[hand];
             target.tracked = from.tracked;
-#if defined(MKW_PLATFORM_VISIONOS)
-            // Real hands, see above: posed for the held item, never drawn.
-            target.hidden = true;
-#endif
+            // The Vision Pro composites the wearer's own arms over the race
+            // ([vr] real_arms, the app's upperLimbVisibility): those hands are
+            // posed for the item held over the palm but not drawn.
+            target.hidden = RuntimeConfigFile::VrRealArmsShown();
             target.held = from.held;
             // Whether the character body draws this hand travels with the
             // sealed frame (AuroraCockpitItem.characterHands, vi.cpp), which

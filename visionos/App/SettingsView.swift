@@ -121,6 +121,9 @@ struct SettingsView: View {
                       options: ["Cockpit", "Custom"],
                       selection: stringChoice("vr", "first_person_seat", Self.seats))
                 .disabled(!firstPerson)
+            ToggleRow(title: "Show my real arms",
+                      help: "Your own arms and hands stay visible over the race, and the item you hold stands over your palm. The character's body is not drawn then. Off, your arms are hidden and in the cockpit your character's body takes their place. Also in the settings panel, live.",
+                      isOn: boolBinding("vr", "real_arms", default: true))
             ToggleRow(title: "Hand steering",
                       help: "In the cockpit, close a hand on the steering wheel or handlebar to take hold of it, and turn it to steer. Hand steering by heurazy.",
                       isOn: boolBinding("vr", "hand_steering", default: true))

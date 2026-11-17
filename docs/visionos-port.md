@@ -136,11 +136,18 @@ synthesizes one between the wrist and the middle knuckle, oriented from the
 wrist and knuckle positions (OpenXR's −Z towards the fingers, +Y out of the
 back of the hand) whether ARKit measures or estimates them, so the held item
 faces the player. The other joints keep ARKit's own axes (+X along the bone);
-only their positions are read. No hand of ours is
+only their positions are read. With `[vr] real_arms` on (the default; "Show my
+real arms" in the settings panel and the launcher's Settings) no hand of ours is
 drawn: the app's `upperLimbVisibility(.visible)` composites the wearer's own
-hands over the immersive race, and `BuildCockpit` sends each hand's pose
+arms and hands over the immersive race, `BuildCockpit` sends each hand's pose
 marked hidden, so Aurora draws no hand but still stands the held item
-(`cockpit_item_hand`) over the real palm. Manual drift has
+(`cockpit_item_hand`) over the real palm, and the character body is neither
+posed nor drawn (`RuntimeConfigFile::VrCharacterBody`). Off, the app asks for
+`upperLimbVisibility(.hidden)` and the cockpit is the other headsets' one: the
+character body, or hands drawn from the joints, since the provider offers no
+`XR_FB_hand_tracking_mesh`. The launcher reads the setting from the loaded game
+(`mkw_visionos_real_arms`) before the immersive space opens and polls it twice a
+second while the game runs, so the panel's checkbox applies live. Manual drift has
 no gesture: choose Automatic drift. The headset panel's "Drive with your
 hands" checkbox reads out each hand's grasp, hold and pinch for tuning.
 
@@ -567,6 +574,11 @@ OpenXR input to the game, to HIDAPI, which it turns off on visionOS, so
   - In the simulator the confirmation sheet, the import and Export's
     destination picker ran.
   - Neither the Profiles tab nor its Import and Export has run on a headset yet.
+- The `openxr-work` merge (upstream v0.9.3 and v0.9.4, voice chat, the Quest
+  work), on the device: `Make-VisionOS-App.command --retranslate` translates
+  both games and builds, signs and installs the app, and both games start
+  from Play. The Bullet Bill held in the cockpit is opaque, and "Show my real
+  arms" shows the wearer's arms when on and the character body when off.
 
 Not done: comfort tuning of the projection quad depth, the gesture thresholds,
 `render_scale`. Things to expect to tune first on hardware: the constant depth the

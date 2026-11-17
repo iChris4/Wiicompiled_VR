@@ -27,6 +27,10 @@ final class GameModel: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var discPresent = false
     @Published var immersionStyle: any ImmersionStyle = .mixed
+    /// [vr] real_arms: the immersive space shows the wearer's own arms and hands
+    /// (upperLimbVisibility). Read from the game once it is loaded, then followed while it
+    /// runs, so the settings panel's "Show my real arms" applies live.
+    @Published private(set) var realArms = true
     @Published private(set) var lastError = ""
 
     /// The game to play, as the Quest and PC launchers offer it: the unmodded game or Retro
@@ -101,6 +105,8 @@ final class GameModel: ObservableObject {
         do {
             let library = try GameLibrary.load(selectedGame.frameworkName)
             library.setDirectories(data: GameStorage.documents.path, resources: GameStorage.resources.path)
+            // Before the immersive space opens, so it opens with the arms already right.
+            realArms = library.realArms
             return true
         } catch {
             phase = .failed(message: error.localizedDescription)
@@ -249,6 +255,10 @@ final class GameModel: ObservableObject {
         }
         if library.layerInvalidated {
             library.requestQuit()
+        }
+        let arms = library.realArms
+        if arms != realArms {
+            realArms = arms
         }
     }
 

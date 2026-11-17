@@ -149,6 +149,12 @@ int mkw_visionos_exit_code(void) {
     return g_exit_code;
 }
 
+bool mkw_visionos_real_arms(void) {
+    // The settings panel writes it on the game's thread; one bool, read as the frame
+    // thread reads the other live settings.
+    return RuntimeConfigFile::VrRealArms();
+}
+
 void mkw_visionos_request_quit(void) {
     if (!g_running.load(std::memory_order_acquire)) {
         return;

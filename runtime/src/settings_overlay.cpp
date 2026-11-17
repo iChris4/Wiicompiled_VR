@@ -186,6 +186,7 @@ int VrBulletBillCameraIndex(std::string_view value) {
 int g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::VrBulletBillCamera());
 bool g_vrBodyIk = RuntimeConfigFile::VrBodyIk();
 bool g_vrBodyIkHandsOnly = RuntimeConfigFile::VrBodyIkHandsOnly();
+bool g_vrRealArms = RuntimeConfigFile::VrRealArms();
 std::array<float, 2> g_vrBodyIkHandRoll{RuntimeConfigFile::VrBodyIkHandRoll(0), RuntimeConfigFile::VrBodyIkHandRoll(1)};
 bool g_vrFirstPersonToggleClick = RuntimeConfigFile::VrFirstPersonToggleClick();
 // Set from any thread by the right-thumbstick click, applied on the game thread.
@@ -1710,6 +1711,7 @@ void ResetVrSettings() {
     g_vrBulletBillCamera = VrBulletBillCameraIndex(RuntimeConfigFile::VrBulletBillCamera());
     g_vrBodyIk = RuntimeConfigFile::VrBodyIk();
     g_vrBodyIkHandsOnly = RuntimeConfigFile::VrBodyIkHandsOnly();
+    g_vrRealArms = RuntimeConfigFile::VrRealArms();
     g_vrBodyIkHandRoll = {RuntimeConfigFile::VrBodyIkHandRoll(0), RuntimeConfigFile::VrBodyIkHandRoll(1)};
     g_vrFirstPersonToggleClick = RuntimeConfigFile::VrFirstPersonToggleClick();
     g_vrFirstPersonUnitsPerMeter = RuntimeConfigFile::VrFirstPersonUnitsPerMeter();
@@ -2178,9 +2180,26 @@ void DrawVrCameraSettings() {
             "kart's whole orientation, banking included. The headset always adds free look "
             "on top.");
     }
+#if defined(MKW_PLATFORM_VISIONOS)
+    // The app follows it live (mkw_visionos_real_arms), turning the headset's
+    // upperLimbVisibility on or off.
+    if (ImGui::Checkbox("Show my real arms", &g_vrRealArms)) {
+        RuntimeConfigFile::SetVrRealArms(g_vrRealArms);
+        mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "The headset shows your own arms and hands over the race, and the item you hold stands "
+            "over your palm. The character body is not drawn then, so it never doubles your arms. "
+            "Off, your arms are hidden and the character body below draws them, or the VR hands do.");
+    }
+    const bool realArmsShown = g_vrRealArms;
+#else
+    constexpr bool realArmsShown = false;
+#endif
     // The character body belongs to the cockpit seat, like the steering wheel.
     const bool cockpitSeat = g_vrFirstPersonSeat == 0;
-    ImGui::BeginDisabled(!cockpitSeat);
+    ImGui::BeginDisabled(!cockpitSeat || realArmsShown);
     if (ImGui::Checkbox("Character body (by heurazy)", &g_vrBodyIk)) {
         RuntimeConfigFile::SetVrBodyIk(g_vrBodyIk);
         mkw::vr::MkwVRFirstPersonApplyConfiguredSettings();
@@ -2224,7 +2243,7 @@ void DrawVrCameraSettings() {
     // Two presentations of one setting: which models go, or none at all.
     // Ticking either replaces the other, and unticking both shows everything.
     // In the cockpit the character body takes the driver over instead.
-    const bool bodyReplacesHiding = g_vrBodyIk && cockpitSeat;
+    const bool bodyReplacesHiding = g_vrBodyIk && cockpitSeat && !realArmsShown;
     const auto hidingTooltip = [bodyReplacesHiding](const char* text) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::SetTooltip("%s", bodyReplacesHiding

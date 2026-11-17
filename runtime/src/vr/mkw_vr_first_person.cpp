@@ -1495,7 +1495,7 @@ void MkwVRFirstPersonApplyConfiguredSettings() noexcept {
         std::lock_guard lock(g_mutex);
         g_state.default_first_person = RuntimeConfigFile::VrFirstPerson();
         g_state.bullet_game_camera = RuntimeConfigFile::VrBulletBillCamera() == "game";
-        g_state.body_ik = RuntimeConfigFile::VrBodyIk();
+        g_state.body_ik = RuntimeConfigFile::VrCharacterBody();
         g_state.body_ik_hands_only = RuntimeConfigFile::VrBodyIkHandsOnly();
         g_state.body_ik_hand_roll = {RuntimeConfigFile::VrBodyIkHandRoll(0), RuntimeConfigFile::VrBodyIkHandRoll(1)};
         // The next CalcView poses the body under the new settings; the seated
