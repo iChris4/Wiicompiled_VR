@@ -151,6 +151,15 @@ fragment float4 layer_fragment(VertexOut in [[stage_in]], texture2d<float> image
                                sampler s [[sampler(0)]]) {
     return image.sample(s, in.uv);
 }
+
+// A layer without XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT is opaque: OpenXR ignores
+// its texture's alpha. The eye images' alpha is whatever the game's TEV left there (the held
+// Bullet Bill's body ends its alpha stages at zero), and the drawable's alpha is what a mixed
+// immersion space blends the room through, so it is written as 1 here.
+fragment float4 layer_fragment_opaque(VertexOut in [[stage_in]], texture2d<float> image [[texture(0)]],
+                                      sampler s [[sampler(0)]]) {
+    return float4(image.sample(s, in.uv).rgb, 1.0);
+}
 )MSL";
 
 struct Uniforms {
@@ -291,7 +300,7 @@ bool Compositor::EnsurePipelines(MTLPixelFormat color, MTLPixelFormat depth) {
     }
     MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
     descriptor.vertexFunction = [library newFunctionWithName:@"layer_vertex"];
-    descriptor.fragmentFunction = [library newFunctionWithName:@"layer_fragment"];
+    descriptor.fragmentFunction = [library newFunctionWithName:@"layer_fragment_opaque"];
     descriptor.colorAttachments[0].pixelFormat = color;
     descriptor.depthAttachmentPixelFormat = depth;
     descriptor.label = @"WiiCompiled layer (opaque)";
@@ -302,6 +311,7 @@ bool Compositor::EnsurePipelines(MTLPixelFormat color, MTLPixelFormat depth) {
         return false;
     }
     // Premultiplied source-alpha blending, the OpenXR layer flag's semantics.
+    descriptor.fragmentFunction = [library newFunctionWithName:@"layer_fragment"];
     descriptor.colorAttachments[0].blendingEnabled = YES;
     descriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
     descriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;

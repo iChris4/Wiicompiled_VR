@@ -101,7 +101,11 @@ The game's live `[vr] passthrough` setting (the same one as on the Quest, on by
 default) reaches the provider as `xr_visionos_set_frame_environment`: when set,
 frames outside an immersive race clear the drawable transparent, so the room
 frames the virtual screen and the immersive window; immersive races draw
-opaque eyes and cover the room either way.
+opaque eyes and cover the room either way. A layer without
+`XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT` is written to the
+drawable with alpha 1, as OpenXR ignores an opaque layer's alpha: the eye
+images carry whatever alpha the game's TEV left (the held Bullet Bill's body
+ends at zero), which mixed immersion would otherwise blend the room through.
 
 ### Input
 
