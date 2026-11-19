@@ -13,6 +13,7 @@
 #include "runtime_config.h"
 #include "runtime_log.h"
 #include "runtime_product.h"
+#include "shaker_output.h"
 #include "voice_chat.h"
 #include "vr/camera_toggle.h"
 #include "vr/mkw_vr_culling.h"
@@ -53,6 +54,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <string_view>
 #include <utility>
 
@@ -118,6 +120,16 @@ bool g_audioMuted = RuntimeConfigFile::AudioMuted(false);
 int32_t g_muteHotkey = RuntimeConfigFile::MuteHotkey(SDL_SCANCODE_BACKSLASH);
 bool g_audioMixWorker = RuntimeConfigFile::AudioMixWorkerEnabled(true);
 bool g_attenuateMusicWhenMediaPlays = RuntimeConfigFile::AttenuateMusicWhenMediaPlays(false);
+// Secondary audio device for bass shakers (see shaker_output.h). The device list is read on
+// demand, not every frame.
+bool g_shakerEnabled = RuntimeConfigFile::ShakerEnabled(false);
+bool g_shakerMono = RuntimeConfigFile::ShakerMono(true);
+bool g_shakerIncludeMusic = RuntimeConfigFile::ShakerIncludeMusic(false);
+int g_shakerLowpassHz = static_cast<int>(std::lround(RuntimeConfigFile::ShakerLowpassHz(80.0f)));
+int g_shakerGainDb = static_cast<int>(std::lround(RuntimeConfigFile::ShakerGainDb(0.0f)));
+std::string g_shakerDevice = RuntimeConfigFile::ShakerDevice();
+std::vector<std::string> g_shakerDeviceNames;
+bool g_shakerDeviceListLoaded = false;
 int g_frameInterpolationMode = [] {
     switch (RuntimeConfigFile::FrameInterpolationFps(0)) {
     case 120:
@@ -1271,6 +1283,91 @@ void DrawControllerSettings() {
     DrawRumbleSettings();
 }
 
+// Secondary audio device for bass shakers: the game's sound effects, low-pass filtered.
+void DrawShakerSettings() {
+    ImGui::Separator();
+    ImGui::Text("Bass shakers (second output)");
+    if (ImGui::Checkbox("Play sound effects on secondary audio device", &g_shakerEnabled)) {
+        ShakerOutput::SetEnabled(g_shakerEnabled);
+        RuntimeConfigFile::SetShakerEnabled(g_shakerEnabled);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Plays engine, surface, hit and other sound effects on a second audio device,\n"
+            "low-pass filtered, for bass shakers. The normal game audio is not changed.\n"
+            "Only active while you are racing, unless music is included.");
+    }
+    if (!g_shakerEnabled) {
+        return;
+    }
+
+    if (!g_shakerDeviceListLoaded) {
+        g_shakerDeviceNames = ShakerOutput::ListDevices();
+        g_shakerDeviceListLoaded = true;
+    }
+    const char* currentLabel = g_shakerDevice.empty() ? "System default device" : g_shakerDevice.c_str();
+    ImGui::SetNextItemWidth(Scaled(260.0f));
+    if (ImGui::BeginCombo("Device", currentLabel)) {
+        if (ImGui::Selectable("System default device", g_shakerDevice.empty())) {
+            g_shakerDevice.clear();
+            ShakerOutput::SetDevice(g_shakerDevice);
+            RuntimeConfigFile::SetShakerDevice(g_shakerDevice);
+        }
+        for (const std::string& name : g_shakerDeviceNames) {
+            if (ImGui::Selectable(name.c_str(), name == g_shakerDevice)) {
+                g_shakerDevice = name;
+                ShakerOutput::SetDevice(g_shakerDevice);
+                RuntimeConfigFile::SetShakerDevice(g_shakerDevice);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh")) {
+        g_shakerDeviceNames = ShakerOutput::ListDevices();
+        // Also retries a device that was unplugged or not found earlier.
+        ShakerOutput::SetEnabled(true);
+    }
+    if (ShakerOutput::IsActive()) {
+        ImGui::TextDisabled("Playing on: %s", ShakerOutput::ActiveDeviceName().c_str());
+    } else {
+        ImGui::TextDisabled("Not playing: device not found or could not be opened.");
+    }
+
+    if (ImGui::Checkbox("Mono", &g_shakerMono)) {
+        ShakerOutput::SetMono(g_shakerMono);
+        RuntimeConfigFile::SetShakerMono(g_shakerMono);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Disable if you have separate left and right bass shakers");
+    }
+    ImGui::SetNextItemWidth(Scaled(220.0f));
+    if (ImGui::SliderInt("Low-pass", &g_shakerLowpassHz, 0, 150, g_shakerLowpassHz == 0 ? "Off" : "%d Hz")) {
+        ShakerOutput::SetLowpassHz(static_cast<float>(g_shakerLowpassHz));
+        RuntimeConfigFile::SetShakerLowpassHz(static_cast<float>(g_shakerLowpassHz));
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Cuts everything above this frequency (24 dB per octave). Lower = only deep\n"
+            "rumble, higher = more buzz and texture. 0 turns the filter off.");
+    }
+    ImGui::SetNextItemWidth(Scaled(220.0f));
+    if (ImGui::SliderInt("Gain", &g_shakerGainDb, -24, 18, "%+d dB")) {
+        ShakerOutput::SetGainDb(static_cast<float>(g_shakerGainDb));
+        RuntimeConfigFile::SetShakerGainDb(static_cast<float>(g_shakerGainDb));
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Level of the shaker signal. +6 dB is twice as loud, -6 dB half. Filtering\n"
+            "makes the signal quieter, so a boost is usually needed. Very loud peaks\n"
+            "are rounded off instead of distorting harshly.");
+    }
+    if (ImGui::Checkbox("Include music", &g_shakerIncludeMusic)) {
+        ShakerOutput::SetIncludeMusic(g_shakerIncludeMusic);
+        RuntimeConfigFile::SetShakerIncludeMusic(g_shakerIncludeMusic);
+    }
+}
+
 void DrawAudioSettings() {
     ImGui::SetNextItemWidth(Scaled(220.0f));
     if (ImGui::SliderInt("Master", &g_audioVolumePercent, 0, 100, "%d%%")) {
@@ -1346,6 +1443,7 @@ void DrawAudioSettings() {
             ImGui::TextDisabled("No external media is currently playing.");
         }
     }
+    DrawShakerSettings();
 }
 
 // The virtual screen's placement comes from the launch-time [vr] geometry, the
@@ -3196,6 +3294,13 @@ void InitializeRuntimeSettings() noexcept {
     ApplyConfiguredMappings();
     AudioBackend::Instance().SetMasterVolume(static_cast<float>(g_audioVolumePercent) / 100.0f);
     AudioBackend::Instance().SetMuted(g_audioMuted);
+    ShakerOutput::SetMono(g_shakerMono);
+    ShakerOutput::SetIncludeMusic(g_shakerIncludeMusic);
+    ShakerOutput::SetLowpassHz(static_cast<float>(g_shakerLowpassHz));
+    ShakerOutput::SetGainDb(static_cast<float>(g_shakerGainDb));
+    ShakerOutput::SetDevice(g_shakerDevice);
+    ShakerOutput::SetMuted(g_audioMuted);
+    ShakerOutput::SetEnabled(g_shakerEnabled);
     MusicAttenuation::SetMusicVolume(static_cast<float>(g_musicVolumePercent) / 100.0f);
     MusicAttenuation::SetSoundEffectsVolume(static_cast<float>(g_soundEffectsVolumePercent) / 100.0f);
     MusicAttenuation::SetUiVolume(static_cast<float>(g_uiVolumePercent) / 100.0f);

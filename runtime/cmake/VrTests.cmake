@@ -15,6 +15,12 @@ target_include_directories(mkw_vr_config_tests PRIVATE "${MKW_VR_TEST_RUNTIME_DI
 target_link_libraries(mkw_vr_config_tests PRIVATE mkw::toml11)
 target_compile_features(mkw_vr_config_tests PRIVATE cxx_std_20)
 add_test(NAME mkw_vr_config_tests COMMAND mkw_vr_config_tests)
+# [shaker] settings for the secondary (bass shaker) audio device.
+add_executable(mkw_shaker_config_tests "${MKW_VR_TEST_RUNTIME_DIR}/tests/shaker_config_tests.cpp")
+target_include_directories(mkw_shaker_config_tests PRIVATE "${MKW_VR_TEST_RUNTIME_DIR}/include")
+target_link_libraries(mkw_shaker_config_tests PRIVATE mkw::toml11)
+target_compile_features(mkw_shaker_config_tests PRIVATE cxx_std_20)
+add_test(NAME mkw_shaker_config_tests COMMAND mkw_shaker_config_tests)
 
 # The first-person VR camera's transform is deliberately header-only and free of
 # guest access so it can be checked here, without a headset or a running game.
@@ -30,7 +36,7 @@ add_test(NAME mkw_vr_first_person_tests COMMAND mkw_vr_first_person_tests)
 # camera modes (from heurazy's Wiicompiled_VR-PLUS). All header-only.
 foreach(test_name mkw_steering_wheel_tests mkw_vr_cockpit_tests mkw_vr_bullet_bill_tests mkw_vr_hand_steering_tests mkw_vr_camera_toggle_tests
                   mkw_vr_hand_tracking_tests mkw_vr_culling_tests mkw_vr_item_throw_tests mkw_vr_body_ik_tests
-                  mkw_vr_camera_mode_tests)
+                  mkw_vr_camera_mode_tests mkw_shaker_dsp_tests mkw_shaker_race_tests)
     string(REGEX REPLACE "^mkw_" "" test_source "${test_name}")
     add_executable(${test_name} "${MKW_VR_TEST_RUNTIME_DIR}/tests/${test_source}.cpp")
     target_include_directories(${test_name} PRIVATE "${MKW_VR_TEST_RUNTIME_DIR}/include")

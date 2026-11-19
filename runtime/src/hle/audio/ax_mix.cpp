@@ -11,6 +11,8 @@
 #include "ppc_runtime.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "shaker_output.h"
+#include "shaker_race.h"
 
 #include <algorithm>
 #include <array>
@@ -54,6 +56,30 @@ std::filesystem::path FindDspCoefficientRom() {
 
     throw std::runtime_error("Missing bundled Wii DSP coefficient ROM (dsp_coef.bin)");
 }
+
+// Guest memory as the mix thread sees it, for shaker_race.h. An address that is not readable
+// just returns false; it is never reported as an error.
+struct MixGuestMemory {
+    static bool TryRead32(uint32_t address, uint32_t& out) {
+        const uint8_t* host = MixResolveRange(address, sizeof(uint32_t));
+        if (!host) {
+            return false;
+        }
+        uint32_t raw = 0;
+        std::memcpy(&raw, host, sizeof(raw));
+        out = MemoryInline::ByteSwap32(raw);
+        return true;
+    }
+
+    static bool TryRead8(uint32_t address, uint32_t& out) {
+        const uint8_t* host = MixResolveRange(address, 1);
+        if (!host) {
+            return false;
+        }
+        out = *host;
+        return true;
+    }
+};
 
 class AXWii {
 public:
@@ -469,6 +495,10 @@ private:
         const bool newFilter = m_ucodeCrc != 0 ? UCodeUsesNewFilter(m_ucodeCrc) : layout != AXCommandLayout::Old;
         bool end = false;
         m_auxOutCount = 0;
+        // Start each command list with an empty secondary-output feed (see ProcessVoiceForMix).
+        m_effectL.fill(0);
+        m_effectR.fill(0);
+        UpdateShakerGate();
         while (!end && idx < cmdListSize) {
             const uint16_t cmd = m_cmdList[idx++];
             uint16_t volume = 0;
@@ -665,11 +695,11 @@ private:
                 const auto updates = LoadPBUpdates(pb);
                 for (uint32_t ms = 0; ms < 3; ++ms) {
                     ApplyPBUpdatesForMs(pb, updates, ms);
-                    ProcessVoice(pb, buffers, 32, control, BaseCoefficients(), newFilter);
+                    ProcessVoiceForMix(pb, buffers, 32, control, BaseCoefficients(), newFilter);
                     AdvanceBuffers(buffers, 32, 6);
                 }
             } else {
-                ProcessVoice(pb, buffers, kAxSamplesPerFrame, control, BaseCoefficients(), newFilter);
+                ProcessVoiceForMix(pb, buffers, kAxSamplesPerFrame, control, BaseCoefficients(), newFilter);
             }
             WritePB(pbAddr, pb);
             pbAddr = Hilo(pb.next_pb_hi, pb.next_pb_lo);
@@ -999,6 +1029,57 @@ private:
         }
     }
 
+    // Which voices count as music for the secondary (bass shaker) output. Race music is
+    // streamed from disc and AX marks streamed voices with is_stream == 1; sound effects play
+    // from sample data and are not marked. Menu music is not marked, so the secondary output
+    // is held silent outside of races instead (see UpdateShakerGate).
+    static bool IsMusicVoice(const AXPBWii& pb) {
+        return pb.is_stream == 1;
+    }
+
+    // Once per command list: hold the secondary output silent unless a human is racing, so
+    // menu music and the title-screen demo race never reach the shakers. When the user
+    // includes music, the output stays on everywhere instead.
+    void UpdateShakerGate() {
+        m_shakerGated = ShakerOutput::IsActive() && !ShakerOutput::IncludeMusic() &&
+                        !shaker_race::IsHumanRaceRunning<MixGuestMemory>();
+    }
+
+    // Mixes one voice exactly like ProcessVoice and, when the secondary output wants this
+    // voice, also records what the voice added to the main buses into m_effectL / m_effectR.
+    // The record is the change in the main buses before and after the voice, so the real mix
+    // is untouched. The surround bus is folded equally into both channels, the way the
+    // game's stereo output mode folds it into left and right. With the secondary output off
+    // this is a plain ProcessVoice call.
+    void ProcessVoiceForMix(AXPBWii& pb, const AXBuffers& buffers, uint32_t count, AXMixControl control,
+                            const int16_t* coeffs, bool newFilter) {
+        const bool feedsShaker = pb.running == 1 && ShakerOutput::IsActive() && !m_shakerGated &&
+                                 (ShakerOutput::IncludeMusic() || !IsMusicVoice(pb));
+        int* const mainL = buffers[kBusMainL];
+        int* const mainR = buffers[kBusMainR];
+        int* const mainS = buffers[kBusMainS];
+        const size_t offset = static_cast<size_t>(mainL - m_bus[kBusMainL].data());
+        if (!feedsShaker || count > kAxSamplesPerFrame || offset + count > kAxSamplesPerFrame) {
+            ProcessVoice(pb, buffers, count, control, coeffs, newFilter);
+            return;
+        }
+
+        std::array<int, kAxSamplesPerFrame> beforeL;
+        std::array<int, kAxSamplesPerFrame> beforeR;
+        std::array<int, kAxSamplesPerFrame> beforeS;
+        std::copy_n(mainL, count, beforeL.begin());
+        std::copy_n(mainR, count, beforeR.begin());
+        std::copy_n(mainS, count, beforeS.begin());
+
+        ProcessVoice(pb, buffers, count, control, coeffs, newFilter);
+
+        for (uint32_t i = 0; i < count; ++i) {
+            const int surround = mainS[i] - beforeS[i];
+            m_effectL[offset + i] += (mainL[i] - beforeL[i]) + surround;
+            m_effectR[offset + i] += (mainR[i] - beforeR[i]) + surround;
+        }
+    }
+
     void ProcessVoice(AXPBWii& pb, const AXBuffers& buffers, uint32_t count, AXMixControl control,
                       const int16_t* coeffs, bool newFilter) {
         if (pb.running != 1) {
@@ -1260,6 +1341,18 @@ private:
             pcm[i * 2] = right;
             pcm[i * 2 + 1] = left;
         }
+        // Secondary (bass shaker) output: the voices recorded by ProcessVoiceForMix, through the
+        // same master ramp as the main output. Skipped while the output is off or held silent.
+        if (ShakerOutput::IsActive() && !m_shakerGated) {
+            std::array<int16_t, kAxSamplesPerFrame * 2> shaker{};
+            for (uint32_t i = 0; i < kAxSamplesPerFrame; ++i) {
+                shaker[i * 2] = ClampS16((static_cast<int64_t>(m_effectL[i]) * ramp[i]) >> 15);
+                shaker[i * 2 + 1] = ClampS16((static_cast<int64_t>(m_effectR[i]) * ramp[i]) >> 15);
+            }
+            ShakerOutput::PushFrame(shaker.data(), kAxSamplesPerFrame);
+        }
+        m_effectL.fill(0);
+        m_effectR.fill(0);
         // The AI frame (contiguous right/left interleaved) lands in guest memory directly
         // even from the worker: its only reader, PushAudioBlock, runs after Audio_HLE_Tick
         // has joined the worker, so the guest never observes a half-written frame.
@@ -1425,6 +1518,11 @@ private:
     std::array<std::array<int, kAxWiimoteSamplesPerFrame>, kAxWiimoteBusCount> m_wmBus{};
     uint16_t m_lastMainVolume = 0x8000;
     std::array<uint16_t, 3> m_lastAuxVolumes{};
+    // Secondary-output feed for the current AX frame: what the voices it wants added to the
+    // main left/right buses. Owned by whichever thread runs the mix.
+    std::array<int, kAxSamplesPerFrame> m_effectL{};
+    std::array<int, kAxSamplesPerFrame> m_effectR{};
+    bool m_shakerGated = false; // true: the secondary output is held silent for this list
 
     // Mix worker handshake.
     std::thread m_mixThread;

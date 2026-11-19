@@ -1,6 +1,7 @@
 #include "audio_backend.h"
 
 #include "runtime_log.h"
+#include "shaker_output.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -34,6 +35,7 @@ void AudioBackend::SetMuted(bool muted) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_muted = muted;
     ApplyGainLocked();
+    ShakerOutput::SetMuted(muted); // the secondary output follows Mute too
 }
 
 void AudioBackend::SetSilenced(bool silenced) {
@@ -94,6 +96,7 @@ bool AudioBackend::Init(uint32_t sampleRate, uint32_t channels) {
 }
 
 void AudioBackend::Shutdown() {
+    ShakerOutput::Shutdown();
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_stream) {
         SDL_DestroyAudioStream(m_stream);
