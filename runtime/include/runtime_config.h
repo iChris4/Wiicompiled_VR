@@ -127,6 +127,13 @@ struct RuntimeUserConfig {
     std::optional<bool> audioMuted;
     std::optional<bool> audioMixWorker;
     std::optional<bool> attenuateMusicWhenMediaPlays;
+    // [shaker]: optional secondary audio device for bass shakers.
+    std::optional<bool> shakerEnabled;
+    std::optional<std::string> shakerDevice;
+    std::optional<bool> shakerMono;
+    std::optional<float> shakerLowpassHz;
+    std::optional<float> shakerGainDb;
+    std::optional<bool> shakerIncludeMusic;
     // Real Wii Remotes (with or without Nunchuk / Classic Controller) and Wii U Pro
     // Controllers paired over Bluetooth, driven by SDL's HIDAPI Wii driver into this fork's
     // KPAD/WPAD HLE (which the VR controllers also feed). The driver is opt-in on SDL's side,
@@ -828,6 +835,23 @@ inline void EnsureConfigFile() {
               "# guest can observe it. Set to false to mix inline on the guest\n"
               "# thread exactly as the runtime did before.\n"
               "mix_worker = true\n\n"
+              "[shaker]\n"
+              "# Optional secondary audio device for bass shakers. It plays the game's sound\n"
+              "# effects, low-pass filtered. Easiest to set up from the F10 menu under Audio.\n"
+              "enabled = false\n"
+              "# Name of the playback device (part of the name is enough). Empty = the\n"
+              "# system default device.\n"
+              "device = \"\"\n"
+              "# true: left and right are averaged. false: left and right stay separate\n"
+              "# (for a left/right shaker pair).\n"
+              "mono = true\n"
+              "# Low-pass cutoff in Hz. 0 turns the filter off.\n"
+              "lowpass_hz = 80.0\n"
+              "# Gain after the filter, in decibels. 0 = unchanged, +6 = twice as loud.\n"
+              "gain_db = 0.0\n"
+              "# true: the music is sent too, and the output stays on in menus. false: sound\n"
+              "# effects only, and only while you are racing.\n"
+              "include_music = false\n\n"
               "[network]\n"
               "enabled = true\n\n"
               "[controller]\n"
@@ -1170,6 +1194,16 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.audioMixWorker = FindConfigValue<bool>(document, "audio", "mix_worker");
     config.attenuateMusicWhenMediaPlays =
         FindConfigValue<bool>(document, "audio", "attenuate_music_when_media_plays");
+    config.shakerEnabled = FindConfigValue<bool>(document, "shaker", "enabled");
+    config.shakerDevice = FindConfigValue<std::string>(document, "shaker", "device");
+    config.shakerMono = FindConfigValue<bool>(document, "shaker", "mono");
+    if (auto value = FindConfigFloat(document, "shaker", "lowpass_hz"); value && *value >= 0.0f && *value <= 400.0f) {
+        config.shakerLowpassHz = value;
+    }
+    if (auto value = FindConfigFloat(document, "shaker", "gain_db"); value && *value >= -60.0f && *value <= 30.0f) {
+        config.shakerGainDb = value;
+    }
+    config.shakerIncludeMusic = FindConfigValue<bool>(document, "shaker", "include_music");
     config.wiiRemotes = FindConfigValue<bool>(document, "controller", "wii_remotes");
     config.wiiContinuousScan = FindConfigValue<bool>(document, "controller", "wii_continuous_scan");
     for (const char* key : {"wii_accel_offset_x", "wii_accel_offset_y", "wii_accel_offset_z"}) {
@@ -1887,6 +1921,43 @@ inline bool SetAttenuateMusicWhenMediaPlays(bool value) {
     return WriteSetting("audio", "attenuate_music_when_media_plays", value ? "true" : "false");
 }
 
+inline bool SetShakerEnabled(bool value) {
+    Mutable().shakerEnabled = value;
+    return WriteSetting("shaker", "enabled", value ? "true" : "false");
+}
+
+// An empty name means the system default playback device.
+inline bool SetShakerDevice(std::string_view value) {
+    Mutable().shakerDevice = std::string(value);
+    return WriteSetting("shaker", "device", FormatString(value));
+}
+
+inline bool SetShakerMono(bool value) {
+    Mutable().shakerMono = value;
+    return WriteSetting("shaker", "mono", value ? "true" : "false");
+}
+
+inline bool SetShakerLowpassHz(float value) {
+    value = std::clamp(value, 0.0f, 400.0f);
+    Mutable().shakerLowpassHz = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("shaker", "lowpass_hz", formatted.str());
+}
+
+inline bool SetShakerGainDb(float value) {
+    value = std::clamp(value, -60.0f, 30.0f);
+    Mutable().shakerGainDb = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("shaker", "gain_db", formatted.str());
+}
+
+inline bool SetShakerIncludeMusic(bool value) {
+    Mutable().shakerIncludeMusic = value;
+    return WriteSetting("shaker", "include_music", value ? "true" : "false");
+}
+
 inline bool WidescreenEnabled(bool fallback = false) {
     return Get().widescreen.value_or(fallback);
 }
@@ -1974,6 +2045,33 @@ inline bool AudioMixWorkerEnabled(bool fallback = true) {
 // Whether background music should duck automatically for other media playback.
 inline bool AttenuateMusicWhenMediaPlays(bool fallback = false) {
     return Get().attenuateMusicWhenMediaPlays.value_or(fallback);
+}
+
+// [shaker]: optional secondary audio device for bass shakers. Off unless turned on.
+inline bool ShakerEnabled(bool fallback = false) {
+    return Get().shakerEnabled.value_or(fallback);
+}
+
+// Empty means the system default playback device.
+inline std::string ShakerDevice() {
+    return Get().shakerDevice.value_or(std::string());
+}
+
+inline bool ShakerMono(bool fallback = true) {
+    return Get().shakerMono.value_or(fallback);
+}
+
+// 0 turns the low-pass filter off.
+inline float ShakerLowpassHz(float fallback = 80.0f) {
+    return std::clamp(Get().shakerLowpassHz.value_or(fallback), 0.0f, 400.0f);
+}
+
+inline float ShakerGainDb(float fallback = 0.0f) {
+    return std::clamp(Get().shakerGainDb.value_or(fallback), -60.0f, 30.0f);
+}
+
+inline bool ShakerIncludeMusic(bool fallback = false) {
+    return Get().shakerIncludeMusic.value_or(fallback);
 }
 
 // Bluetooth Wii Remotes / Wii U Pro Controllers through SDL. Read once before SDL's joystick
